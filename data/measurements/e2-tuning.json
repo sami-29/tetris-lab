@@ -1,0 +1,152 @@
+{
+  "schema": "e2-tuning/1",
+  "runs": [
+    {
+      "run": 0,
+      "date": "2026-11-02T23:25:00Z",
+      "decision": "accepted",
+      "rejection_kind": null,
+      "rejection_reason": null,
+      "bed": {
+        "name": "goal12-p100-cap7",
+        "goal": 12,
+        "pieces": 100,
+        "cap": 7
+      },
+      "bed_source": "committed-dataset",
+      "dataset_fingerprint": "4ebdf44940134c40",
+      "generator_version": 1,
+      "width": 25,
+      "width_curve": {
+        "path": "data/measurements/width-curve.json",
+        "default_beam": 25,
+        "default_beam_basis": "cost",
+        "quality_fingerprint": "fnv1a64:af9f8a8c76b93ad5"
+      },
+      "split": "1000-1999",
+      "seed_list_fnv": "0x45ff8c50e8139615",
+      "minibatch_fnv": "cf68b1942b157340",
+      "tune_seed": "0x9e3779b97f4a7c15",
+      "prng": {
+        "algorithm": "splitmix64",
+        "stream_xor": "0x6a09e667f3bcc908",
+        "bootstrap_xor": "0xbb67ae8584caa73b",
+        "bounded": "lemire-rejection",
+        "normal": "irwin-hall-12",
+        "draw_order": "iteration, game-seeds (index order, without replacement), candidate, dimension"
+      },
+      "params": {
+        "candidates": 100,
+        "games_per_candidate": 8,
+        "iterations": 40,
+        "elite_count": 10,
+        "elite_fraction": 0.1,
+        "noise": 4,
+        "variance_smoothing": [1, 0.7],
+        "variance_smoothing_switch": 10,
+        "variance_floor": 0.01,
+        "weight_bound": 1024,
+        "mu0": 0,
+        "sigma_sq0": 100,
+        "max_stale": 5,
+        "ce_pool": "1000-1799",
+        "validation_seeds": "1800-1999",
+        "bootstrap_resamples": 10000,
+        "fitness": "1000*won_rate + mean_lines + 0.01*mean_pieces_saved",
+        "transport": "Q32 i64 per candidate, >>32; committed as Q16 i32 (round half away from zero)"
+      },
+      "iterations_run": 9,
+      "stop_reason": "no_improvement",
+      "weights_decimal": [-7.858335, 2.58857, -4.813783, -20.786974, 2.635867, -6.195437, -1.74439, -11.005263],
+      "weights_q16": [-515004, 169645, -315476, -1362295, 172744, -406024, -114320, -721241],
+      "table_fnv": "0xa1e499c016455a9c",
+      "tables": {
+        "e0": {
+          "wins": 1000,
+          "games": 1000,
+          "win_rate": 1,
+          "win_rate_ci95": [0.996173, 1],
+          "mean_lines": 12.009,
+          "mean_lines_on_wins": 12.009,
+          "mean_pieces_saved": 72.58,
+          "evals_mean": 14633.984,
+          "evals_median": 14560,
+          "evals_p90": 15993,
+          "ms_median": 3.83835,
+          "ms_p90": 9.5933
+        },
+        "e1": {
+          "wins": 1000,
+          "games": 1000,
+          "win_rate": 1,
+          "win_rate_ci95": [0.996173, 1],
+          "mean_lines": 12.007,
+          "mean_lines_on_wins": 12.007,
+          "mean_pieces_saved": 73.252,
+          "evals_mean": 14264.136,
+          "evals_median": 14243.5,
+          "evals_p90": 15623,
+          "ms_median": 8.03075,
+          "ms_p90": 24.595
+        },
+        "bcts": {
+          "wins": 1000,
+          "games": 1000,
+          "win_rate": 1,
+          "win_rate_ci95": [0.996173, 1],
+          "mean_lines": 12.007,
+          "mean_lines_on_wins": 12.007,
+          "mean_pieces_saved": 73.665,
+          "evals_mean": 14027.756,
+          "evals_median": 14032.5,
+          "evals_p90": 15317,
+          "ms_median": 7.7479,
+          "ms_p90": 28.528
+        },
+        "e2": {
+          "wins": 1000,
+          "games": 1000,
+          "win_rate": 1,
+          "win_rate_ci95": [0.996173, 1],
+          "mean_lines": 12.011,
+          "mean_lines_on_wins": 12.011,
+          "mean_pieces_saved": 73.638,
+          "evals_mean": 14044.392,
+          "evals_median": 14034,
+          "evals_p90": 15388,
+          "ms_median": 7.87105,
+          "ms_p90": 27.4917
+        }
+      },
+      "comparison": {
+        "win_rate_axis": "no-resolution",
+        "rule": "notes/07 §6.1, pre-registered before the run: (1) win rate -- E1 is worse than published if its win rate is higher and the exact two-sided McNemar test on the discordant pairs rejects at p < 0.01; (2) mean lines -- only when the win rates tie, E2 is worse if the paired bootstrap 95% CI of lines_E2 - lines_E1 lies entirely below 0; (3) evaluations per solve is §9.4's tie-break, never a rejection. Saturation is recorded and not silently accepted: win_rate_axis is \"no-resolution\" when both tables win >= 99% of the tuning Split, so a tie there is a statement about the bed, not about the tables.",
+        "e2_vs_e1": {
+          "b": 0,
+          "c": 0,
+          "n": 0,
+          "mcnemar_p": 1,
+          "win_rate_delta": 0,
+          "mean_lines_delta": 0.004,
+          "mean_lines_ci95": [-0.004, 0.013],
+          "evals_median_delta": -209.5,
+          "evals_p90_delta": -235
+        }
+      },
+      "machine": {
+        "engine_commit": "d4849d5",
+        "bench_commit": "d4849d5",
+        "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+        "target": "x86_64-windows",
+        "cpu": "AMD64 Family 25 Model 33 Stepping 2, AuthenticAMD",
+        "os": "windows",
+        "profile": "release: lto=fat, codegen-units=1, panic=abort, strip=true",
+        "wall_clock_seconds": 16
+      }
+    }
+  ],
+  "accepted": {
+    "table": "E2_TUNED",
+    "run": 0
+  }
+}
