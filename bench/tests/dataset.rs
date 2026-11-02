@@ -26,7 +26,11 @@ fn load(cfg: &Config) -> dataset::Parsed {
 }
 
 fn load_manifest(cfg: &Config) -> Manifest {
-    let path = dataset::manifest_path(&dataset::root(), cfg);
+    load_manifest_at(&dataset::root(), cfg)
+}
+
+fn load_manifest_at(data: &Path, cfg: &Config) -> Manifest {
+    let path = dataset::manifest_path(data, cfg);
     let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     Manifest::parse(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
@@ -55,6 +59,15 @@ fn copy_config(from: &Path, to: &Path, cfg: &Config) {
     }
 }
 
+/// The line of a failure message that carries `key`, so formatting (the column
+/// alignment in the message) is not what the test asserts.
+fn field_line<'a>(message: &'a str, key: &str) -> &'a str {
+    message
+        .lines()
+        .find(|line| line.contains(key))
+        .unwrap_or("")
+}
+
 // ------------------------------------------------------- T1 manifest agrees
 
 #[test]
@@ -70,7 +83,10 @@ fn manifest_agrees_with_its_file() {
         assert_eq!(manifest.cap, cfg.cap, "{where_}: cap vs directory");
 
         // Header and manifest are two renderings of one configuration.
-        assert_eq!(manifest.goal, parsed.header.goal, "{where_}: goal vs header");
+        assert_eq!(
+            manifest.goal, parsed.header.goal,
+            "{where_}: goal vs header"
+        );
         assert_eq!(
             manifest.pieces, parsed.header.pieces,
             "{where_}: pieces vs header"
@@ -83,7 +99,11 @@ fn manifest_agrees_with_its_file() {
         );
 
         // Both splits, present and disjoint, covering the seeds.
-        assert_eq!(manifest.test_split, dataset::TEST_SPLIT, "{where_}: test split");
+        assert_eq!(
+            manifest.test_split,
+            dataset::TEST_SPLIT,
+            "{where_}: test split"
+        );
         assert_eq!(
             manifest.tuning_split,
             dataset::TUNING_SPLIT,
@@ -109,10 +129,12 @@ fn manifest_agrees_with_its_file() {
             manifest.seeds.1 - manifest.seeds.0 + 1,
             "{where_}: game_count vs seed range"
         );
-        let mut expected_seed = manifest.seeds.0;
-        for game in &parsed.games {
-            assert_eq!(game.seed, expected_seed, "{where_}: seed order/contiguity");
-            expected_seed += 1;
+        for (offset, game) in parsed.games.iter().enumerate() {
+            assert_eq!(
+                game.seed,
+                manifest.seeds.0 + offset as u32,
+                "{where_}: seed order/contiguity"
+            );
         }
 
         // The description is one line, and the fingerprint is the §6.1 shape.
@@ -130,7 +152,10 @@ fn manifest_agrees_with_its_file() {
             "{where_}: fingerprint must be 16 lowercase hex digits, got {:?}",
             manifest.fingerprint
         );
-        assert!(manifest.generator_version >= 1, "{where_}: generator_version");
+        assert!(
+            manifest.generator_version >= 1,
+            "{where_}: generator_version"
+        );
     }
 }
 
@@ -148,7 +173,12 @@ fn header_line_is_canonical() {
             "{}: header line is not canonical\n  expected: {expected:?}\n  actual:   {first:?}",
             cfg.dir
         );
-        assert_eq!(first, expected.trim_end(), "{}: trailing whitespace", cfg.dir);
+        assert_eq!(
+            first,
+            expected.trim_end(),
+            "{}: trailing whitespace",
+            cfg.dir
+        );
         assert!(
             !first.bytes().any(|b| b == b'\r'),
             "{}: header carries a CR",
@@ -220,12 +250,18 @@ fn drift_names_the_first_game_that_moved() {
     lines[line_index] = rebuilt;
     fs::write(&path, lines.join("\n") + "\n").unwrap();
 
-    let drift = verify::check_config(&cfg, &root)
-        .expect_err("a moved board must make the gate red");
+    let drift =
+        verify::check_config(&cfg, &root).expect_err("a moved board must make the gate red");
     let message = drift.to_string();
 
-    assert!(message.contains("games.txt"), "message names the file: {message}");
-    assert!(message.contains("seed 512"), "message names the seed: {message}");
+    assert!(
+        message.contains("games.txt"),
+        "message names the file: {message}"
+    );
+    assert!(
+        message.contains("seed 512"),
+        "message names the seed: {message}"
+    );
     assert!(
         message.contains("game 513 of 2000"),
         "message names the position in seed order: {message}"
@@ -239,11 +275,11 @@ fn drift_names_the_first_game_that_moved() {
         "message names the field: {message}"
     );
     assert!(
-        message.contains(&format!("expected: {word:08x}")),
+        field_line(&message, "expected:").contains(&format!("{word:08x}")),
         "message quotes the regenerated word: {message}"
     );
     assert!(
-        message.contains(&format!("actual: {moved:08x}")),
+        field_line(&message, "actual:").contains(&format!("{moved:08x}")),
         "message quotes the committed word: {message}"
     );
     assert!(
@@ -417,15 +453,24 @@ fn changing_one_game_moves_the_fingerprint() {
             cfg.dir
         );
 
-        // The header is not hashed: a different header cannot move it.
-        let header_changed = format!("# tetris-algo 1 goal=0 pieces=0 cap=0 seeds=0-0\n{}", {
-            let mut s = String::new();
-            for game in &parsed.games {
-                s.push_str(&dataset::game_line(game));
-                s.push('\n');
+        // The header is not hashed: a different header cannot move it. (This
+        // header still parses -- same seed range, same pieces, so the letters
+        // are the right length -- it is simply not the canonical line.)
+        let header_changed = format!(
+            "# tetris-lab dataset 9 goal=99 pieces={} cap={} seeds={}-{}\n{}",
+            cfg.pieces,
+            cfg.cap,
+            dataset::SEED_FIRST,
+            dataset::SEED_LAST,
+            {
+                let mut s = String::new();
+                for game in &parsed.games {
+                    s.push_str(&dataset::game_line(game));
+                    s.push('\n');
+                }
+                s
             }
-            s
-        });
+        );
         let reparsed = dataset::parse(&cfg, &header_changed).unwrap();
         assert_eq!(
             fingerprint::fingerprint(&reparsed.games),
@@ -520,9 +565,8 @@ fn the_configurations_pair_on_a_seed() {
 fn no_seed_is_out_of_domain() {
     for cfg in dataset::CONFIGS {
         for seed in dataset::SEED_FIRST..=dataset::SEED_LAST {
-            engine::generate_game(seed, cfg.pieces, cfg.cap).unwrap_or_else(|e| {
-                panic!("{}: seed {seed} is out of domain: {e:?}", cfg.dir)
-            });
+            engine::generate_game(seed, cfg.pieces, cfg.cap)
+                .unwrap_or_else(|e| panic!("{}: seed {seed} is out of domain: {e:?}", cfg.dir));
         }
     }
 }
@@ -689,7 +733,7 @@ fn archiving_is_never_silent() {
     );
 
     // With a reason, §6.2 happens mechanically.
-    let manifest_before = load_manifest(&cfg);
+    let manifest_before = load_manifest_at(&root, &cfg);
     let report = export::run(
         &cfg,
         &root,
@@ -700,14 +744,18 @@ fn archiving_is_never_silent() {
     assert!(matches!(report.action, export::Action::Accepted { .. }));
 
     let archived = dataset::archive_dir(&root, &cfg).join(format!("{old_fingerprint}.txt"));
-    assert!(archived.exists(), "no archive file at {}", archived.display());
+    assert!(
+        archived.exists(),
+        "no archive file at {}",
+        archived.display()
+    );
     assert_eq!(
         fs::read_to_string(&archived).unwrap(),
         edited,
         "the archive must hold the file it replaced, byte for byte"
     );
 
-    let manifest_after = load_manifest(&cfg);
+    let manifest_after = load_manifest_at(&root, &cfg);
     assert_eq!(
         manifest_after.generator_version,
         manifest_before.generator_version + 1,
@@ -744,7 +792,12 @@ fn the_gate_passes_on_the_committed_dataset() {
     let reports = verify::run_all(&dataset::root()).expect("the committed Dataset is green");
     assert_eq!(reports.len(), dataset::CONFIGS.len());
     for report in &reports {
-        assert_eq!(report.games, dataset::GAME_COUNT, "{}", report.config.dir);
+        assert_eq!(
+            report.games.len(),
+            dataset::GAME_COUNT,
+            "{}",
+            report.config.dir
+        );
         assert_eq!(report.fingerprint, report.manifest.fingerprint);
     }
 }
@@ -757,15 +810,28 @@ fn the_export_is_one_line_per_game() {
         let path = dataset::games_path(&dataset::root(), &cfg);
         let bytes = fs::read(&path).unwrap();
         assert!(bytes.is_ascii(), "{}: not ASCII", cfg.dir);
-        assert!(!bytes.contains(&b'\r'), "{}: CR in the committed file", cfg.dir);
-        assert_eq!(bytes.last(), Some(&b'\n'), "{}: no trailing newline", cfg.dir);
+        assert!(
+            !bytes.contains(&b'\r'),
+            "{}: CR in the committed file",
+            cfg.dir
+        );
+        assert_eq!(
+            bytes.last(),
+            Some(&b'\n'),
+            "{}: no trailing newline",
+            cfg.dir
+        );
         let text = String::from_utf8(bytes).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), dataset::GAME_COUNT + 1, "{}", cfg.dir);
         for line in &lines[1..] {
             let fields: Vec<&str> = line.split(' ').collect();
             assert_eq!(fields.len(), 12, "{}: {line:?}", cfg.dir);
-            assert!(!line.contains("  "), "{}: double space in {line:?}", cfg.dir);
+            assert!(
+                !line.contains("  "),
+                "{}: double space in {line:?}",
+                cfg.dir
+            );
             for word in &fields[1..11] {
                 assert_eq!(word.len(), 8, "{}: {line:?}", cfg.dir);
                 assert_eq!(

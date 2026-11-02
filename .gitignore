@@ -40,3 +40,9 @@ host-probe/.chrome-profile/
 web/node_modules/
 web/dist/
 web/pkg/
+
+# The Dataset is a build gate, so nothing under it may ever be ignored (§11).
+# `!data/` comes first: git never descends into an ignored directory.
+!data/
+!data/dataset/
+!data/dataset/**
