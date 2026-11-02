@@ -22,8 +22,8 @@ impl Sim {
     fn from_board(board: &Board) -> Sim {
         let mut cells = [[false; H]; W];
         for (c, word) in board.0.iter().enumerate() {
-            for bit in 0..H {
-                cells[c][bit] = word & (1 << bit) != 0;
+            for (bit, cell) in cells[c].iter_mut().enumerate() {
+                *cell = word & (1 << bit) != 0;
             }
         }
         Sim { cells }

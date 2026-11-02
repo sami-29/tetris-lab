@@ -471,7 +471,7 @@ pub fn solve(
 
         // Stable descending sort: ties keep insertion order, which is
         // `(piece, rotation, column)` ascending.
-        cands.sort_by(|a, b| b.score.cmp(&a.score));
+        cands.sort_by_key(|cand| std::cmp::Reverse(cand.score));
         if cands.len() > width {
             cands.truncate(width);
         }
