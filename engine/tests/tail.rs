@@ -6,7 +6,7 @@
 //! not a benchmark result), and that switching the Tail on never changes a result
 //! the beam already reaches.
 
-use engine::evaluator::shipped;
+use engine::evaluator::{shipped, Heuristic, E0_HEURISTIC};
 use engine::generator::generate_game;
 use engine::search::{solve, Feature, SolveConfig, Status, Toggles};
 
@@ -35,15 +35,25 @@ fn shipped_config(goal: u32, beam_width: u32) -> SolveConfig {
 ///
 /// The assertion runs both directions on the same Seed, because "the Tail wins"
 /// proves nothing unless the same game loses without it.
+///
+/// Both directions run at the **E0 control**, not at `shipped()`. Ticket 05 ships
+/// E1, whose beam clears this Seed outright at beam 25 (won, eight Lines, 11,738
+/// Evaluations, Tail never fires), so the demonstration has no contradiction to
+/// observe there. What this test is about is the Tail's *mechanism* — a beam-only
+/// search that loses, rescued by the exact search — and the mechanism is
+/// observable at the control. A rescue Seed at the shipped table is ticket 08's
+/// seed sweep to find, not this fixture's to invent; neither `shipped()` nor the
+/// table it returns is chosen here.
 #[test]
 fn the_tail_wins_a_seed_the_beam_loses() {
     let game = generate_game(453, 40, 7).expect("seed 453, 40 pieces, cap 7 is in domain");
+    let control = Heuristic(E0_HEURISTIC);
 
     let beam = solve(
         &game.board,
         game.sequence.as_slice(),
         &beam_only(8, 25),
-        shipped(),
+        &control,
     );
     assert!(!beam.won, "seed 453 must stay lost with the Tail off");
     assert_eq!(beam.lines, 6, "the beam alone clears six Lines");
@@ -53,7 +63,7 @@ fn the_tail_wins_a_seed_the_beam_loses() {
         &game.board,
         game.sequence.as_slice(),
         &shipped_config(8, 25),
-        shipped(),
+        &control,
     );
     assert!(tail.won, "seed 453 must be won with the Tail on");
     assert_eq!(
@@ -91,7 +101,7 @@ fn the_tail_wins_a_seed_the_beam_loses() {
         &game.board,
         game.sequence.as_slice(),
         &shipped_config(8, 25),
-        shipped(),
+        &control,
     );
     assert_eq!(
         (
@@ -295,11 +305,14 @@ fn every_ablation_row_still_solves() {
     }
 
     // The Tail is the one switch that decides this Seed: on wins, off loses.
+    // Both at the E0 control, for the reason in `the_tail_wins_a_seed_the_beam_loses`:
+    // at shipped() (E1) the beam alone wins seed 453, so there is no rescue to see.
+    let control = Heuristic(E0_HEURISTIC);
     let on = solve(
         &needs_tail.board,
         needs_tail.sequence.as_slice(),
         &rows[0].1,
-        shipped(),
+        &control,
     );
     let off_row = rows
         .iter()
@@ -309,7 +322,7 @@ fn every_ablation_row_still_solves() {
         &needs_tail.board,
         needs_tail.sequence.as_slice(),
         &off_row.1,
-        shipped(),
+        &control,
     );
     assert!(on.won, "seed 453 with the Tail on");
     assert!(!off.won, "seed 453 with the Tail off");

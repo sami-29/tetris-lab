@@ -7,7 +7,7 @@
 //! this is where it shows.
 
 use engine::board::Board;
-use engine::evaluator::shipped;
+use engine::evaluator::{shipped, Evaluator};
 use engine::generator::generate_game;
 use engine::search::{solve, Move, SolveConfig, Status, MAX_WIDTH};
 
@@ -214,18 +214,21 @@ fn the_packed_result_carries_won_evals_status_lines_and_move_count() {
 // ── the evaluator is the only scoring surface ───────────────────────────────
 
 #[test]
-fn the_shipped_evaluator_scores_integers_and_prefers_line_clears() {
-    // §5.4: credit for lines cleared is live (the Python term was dead).
-    let ev = shipped();
+fn the_control_scores_integers_and_prefers_line_clears() {
+    // §5.4: E0's credit for Lines cleared is live (the Python term was dead). The
+    // control is named explicitly rather than taken from `shipped()`: which
+    // Evaluator ships is §9.4's verdict (ticket 08), and this assertion is about
+    // E0's arithmetic, not about the ablation's outcome.
+    let ev = engine::evaluator::Heuristic(engine::evaluator::E0_HEURISTIC);
     let board = Board::EMPTY;
-    let none = ev.score(&board, &engine::evaluator::PlacementCtx::default());
+    let none = ev.score(&board, &engine::evaluator::PlacementCtx::NONE);
     let cleared = ev.score(
         &board,
         &engine::evaluator::PlacementCtx {
             lines_cleared: 1,
-            ..Default::default()
+            ..engine::evaluator::PlacementCtx::NONE
         },
     );
-    assert!(cleared > none, "clearing a line must be worth something");
-    assert!(!ev.name().is_empty());
+    assert_eq!(cleared - none, 1_000, "a cleared line is worth 1000");
+    assert!(!shipped().name().is_empty(), "the shipped one has a name");
 }

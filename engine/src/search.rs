@@ -460,6 +460,10 @@ pub fn solve(
 
                     let mut next_board = parent.board;
                     next_board.place(rotation, column, shift);
+                    // The rows this placement completes, read *before* the clear:
+                    // the clear is exactly what the evaluator's context has to
+                    // remember, because the resulting board has forgotten it.
+                    let completed = next_board.full_rows();
                     let cleared = next_board.clear_full_rows();
                     let lines = parent.lines + cleared;
                     if lines > best_lines {
@@ -501,8 +505,8 @@ pub fn solve(
                             &next_board,
                             &PlacementCtx {
                                 lines_cleared: cleared,
-                                landing_height: (H as u32 - shift - rotation.height as u32) as i32,
-                                eroded_cells: cleared * W as u32,
+                                landing_height: rotation.landing_height(shift),
+                                eroded_cells: cleared * rotation.cells_in_rows(shift, completed),
                             },
                         ),
                         mv,
@@ -661,6 +665,9 @@ fn tail_search(
 
                         let mut next_board = state.board;
                         next_board.place(rotation, column, shift);
+                        // Same context the beam path builds: one definition of the
+                        // placement, because E1 scores both.
+                        let completed = next_board.full_rows();
                         let cleared = next_board.clear_full_rows();
                         let lines = state.lines + cleared;
                         if lines > best_lines {
@@ -701,9 +708,9 @@ fn tail_search(
                                 &next_board,
                                 &PlacementCtx {
                                     lines_cleared: cleared,
-                                    landing_height: (H as u32 - shift - rotation.height as u32)
-                                        as i32,
-                                    eroded_cells: cleared * W as u32,
+                                    landing_height: rotation.landing_height(shift),
+                                    eroded_cells: cleared
+                                        * rotation.cells_in_rows(shift, completed),
                                 },
                             ),
                             mv,

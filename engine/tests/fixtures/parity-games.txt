@@ -1,0 +1,21 @@
+# The parity set: the fixed Board-and-Sequence set `cargo test` and the built wasm
+# are both solved on (§5.4's "native and wasm agree exactly on every score").
+#
+# One case per line, `seed pieces cap goal beam`. The Board and the Sequence are
+# not stored here because they are a function of `(seed, pieces, cap)` by §5.5–5.8:
+# both targets generate them with the same committed generator, which is what makes
+# this a fixed set rather than a copy of one frame.
+#
+# The set is chosen for what the Move list can reveal about scores, since the ABI
+# carries no score of its own (§4): Beam width 1 makes the search a greedy arg-max,
+# so a score that differs by a single unit changes the play; width 8 lets a
+# one-unit difference reorder a Layer's cut; and the last case is a lost Solve, so
+# the parity check covers "no answer" as well as an answer.
+#
+# This is the ticket-05 score-level fixture. §9.2's 100-seed native/wasm gate is
+# ticket 09's harness, built on the same comparison.
+0 24 7 6 8
+42 24 7 6 8
+7 24 7 6 4
+11 30 7 8 1
+3 5 7 8 25
