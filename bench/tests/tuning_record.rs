@@ -334,11 +334,12 @@ fn the_width_the_run_used_is_the_width_curve_it_named() {
 fn the_record_round_trips_byte_for_byte() {
     let path = measurements().join("e2-tuning.json");
     let text = std::fs::read_to_string(&path).expect("read the record");
-    let normalised = text.replace(
-        "
-", "
-",
-    );
+    // The escapes, not literal CR/LF bytes: `core.autocrlf` rewrites a
+    // literal CRLF inside the source when the file is checked out, which
+    // turns this normalisation into a no-op and makes the comparison fail on
+    // line endings alone. `render()` writes LF, the committed blob is LF, and
+    // a Windows worktree is CRLF.
+    let normalised = text.replace("\r\n", "\n");
     let record = Record::parse(&normalised).expect("the record parses");
     assert_eq!(
         record.render(),
