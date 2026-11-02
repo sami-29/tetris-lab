@@ -21,12 +21,6 @@
 // solved, because nobody watches the frames in between. The clock is injected so
 // `node --test` owns it, exactly as `ui/playback.ts` injects its scheduler.
 
-/** The timer functions, injectable so a test can advance time by hand. */
-export interface Timers {
-  setTimer(handler: () => void, ms: number): TimerHandle;
-  clearTimer(handle: TimerHandle): void;
-}
-
 /**
  * Whatever a timer implementation hands back: a numeric id in the DOM, an object
  * in Node. Named, so the coalescer never traffics in `unknown`.
