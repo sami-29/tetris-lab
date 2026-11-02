@@ -9,6 +9,7 @@
 
 import engineWasmUrl from "../pkg/engine.wasm?url";
 
+import { DEFAULT_BEAM } from "./config/width.ts";
 import type { FromWorker, GameMessage, GameInput, ToWorker } from "./core/protocol.ts";
 import { fieldFrom } from "./ui/field.ts";
 import { BoardView } from "./ui/board.ts";
@@ -16,10 +17,12 @@ import { Playback } from "./ui/playback.ts";
 import { letterOf } from "./ui/pieces.ts";
 
 /**
- * §2.2's defaults. `DEFAULT_BEAM` is read at build time from the committed
- * width-curve artifact, which does not exist until the measurement ticket lands;
- * 25 is the width this ticket's own tests solve at and the value the page ships
- * with until then.
+ * §2.2's defaults. `DEFAULT_BEAM` is not written here: it is read at build time
+ * from the committed width-curve artifact (`data/measurements/width-curve.json`,
+ * measured by `bench width-curve` for §9.5), through `./config/width.ts` — the
+ * one module allowed to name it. The toolbar's width field opens at it, the
+ * slider runs to `WIDTH_CAP`, and neither number can drift from the published
+ * table because all three read the same import.
  */
 /** §4's handshake number, echoed in the status line. The loader checks it. */
 const ABI = 2;
@@ -29,7 +32,7 @@ const DEFAULTS: GameInput = {
   goal: 8,
   pieces: 40,
   heightCap: 7,
-  beamWidth: 25,
+  beamWidth: DEFAULT_BEAM,
 };
 
 const canvas = document.querySelector<HTMLCanvasElement>("#board");
