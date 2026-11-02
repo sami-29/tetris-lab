@@ -105,8 +105,16 @@ fn the_placement_table_matches_section_5_2() {
 #[test]
 fn piece_indices_are_the_abi_piece_index() {
     // §4.1.1: piece_index indexes I, J, L, O, S, T, Z.
-    let order = [Piece::I, Piece::J, Piece::L, Piece::O, Piece::S, Piece::T, Piece::Z];
-    assert_eq!(b"IJLOSTZ", order.map(|p| p.letter()));
+    let order = [
+        Piece::I,
+        Piece::J,
+        Piece::L,
+        Piece::O,
+        Piece::S,
+        Piece::T,
+        Piece::Z,
+    ];
+    assert_eq!(&b"IJLOSTZ"[..], &order.map(|p| p.letter())[..]);
     for (i, p) in order.iter().enumerate() {
         assert_eq!(p.index(), i as u8);
         assert_eq!(Piece::from_letter(p.letter()), Some(*p));

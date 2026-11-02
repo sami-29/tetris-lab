@@ -40,51 +40,54 @@ impl Sim {
         if col + w > W {
             return None;
         }
-        // Cell offsets from the box's top row.
-        let mut box_cells = Vec::new();
+        // Cell offsets from the piece's lowest occupied bit: `Rotation.cols` is a
+        // bit per row with bit 0 at the box's *bottom* row, so box row `r` is
+        // offset `h - 1 - r` from that bit.
+        let mut cells = Vec::new();
         for dc in 0..w {
             for row in 0..h {
-                // Rotation cols are bit-per-row with bit 0 at the *bottom* row.
-                let bit = if row < 8 { (rot.cols[dc] >> (h - 1 - row)) & 1 } else { 0 };
-                if bit == 1 {
-                    box_cells.push((dc, row));
+                if (rot.cols[dc] >> (h - 1 - row)) & 1 == 1 {
+                    cells.push((dc, h - 1 - row));
                 }
             }
         }
-        if box_cells.is_empty() {
+        if cells.is_empty() {
             return None;
         }
-        // Gravity: the landing top row is the last top row that does not
-        // overlap. `top == 0` blocked means the piece cannot enter.
+        // Gravity: enter at the top row and fall while the position is free, so
+        // the landing is the lowest base reached with every base above it free.
+        // A piece that cannot enter at the top row has no legal placement.
         let mut landing: Option<usize> = None;
-        for top in 0..=(H - h) {
-            let fits = box_cells
+        for base in (0..=(H - h)).rev() {
+            let fits = cells
                 .iter()
-                .all(|(dc, row)| !self.cells[col + dc][top + row]);
-            if fits {
-                landing = Some(top);
-            } else if landing.is_some() || top == 0 {
+                .all(|(dc, offset)| !self.cells[col + dc][base + offset]);
+            if !fits {
                 break;
             }
+            landing = Some(base);
         }
-        let top = landing?;
-        for (dc, row) in &box_cells {
-            self.cells[col + dc][top + row] = true;
+        let base = landing?;
+        for (dc, offset) in &cells {
+            self.cells[col + dc][base + offset] = true;
         }
-        // Clear full rows: rows where every column is set, bottom-up.
+
+        // Clear full rows bottom-up. `bit` is a bit index, so clearing the row at
+        // `bit` shifts everything above it down one place; the row that falls into
+        // `bit` has to be re-checked, hence `bit += 1`.
         let mut cleared = 0u32;
-        let mut r = H;
-        while r > 0 {
-            r -= 1;
-            if (0..W).all(|c| self.cells[c][r]) {
+        let mut bit = H;
+        while bit > 0 {
+            bit -= 1;
+            if (0..W).all(|c| self.cells[c][bit]) {
                 for c in 0..W {
-                    for k in (1..=r).rev() {
-                        self.cells[c][k] = self.cells[c][k - 1];
+                    for k in bit..(H - 1) {
+                        self.cells[c][k] = self.cells[c][k + 1];
                     }
-                    self.cells[c][0] = false;
+                    self.cells[c][H - 1] = false;
                 }
                 cleared += 1;
-                r += 1; // the row that fell into r must be re-checked
+                bit += 1;
             }
         }
         Some(cleared)
@@ -104,7 +107,13 @@ impl Sim {
 }
 
 fn config(goal: u32, beam_width: u32) -> SolveConfig {
-    SolveConfig { goal, beam_width, dedup: true, no_suicide: true, tail: true }
+    SolveConfig {
+        goal,
+        beam_width,
+        dedup: true,
+        no_suicide: true,
+        tail: true,
+    }
 }
 
 fn seed_42_game() -> engine::generator::Game {
@@ -116,7 +125,12 @@ fn seed_42_game() -> engine::generator::Game {
 #[test]
 fn a_known_seed_solves_to_a_won_result() {
     let game = seed_42_game();
-    let result = solve(&game.board, game.sequence.as_slice(), &config(8, 25), shipped());
+    let result = solve(
+        &game.board,
+        game.sequence.as_slice(),
+        &config(8, 25),
+        shipped(),
+    );
 
     assert_eq!(result.status, Status::Ok);
     assert!(result.won, "seed 42 at width 25 clears 8 lines");
@@ -130,7 +144,12 @@ fn a_known_seed_solves_to_a_won_result() {
 fn the_move_list_replays_to_the_claimed_lines() {
     for (seed, goal) in [(42u32, 8u32), (0, 8), (7, 8)] {
         let game = generate_game(seed, 40, 7).expect("in domain");
-        let result = solve(&game.board, game.sequence.as_slice(), &config(goal, 25), shipped());
+        let result = solve(
+            &game.board,
+            game.sequence.as_slice(),
+            &config(goal, 25),
+            shipped(),
+        );
         assert!(result.won, "seed {seed} should win at width 25");
 
         let mut sim = Sim::from_board(&game.board);
@@ -138,9 +157,13 @@ fn the_move_list_replays_to_the_claimed_lines() {
         for (i, mv) in result.moves.iter().enumerate() {
             let piece = game.sequence.as_slice()[i];
             assert_eq!(mv.piece_index, piece.index(), "move {i} names its piece");
-            let cleared = sim
-                .play(piece, mv.rotation, mv.column)
-                .unwrap_or_else(|| panic!("seed {seed}: move {i} ({mv:?}) is not legal"));
+            let before = sim.as_board();
+            let cleared = sim.play(piece, mv.rotation, mv.column).unwrap_or_else(|| {
+                panic!(
+                    "seed {seed}: move {i} ({mv:?}) is not legal; board {:?}",
+                    before.0
+                )
+            });
             lines += cleared;
         }
         assert_eq!(lines, result.lines, "seed {seed}: replayed lines");
@@ -153,7 +176,12 @@ fn the_move_list_replays_to_the_claimed_lines() {
 fn an_unreachable_goal_is_a_lost_result_with_no_moves() {
     // Five pieces cannot clear 80 lines; the search must say so plainly.
     let game = generate_game(3, 5, 7).expect("in domain");
-    let result = solve(&game.board, game.sequence.as_slice(), &config(80, 25), shipped());
+    let result = solve(
+        &game.board,
+        game.sequence.as_slice(),
+        &config(80, 25),
+        shipped(),
+    );
     assert_eq!(result.status, Status::Ok, "a loss is not an error");
     assert!(!result.won);
     assert!(result.moves.is_empty());
@@ -163,8 +191,18 @@ fn an_unreachable_goal_is_a_lost_result_with_no_moves() {
 #[test]
 fn solving_is_deterministic() {
     let game = seed_42_game();
-    let a = solve(&game.board, game.sequence.as_slice(), &config(8, 25), shipped());
-    let b = solve(&game.board, game.sequence.as_slice(), &config(8, 25), shipped());
+    let a = solve(
+        &game.board,
+        game.sequence.as_slice(),
+        &config(8, 25),
+        shipped(),
+    );
+    let b = solve(
+        &game.board,
+        game.sequence.as_slice(),
+        &config(8, 25),
+        shipped(),
+    );
     assert_eq!(a.won, b.won);
     assert_eq!(a.lines, b.lines);
     assert_eq!(a.evaluations, b.evaluations);
@@ -177,9 +215,9 @@ fn solving_is_deterministic() {
 fn out_of_domain_parameters_return_status_1() {
     let game = seed_42_game();
     for cfg in [
-        config(0, 25),               // goal has no zero
-        config(8, 0),                // beam width starts at 1
-        config(8, MAX_WIDTH + 1),    // and stops at 16,384
+        config(0, 25),            // goal has no zero
+        config(8, 0),             // beam width starts at 1
+        config(8, MAX_WIDTH + 1), // and stops at 16,384
     ] {
         let r = solve(&game.board, game.sequence.as_slice(), &cfg, shipped());
         assert_eq!(r.status, Status::OutOfDomain, "cfg {cfg:?}");
@@ -189,7 +227,13 @@ fn out_of_domain_parameters_return_status_1() {
     }
     // The widest legal beam is inside the domain.
     assert_eq!(
-        solve(&game.board, game.sequence.as_slice(), &config(8, MAX_WIDTH), shipped()).status,
+        solve(
+            &game.board,
+            game.sequence.as_slice(),
+            &config(8, MAX_WIDTH),
+            shipped()
+        )
+        .status,
         Status::Ok
     );
 }
@@ -217,7 +261,11 @@ fn status_codes_are_the_abi_numbers() {
 
 #[test]
 fn a_move_packs_piece_rotation_column() {
-    let mv = Move { piece_index: 4, rotation: 3, column: 9 };
+    let mv = Move {
+        piece_index: 4,
+        rotation: 3,
+        column: 9,
+    };
     assert_eq!(mv.packed(), (4 << 16) | (3 << 8) | 9);
     assert_eq!(Move::unpack(mv.packed()), mv);
 }
@@ -225,17 +273,39 @@ fn a_move_packs_piece_rotation_column() {
 #[test]
 fn the_packed_result_carries_won_evals_status_lines_and_move_count() {
     let game = seed_42_game();
-    let r = solve(&game.board, game.sequence.as_slice(), &config(8, 25), shipped());
+    let r = solve(
+        &game.board,
+        game.sequence.as_slice(),
+        &config(8, 25),
+        shipped(),
+    );
     let p = r.packed();
     assert_eq!(p & 1, 1, "won is bit 0");
-    assert_eq!((p >> 1) & 0xffff_ffff, r.evaluations as i64, "evaluations are bits 1-32");
-    assert_eq!((p >> 33) & 0xff, r.status.code() as i64, "status is bits 33-40");
+    assert_eq!(
+        (p >> 1) & 0xffff_ffff,
+        r.evaluations as i64,
+        "evaluations are bits 1-32"
+    );
+    assert_eq!(
+        (p >> 33) & 0xff,
+        r.status.code() as i64,
+        "status is bits 33-40"
+    );
     assert_eq!((p >> 41) & 0xff, r.lines as i64, "lines are bits 41-48");
-    assert_eq!((p >> 49) & 0x1ff, r.moves.len() as i64, "move count is bits 49-57");
+    assert_eq!(
+        (p >> 49) & 0x1ff,
+        r.moves.len() as i64,
+        "move count is bits 49-57"
+    );
     assert_eq!(p >> 58, 0, "the reserved top bits stay zero");
 
     // A status other than 0 must never look like a win.
-    let bad = solve(&game.board, game.sequence.as_slice(), &config(0, 25), shipped());
+    let bad = solve(
+        &game.board,
+        game.sequence.as_slice(),
+        &config(0, 25),
+        shipped(),
+    );
     assert_eq!(bad.packed() & 1, 0);
 }
 
@@ -249,7 +319,10 @@ fn the_shipped_evaluator_scores_integers_and_prefers_line_clears() {
     let none = ev.score(&board, &engine::evaluator::PlacementCtx::default());
     let cleared = ev.score(
         &board,
-        &engine::evaluator::PlacementCtx { lines_cleared: 1, ..Default::default() },
+        &engine::evaluator::PlacementCtx {
+            lines_cleared: 1,
+            ..Default::default()
+        },
     );
     assert!(cleared > none, "clearing a line must be worth something");
     assert!(!ev.name().is_empty());

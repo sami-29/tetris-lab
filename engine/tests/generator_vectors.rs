@@ -14,7 +14,8 @@ const VECTORS: &str = include_str!("fixtures/splitmix64.txt");
 const GAMES: &str = include_str!("fixtures/games.txt");
 
 fn data_lines(text: &'static str) -> impl Iterator<Item = &'static str> {
-    text.lines().filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
+    text.lines()
+        .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
 }
 
 #[test]
@@ -129,7 +130,10 @@ fn a_generated_board_is_legal_by_the_solver_definition() {
     // left standing (the pre-fill clears as it goes).
     for seed in 0..120u32 {
         let game = generate_game(seed, 40, 7).expect("in domain");
-        assert!(game.board.is_legal(), "seed {seed} produced an illegal board");
+        assert!(
+            game.board.is_legal(),
+            "seed {seed} produced an illegal board"
+        );
         assert_eq!(game.board.full_rows(), 0, "seed {seed} left a full row");
         assert!(game.board.height(0) <= engine::board::H as u32);
     }
