@@ -152,6 +152,59 @@ function connect(url) {
   return { ws, ready, send };
 }
 
+/**
+ * Every picture the board draws over `windowMs`, sampled once per animation frame
+ * from *inside* the page. A CDP round trip per sample costs ~100 ms at this pace,
+ * which is a third of a step, and skipped the clear as often as it caught it; in
+ * the page, nothing the renderer paints can fall between two samples.
+ *
+ * A picture is the settled mask followed by the in-flight mask (see READ): at rest
+ * the second half is all zeroes, and every frame that is not all zeroes there is a
+ * piece in the air or a band contracting.
+ */
+const FRAME_WINDOW = (windowMs) => `new Promise((resolve) => {
+  const canvas = document.getElementById("board");
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const cell = Number(canvas.dataset.cell || 0) * dpr;
+  const ox = Number(canvas.dataset.originX || 0) * dpr;
+  const oy = Number(canvas.dataset.originY || 0) * dpr;
+  const frames = [];
+  const t0 = performance.now();
+  const sample = () => {
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let settled = "";
+    let flight = "";
+    for (let row = 0; row < 20; row += 1) {
+      for (let col = 0; col < 10; col += 1) {
+        const x = Math.round(ox + (col + 0.5) * cell);
+        const y = Math.round(oy + (row + 0.5) * cell);
+        const i = (y * canvas.width + x) * 4;
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const isSettled = r > 100 && r < 150 && g > 135 && g < 180 && b > 170 && b < 215;
+        settled += isSettled ? "1" : "0";
+        flight += !isSettled && r > 195 && g > 205 && b > 228 ? "1" : "0";
+      }
+    }
+    const picture = settled + flight;
+    const last = frames[frames.length - 1];
+    if (!last || last.picture !== picture) {
+      frames.push({
+        at: Math.round(performance.now() - t0),
+        seek: Number(document.getElementById("strip")?.getAttribute("aria-valuenow") ?? -1),
+        picture: picture,
+        settled: settled,
+        flight: flight,
+      });
+    }
+    if (performance.now() - t0 < ${windowMs}) requestAnimationFrame(sample);
+    else resolve(frames);
+  };
+  requestAnimationFrame(sample);
+})`;
+
 /** What the page says about itself, read from the DOM it rendered. */
 const READ = `(() => {
   const text = (id) => document.getElementById(id)?.textContent ?? "";
@@ -174,10 +227,14 @@ const READ = `(() => {
       }
     }
   }
-  // Read the 10×20 settled mask back out of the pixels, cell centre by cell
-  // centre. The settled fill is #7f9dc0; the piece in flight is brighter, the ghost
-  // outline darker, so the window below picks out settled cells only.
+  // Read the 10×20 board back out of the pixels, cell centre by cell centre, as
+  // *two* masks: the settled cells (#7f9dc0) and the cells drawn in the brighter
+  // in-flight fill (#e8f0ff, and the #d7e4f5 clear band). A cell cannot be both,
+  // so mask + flight is one picture and mask alone is only the settled half.
+  // Two masks rather than one colour window: a drop must not be able to read as a
+  // finished board, and it would if the in-flight fill were simply ignored.
   let mask = "";
+  let flight = "";
   const dpr = window.devicePixelRatio || 1;
   const cell = Number(canvas?.dataset.cell ?? 0) * dpr;
   const ox = Number(canvas?.dataset.originX ?? 0) * dpr;
@@ -190,7 +247,9 @@ const READ = `(() => {
         const y = Math.round(oy + (row + 0.5) * cell);
         const i = (y * canvas.width + x) * 4;
         const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
-        mask += r > 100 && r < 150 && g > 135 && g < 180 && b > 170 && b < 215 ? "1" : "0";
+        const settled = r > 100 && r < 150 && g > 135 && g < 180 && b > 170 && b < 215;
+        mask += settled ? "1" : "0";
+        flight += !settled && r > 195 && g > 205 && b > 228 ? "1" : "0";
       }
     }
   }
@@ -203,6 +262,7 @@ const READ = `(() => {
     progress: text("progress"),
     tone: document.getElementById("status")?.dataset.tone ?? "",
     mask,
+    flight,
     canvas: { width: canvas?.width ?? 0, height: canvas?.height ?? 0, ...drawn },
     // The controls, as a visitor sees them.
     seek: Number(strip?.getAttribute("aria-valuenow") ?? -1),
@@ -291,6 +351,16 @@ try {
       sessionId,
     );
     return result.result?.value ?? null;
+  };
+
+  /** Every distinct picture drawn over `windowMs`, one sample per animation frame. */
+  const readFrames = async (windowMs) => {
+    const result = await cdp.send(
+      "Runtime.evaluate",
+      { expression: FRAME_WINDOW(windowMs), awaitPromise: true, returnByValue: true },
+      sessionId,
+    );
+    return result.result?.value ?? [];
   };
 
   // The solve arrives in the worker; wait for the page to name an outcome.
@@ -396,11 +466,20 @@ try {
   await key(" ", "Space", 32);
   check("Space resumes", /playing/.test((await read()).progress));
 
+  // Stepping is asserted from a *still* clock. Reading the position and pressing
+  // the arrow is two round trips (~200 ms), and at 1.43 moves/s a running clock can
+  // cross a step boundary in between — which it did, one run in three, reporting
+  // "Move 12" where "Move 11" was meant. Paused, only the key moves the position,
+  // so the assertion is about the key and not about when the read landed.
+  await key(" ", "Space", 32); // pause: the arrows are measured from a frozen position
+  const beforeStep = await read();
+  console.log(`  arrows   stepping from Move ${beforeStep.seek}, ${/paused/.test(beforeStep.progress) ? "paused" : "STILL PLAYING"}`);
   await key("ArrowRight", "ArrowRight", 39);
   const stepped = await read();
-  check("→ steps one Move forward (and pauses)", stepped.seek === Math.min(expected.total, pausedAt + 1) && /paused/.test(stepped.progress), `Move ${stepped.seek}`);
+  check("→ steps one Move forward (and pauses)", stepped.seek === Math.min(expected.total, beforeStep.seek + 1) && /paused/.test(stepped.progress), `Move ${beforeStep.seek} → ${stepped.seek}`);
   await key("ArrowLeft", "ArrowLeft", 37);
-  check("← steps one Move back", (await read()).seek === Math.min(expected.total, pausedAt), `Move ${(await read()).seek}`);
+  const wentBack = await read();
+  check("← steps one Move back", wentBack.seek === Math.min(expected.total, beforeStep.seek) && /paused/.test(wentBack.progress), `Move ${stepped.seek} → ${wentBack.seek}`);
 
   await key("End", "End", 35);
   const atEnd = await read();
@@ -483,26 +562,42 @@ try {
   shots.push(await shoot("mid"));
 
   // ---- motion: a drop and a collapse are drawn, not jumped over ---------------
-  await setSpeedSlider(0.32); // about 0.9 moves/s: slow enough to sample a collapse
+  //
+  // *Where to look.* The clears are at `expected.clearing` — Move 8 in the default
+  // game — so sampling from Move 0 at this pace never reaches a collapse inside any
+  // sane window, and used to report "40 distinct frames, all end states" for a page
+  // that was animating correctly. The watch therefore starts one Move before the
+  // first clear.
+  //
+  // *How long.* The slider at 0.32 is ~1.27 moves/s (log scale: exp(lerp(ln 0.25,
+  // ln 40, 0.32))), so one step is 788 ms; a step is drop 45 % (355 ms) then clear
+  // 36 % (284 ms) then hold. 2200 ms is 2.8 steps, so the collapse of `firstClear`
+  // — which begins 355 ms after play does — cannot fall outside the window.
+  //
+  // *What counts as motion.* The picture is the settled mask *and* the in-flight
+  // mask: an end state is a settled mask with nothing in the air. A drop is a
+  // picture no end state has, and so is a collapse, without either having to change
+  // the window it is read in.
+  await setSpeedSlider(0.32);
+  const firstClear = expected.clearing[0] ?? Math.min(2, expected.total);
   await key("Home", "Home", 36);
+  for (let i = 0; i < firstClear - 1; i += 1) await key("ArrowRight", "ArrowRight", 39);
+  const beforeMotion = await read();
+  console.log(`  motion   watching from Move ${beforeMotion.seek} of ${expected.total}; first clear is Move ${firstClear}`);
   await key(" ", "Space", 32);
-  const sampled = new Set();
-  let sawUnknown = null;
-  for (let i = 0; i < 40; i += 1) {
-    await sleep(120);
-    const state = await read();
-    if (!state) continue;
-    sampled.add(state.mask);
-    if (!expected.masks.includes(state.mask) && sawUnknown === null) {
-      sawUnknown = { mask: state.mask, seek: state.seek };
-      shots.push(await shoot("collapse"));
-    }
-  }
+  const frames = await readFrames(2200);
+  const atRest = new Set(expected.masks.map((settled) => settled + "0".repeat(200)));
+  const pictures = new Set(frames.map((frame) => frame.picture));
+  const moving = frames.filter((frame) => !atRest.has(frame.picture));
+  const inAir = moving.filter((frame) => frame.flight.includes("1"));
   check(
     "a frame between two boards is drawn: the drop and the collapse are motion",
-    sawUnknown !== null,
-    sawUnknown ? `an intermediate picture at Move ${sawUnknown.seek}` : `${sampled.size} distinct frames, all end states`,
+    moving.length > 0,
+    moving.length > 0
+      ? `${pictures.size} distinct pictures, ${moving.length} not an end state, ${inAir.length} with a cell in the air, first at ${moving[0].at} ms`
+      : `${pictures.size} distinct pictures, all end states`,
   );
+  shots.push(await shoot("mid-drop"));
   check("the strip keeps carrying the position", (await read()).seek >= 0);
   await key(" ", "Space", 32); // pause for the last screenshot
   shots.push(await shoot("paused"));
