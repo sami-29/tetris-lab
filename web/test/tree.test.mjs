@@ -69,6 +69,7 @@ const tree = (options = {}) => buildTree(TRACE, { ...PLOT, ...options });
 const kinds = (model) => treeDisplayList(model).filter((mark) => mark.kind === "edge" || mark.kind === "state");
 const ofKind = (model, kind) => treeDisplayList(model).filter((mark) => mark.kind === kind);
 const ids = (marks) => marks.map((mark) => mark.id).sort();
+const keyOf = (ref) => `${ref.layer}:${ref.rank}`;
 const layerOf = (layer) => TRACE.records.slice(TRACE.layerStart[layer], TRACE.layerStart[layer] + TRACE.perLayerCounts[layer]);
 const expectedDrawn = (bound) => FIXTURE.expect.perLayerCounts.map((count) => Math.min(bound, count));
 
@@ -259,8 +260,8 @@ test("an edge whose parent is not drawn is a stem, never a line to the column ed
   // Every edge joins two states that are in the drawing, and no edge enters layer 0.
   const drawn = new Set(model.nodes.map((node) => node.id));
   for (const edge of model.edges) {
-    assert.ok(drawn.has(edge.from.id), `edge ${edge.id} starts at a drawn state`);
-    assert.ok(drawn.has(edge.to.id), `edge ${edge.id} ends at a drawn state`);
+    assert.ok(drawn.has(keyOf(edge.from)), `edge ${edge.id} starts at a drawn state`);
+    assert.ok(drawn.has(keyOf(edge.to)), `edge ${edge.id} ends at a drawn state`);
     assert.ok(edge.to.layer > 0, "nothing enters layer 0");
     assert.equal(edge.from.layer, edge.to.layer - 1, "an edge joins consecutive Layers");
   }
@@ -322,25 +323,24 @@ test("the -2 sentinel: the edge is dropped and the stem says the trace did not r
   assert.equal(model.edges.length + stems.length, nonRoot);
 
   // A parent beyond the cut is the other reason, and it is not the same words.
-  const beyond = buildTree(clipped, { ...PLOT, bound: 1 });
+  const beyond = buildTree(clipped, { ...PLOT, bound: TREE_BOUND_MIN });
   const cutAway = beyond.nodes.find((node) => node.layer === 1 && node.rank === 0);
-  assert.equal(cutAway.orphan, null, "rank 0's parent is rank 0, which bound 1 still draws");
+  assert.equal(cutAway.orphan, null, "rank 0's parent is rank 0, which the bound still draws");
+  // Six states in one Layer, a bound of four: the cut is what hides the parent.
   const wide = synthetic([
     [{ rank: 0, score: -100, lines: 0, parentRank: -1 }],
-    [
-      { rank: 0, score: -101, lines: 0, parentRank: 0 },
-      { rank: 1, score: -102, lines: 0, parentRank: 0 },
-    ],
-    [{ rank: 0, score: -103, lines: 0, parentRank: 1 }],
+    Array.from({ length: 6 }, (_, rank) => ({ rank, score: -101 - rank, lines: 0, parentRank: 0 })),
+    [{ rank: 0, score: -110, lines: 0, parentRank: 5 }],
   ]);
-  const narrow = buildTree(wide, { ...PLOT, bound: 1 });
+  const narrow = buildTree(wide, { ...PLOT, bound: TREE_BOUND_MIN });
   const offCut = narrow.nodes.find((node) => node.layer === 2 && node.rank === 0);
   assert.equal(offCut.orphan.reason, "outside-bound");
-  assert.equal(offCut.orphan.hiddenParentRank, 1);
+  assert.equal(offCut.orphan.hiddenParentRank, 5);
+  assert.deepEqual(narrow.counts.perLayerDrawn, [1, 4, 1]);
   assert.equal(
     narrow.edges.filter((edge) => edge.to.layer === 2).length,
     0,
-    "bound 1 on a 2-state Layer draws no edge into layer 2",
+    "a parent past the bound draws no edge into layer 2",
   );
 });
 
@@ -370,7 +370,7 @@ test("selecting a state dims everything off its path", () => {
   // The bug not to copy from the prototype: its dim left the edges at full
   // strength, so a 200-state web survived the dim.
   for (const edge of model.edges) {
-    const onPath = path.has(edge.from.id) && path.has(edge.to.id);
+    const onPath = path.has(keyOf(edge.from)) && path.has(keyOf(edge.to));
     assert.equal(edge.onPath, onPath, `edge ${edge.id}`);
     assert.equal(edge.dimmed, !onPath, `edge ${edge.id} must dim with the states it joins`);
     assert.equal(edge.alpha, onPath ? TREE_ALPHA.onPath : TREE_ALPHA.offPathEdge, `edge ${edge.id} alpha`);
@@ -412,16 +412,22 @@ test("the tree's bound is a separate control from the beam width", () => {
   // Two integers, two setters: moving the bound rebuilds the picture from the
   // trace already in memory and touches nothing else.
   const at24 = tree();
-  const at40 = tree({ bound: 40 });
-  const at60 = tree({ bound: 60 });
+  const at12 = tree({ bound: 12 });
+  const at4 = tree({ bound: TREE_BOUND_MIN });
   assert.equal(at24.nodes.length, 427);
-  assert.equal(at40.nodes.length, FIXTURE.expect.tree.nodesAtBound["40"]);
-  assert.equal(at60.nodes.length, FIXTURE.expect.tree.nodesAtBound["60"]);
-  assert.equal(at40.bound, 40);
+  assert.equal(at12.nodes.length, 218, "a smaller bound draws fewer states per Layer");
+  assert.equal(at4.nodes.length, 74, "and the floor still draws a column");
+  assert.equal(at12.bound, 12);
   assert.equal(at24.bound, 24);
-  // The band — the beam's own record cap — is the same number in all three: the
-  // tree's bound never rewrites it, in either direction.
-  for (const model of [at24, at40, at60]) {
+  // Above the band the bound clamps *to* the band, loudly (the label says what is
+  // drawn) rather than pretending the trace holds records it does not.
+  assert.equal(tree({ bound: 40 }).bound, FIXTURE.band, "the band is the hard ceiling");
+  assert.equal(tree({ bound: 40 }).nodes.length, FIXTURE.expect.tree.nodesAtBound["40"]);
+  assert.equal(tree({ bound: 60 }).nodes.length, FIXTURE.expect.tree.nodesAtBound["60"]);
+  assert.equal(treeBoundLimit(FIXTURE.band), FIXTURE.band);
+  // The band — the beam's own record cap — is the same number in every one of them:
+  // the tree's bound never rewrites it, in either direction.
+  for (const model of [at24, at12, at4, tree({ bound: 60 })]) {
     assert.equal(model.band, FIXTURE.band, "the band is the trace's, whatever the tree's bound is");
     assert.equal(model.records, TRACE.records.length, "and the trace is not re-read");
   }
@@ -493,6 +499,9 @@ test("the card's Board is drawn at a size where a one-cell height difference is 
   assert.ok(narrow.cell <= wide.cell && narrow.cell >= 8, "a narrower inspector shrinks the card, never the tree");
   assert.equal(narrow.cell * 10, narrow.width);
   assert.equal(narrow.cell * 20, narrow.height);
+  // A short inspector shrinks the card before it shrinks the tree.
+  assert.equal(stateCardLayout(614, 160).cell, 8, "a 160-px card budget is the 8-px floor");
+  assert.equal(stateCardLayout(614, 400).cell, 14, "and a tall one is the 14-px cell");
 });
 
 // ── the words on screen ───────────────────────────────────────────────────

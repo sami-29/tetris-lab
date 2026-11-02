@@ -366,8 +366,8 @@ function pieceAt(sequence: string | undefined, layer: number): string {
   return sequence[layer - 1];
 }
 
-function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+function plural(count: number, noun: string, many = `${noun}s`): string {
+  return `${count} ${count === 1 ? noun : many}`;
 }
 
 /**
@@ -517,8 +517,8 @@ export function buildTree(trace: Trace, options: TreeOptions = {}): TreeModel {
       ];
       if (endCap) tooltipParts.push("the last Layer — no successor to drop it");
       else if (deadEnd) tooltipParts.push("no child — the search dropped it");
-      else if (cut) tooltipParts.push(`${plural(kidsTrace, "child")}, all below the top ${bound}`);
-      else tooltipParts.push(`${plural(kidsTrace, "child")} (${kidsWindow} inside the top ${bound})`);
+      else if (cut) tooltipParts.push(`${plural(kidsTrace, "child", "children")}, all below the top ${bound}`);
+      else tooltipParts.push(`${plural(kidsTrace, "child", "children")} (${kidsWindow} inside the top ${bound})`);
       if (orphan !== null) tooltipParts.push(orphan.words);
 
       const node: TreeNode = {
@@ -623,10 +623,13 @@ export function buildTree(trace: Trace, options: TreeOptions = {}): TreeModel {
     orderViolation,
     layout,
     label,
-    caption: `the tree · ${plural(nodes.length, "state")} over ${plural(drawnColumns, "Layer")} · ${plural(
-      edges.length,
-      "edge",
-    )}, ${plural(stems, "stem")}, ${plural(ticks, "tick")}, ${plural(chevrons, "chevron")}`,
+    caption:
+      `the tree · ${plural(nodes.length, "state")} over ${plural(drawnColumns, "Layer")} of ${total}` +
+      (drawnColumns < total ? ` (Layers ${from}–${from + drawnColumns - 1})` : "") +
+      ` · ${plural(edges.length, "edge")}, ${plural(stems, "stem")}, ${plural(ticks, "tick")}, ${plural(
+        chevrons,
+        "chevron",
+      )}`,
   };
 }
 
@@ -819,7 +822,7 @@ export function stateCard(
     `${lines} lines cleared`,
     node?.endCap === true
       ? "the last Layer"
-      : `${plural(kidsInTrace, "child")} (${kidsInWindow} inside the top ${model.bound})`,
+      : `${plural(kidsInTrace, "child", "children")} (${kidsInWindow} inside the top ${model.bound})`,
     onLineage ? "on the lineage that ends as the best final state" : "not on the lineage",
   ].join(" · ");
 
@@ -873,9 +876,16 @@ function divergenceFromLineage(model: TreeModel, ref: TreeRef): TreeDivergence |
  * "column heights are legible" means. Below an 8-px cell the fallback ladder
  * shrinks the tree, never the card.
  */
-export function stateCardLayout(inspectorWidth: number): { cell: number; width: number; height: number } {
+export function stateCardLayout(
+  inspectorWidth: number,
+  availableHeight = Number.POSITIVE_INFINITY,
+): { cell: number; width: number; height: number } {
   const inner = Math.max(80, Math.floor(inspectorWidth) - 48);
-  const cell = Math.max(8, Math.min(14, Math.floor(inner / 10)));
+  // The card is 20 cells tall plus 28 px of chrome. When the inspector is short the
+  // card yields before the tree does: 24 rows at a legible pitch is the ticket, and
+  // the Board is only worth a cell if the columns above it still read.
+  const byHeight = Number.isFinite(availableHeight) ? Math.floor((Math.max(0, availableHeight) - 28) / 20) : 14;
+  const cell = Math.max(8, Math.min(14, Math.floor(inner / 10), byHeight));
   return { cell, width: cell * 10, height: cell * 20 };
 }
 
