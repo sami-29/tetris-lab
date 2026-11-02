@@ -34,3 +34,9 @@ host-probe/.env
 host-probe/dev.log
 host-probe/probe-dom.html
 host-probe/.chrome-profile/
+
+# Rust / Vite build output (ticket 01; ticket 18 rewrites this file)
+/target/
+web/node_modules/
+web/dist/
+web/pkg/
