@@ -40,3 +40,6 @@ host-probe/.chrome-profile/
 web/node_modules/
 web/dist/
 web/pkg/
+
+# ticket 10's fixture generator is its own workspace (web/scripts/gen-replay-vectors)
+web/scripts/gen-replay-vectors/target/
