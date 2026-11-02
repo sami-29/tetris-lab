@@ -26,6 +26,7 @@ import { loadEngineFromBytes } from "../src/core/loader.ts";
 import { DEFAULT_BEAM } from "../src/config/width.ts";
 import { buildBand, greedySpine, winningLineage } from "../src/ui/band-model.ts";
 import { decodeTrace } from "../src/ui/trace.ts";
+import { TREE_BOUND_DEFAULT, buildTree } from "../src/ui/tree-model.ts";
 
 const ARTIFACT = fileURLToPath(new URL("../pkg/engine.wasm", import.meta.url));
 const OUT = fileURLToPath(
@@ -61,6 +62,18 @@ const trace = decodeTrace(traceWords, BAND);
 const model = buildBand(trace, { sequence, shippedBeam: DEFAULT_BEAM });
 const lineage = winningLineage(trace);
 const spine = greedySpine(trace);
+
+// Ticket 12's bounded tree, from the same words: the drill-down's goldens. The bound
+// is its own number, so the block records what the control's default draws *and*
+// what asking for more than the band can give draws — the band is the ceiling.
+const tree = buildTree(trace, { sequence, bound: TREE_BOUND_DEFAULT });
+const total = (values) => values.reduce((sum, value) => sum + value, 0);
+const nodesAtBound = Object.fromEntries(
+  [TREE_BOUND_DEFAULT, 40, 60].map((bound) => [
+    String(bound),
+    buildTree(trace, { sequence, bound }).nodes.length,
+  ]),
+);
 
 const fixture = {
   fixture: "trace-seed0-goal8-p40-cap7-band25",
@@ -102,6 +115,25 @@ const fixture = {
     greedySpineRanks: spine.map((point) => point.rank),
     rootScore: trace.records[0].score,
     axis: model.axis,
+    tree: {
+      bound: TREE_BOUND_DEFAULT,
+      nodes: tree.nodes.length,
+      edges: tree.edges.length,
+      stems: total(tree.counts.perLayerStems),
+      ticks: total(tree.counts.perLayerTicks),
+      chevrons: total(tree.counts.perLayerChevrons),
+      statesWithNoDrawnChild: tree.nodes.filter(
+        (node) => node.kidsInWindow === 0 && node.layer < tree.layerCount - 1,
+      ).length,
+      perLayerDrawn: tree.counts.perLayerDrawn,
+      perLayerTicks: tree.counts.perLayerTicks,
+      perLayerChevrons: tree.counts.perLayerChevrons,
+      perLayerStems: tree.counts.perLayerStems,
+      nodesAtBound,
+      lineageOutsideBound: tree.lineage
+        .filter((ref) => ref.rank >= TREE_BOUND_DEFAULT)
+        .map((ref) => ref.layer),
+    },
   },
 };
 
