@@ -661,6 +661,12 @@ fn the_committed_artifact_names_a_default_and_a_cap() {
     )
     .expect("web/src/config/width.ts");
     assert!(page.contains("data/measurements/width-curve.json"));
-    assert!(page.contains("default_beam as DEFAULT_BEAM"));
-    assert!(page.contains("width_cap as WIDTH_CAP"));
+    // Node exposes a JSON module through `default` only; Vite would also accept
+    // named re-exports. The module therefore projects the artifact's two fields
+    // onto the two exported constants — and names nothing else, so the numbers
+    // cannot be written a second time here.
+    assert!(page.contains("curve.default_beam"));
+    assert!(page.contains("export const DEFAULT_BEAM"));
+    assert!(page.contains("curve.width_cap"));
+    assert!(page.contains("export const WIDTH_CAP"));
 }
