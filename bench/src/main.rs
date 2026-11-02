@@ -391,10 +391,12 @@ fn gate_command(argv: &[String]) -> u8 {
 /// `(configuration, seed)` to stdout, and nothing else.
 ///
 /// ```text
-/// goal8-p40-cap7 42 10713641301068303 0308,0f08,0407
+/// goal8-p40-cap7 0 10713641301068153 0109,50105,30008,20100,40105
 /// ```
 ///
-/// `<config> <seed> <packed decimal> <Move words, or ->`. The comparison unit is
+/// `<config> <seed> <packed decimal> <Move words, or ->`, the words being
+/// `(piece_index << 16) | (rotation << 8) | column` in lowercase hex. The
+/// comparison unit is
 /// the printed line, not the packed `i64`: the packed value carries the Move
 /// *count* and not the Move order, so a determinism check on it alone could pass
 /// while the returned moves differ.
