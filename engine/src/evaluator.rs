@@ -458,20 +458,35 @@ pub const E1_PUBLISHED: DtWeights = DtWeights {
 /// E2 — Dellacherie–Thiery with weights tuned by cross-entropy on the tuning
 /// Split only (spec §9.4, ticket 07).
 ///
-/// **This constant is a placeholder until the run lands.** It is filled from
-/// `data/measurements/e2-tuning.json` and never by hand: `bench tune --replay`
-/// re-derives the table from the run's committed seed, and
-/// `bench/tests/tuning_record.rs` fails if the eight integers here and the
-/// record's `weights_q16` disagree.
+/// **Provenance, and do not edit these integers by hand.** They are run 0 of
+/// `data/measurements/e2-tuning.json`: seed `0x9e3779b97f4a7c15`, Split
+/// `1000-1999`, bed `goal12-p100-cap7`, width 25 (`DEFAULT_BEAM`, read from
+/// `data/measurements/width-curve.json`), 9 iterations before the held-out
+/// selection stopped improving. `bench tune --replay` re-derives this vector from
+/// that seed and `bench/tests/tuning_record.rs` fails if these eight `i32` and the
+/// record's `weights_q16` disagree, in either direction.
+///
+/// The run's verdict is `accepted` and it is the weakest kind of acceptance: every
+/// table wins 1,000 of 1,000 tuning games at this width, so the bed has **no
+/// win-rate resolution** (the record's `comparison.win_rate_axis` says
+/// `"no-resolution"`), and E2 was not worse than E1 on the tie-breaks — mean lines
+/// +0.0040 with a paired bootstrap 95 % CI of [−0.0040, +0.0130], evaluations per
+/// solve 14,034 vs 14,244 at p50. §9.4's ship rule is ticket 08's and is untouched:
+/// [`shipped`] still returns E1, and "E1 ships unless E2 clears p < 0.01" is a
+/// comparison ticket 08 makes against this table, not one this ticket makes.
+///
+/// Decimal, for the record: −7.858335, 2.58857, −4.813783, −20.786974, 2.635867,
+/// −6.195437, −1.74439, −11.005263 (Q16 = the integers below, round half away from
+/// zero).
 pub const E2_TUNED: DtWeights = DtWeights {
-    landing_height: E1_PUBLISHED.landing_height,
-    eroded_cells: E1_PUBLISHED.eroded_cells,
-    row_transitions: E1_PUBLISHED.row_transitions,
-    col_transitions: E1_PUBLISHED.col_transitions,
-    holes: E1_PUBLISHED.holes,
-    wells: E1_PUBLISHED.wells,
-    hole_depth: E1_PUBLISHED.hole_depth,
-    rows_with_holes: E1_PUBLISHED.rows_with_holes,
+    landing_height: -515_004,    // −7.858335 · 65_536
+    eroded_cells: 169_645,       // +2.588570 · 65_536
+    row_transitions: -315_476,   // −4.813783 · 65_536
+    col_transitions: -1_362_295, // −20.786974 · 65_536
+    holes: 172_744,              // +2.635867 · 65_536
+    wells: -406_024,             // −6.195437 · 65_536
+    hole_depth: -114_320,        // −1.744390 · 65_536
+    rows_with_holes: -721_241,   // −11.005263 · 65_536
 };
 
 // ── the shipped one ────────────────────────────────────────────────────────

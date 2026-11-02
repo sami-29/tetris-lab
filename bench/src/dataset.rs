@@ -894,11 +894,16 @@ impl TrainingDataset {
     /// The filter is the guarantee, and the assertions after it are the belt: a
     /// loader that silently returned fewer games would make a run's
     /// `seed_list_fnv` wrong rather than its table.
-    pub fn load(data: &Path, cfg: &Config, split: &TrainingSplit) -> Result<TrainingDataset, String> {
+    pub fn load(
+        data: &Path,
+        cfg: &Config,
+        split: &TrainingSplit,
+    ) -> Result<TrainingDataset, String> {
         let path = games_path(data, cfg);
         let text = std::fs::read_to_string(&path)
             .map_err(|error| format!("read {}: {error}", path.display()))?;
-        let parsed = parse(cfg, &text).map_err(|error| format!("parse {}: {error}", path.display()))?;
+        let parsed =
+            parse(cfg, &text).map_err(|error| format!("parse {}: {error}", path.display()))?;
         let games: Vec<engine::Game> = parsed
             .games
             .into_iter()
@@ -920,7 +925,10 @@ impl TrainingDataset {
     /// A bed with no committed Dataset (the validation-only configuration of
     /// §9.1), generated from the split's own seeds — the same guard, one layer
     /// further out: there is no seed to pass but `split.seeds()`.
-    pub fn generate(bed: &crate::width::Bed, split: &TrainingSplit) -> Result<TrainingDataset, String> {
+    pub fn generate(
+        bed: &crate::width::Bed,
+        split: &TrainingSplit,
+    ) -> Result<TrainingDataset, String> {
         let mut games = Vec::with_capacity(split.len());
         for seed in split.seeds() {
             let game = engine::generate_game(seed, bed.pieces, bed.cap)
@@ -946,7 +954,10 @@ impl TrainingDataset {
                 split.label()
             ));
         }
-        if games.windows(2).any(|pair| pair[1].seed != pair[0].seed + 1) {
+        if games
+            .windows(2)
+            .any(|pair| pair[1].seed != pair[0].seed + 1)
+        {
             return Err("the games are not in seed order".to_string());
         }
         Ok(TrainingDataset(games))

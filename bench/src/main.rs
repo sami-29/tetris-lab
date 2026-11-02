@@ -29,8 +29,8 @@ use std::process::ExitCode;
 
 use bench::dataset::{self, Config};
 use bench::gate::{self, Options as GateOptions};
-use bench::width::{self, MsSource, Options as WidthOptions, WIDTHS};
 use bench::tuning;
+use bench::width::{self, MsSource, Options as WidthOptions, WIDTHS};
 use bench::{export, fingerprint, show, verify};
 
 const USAGE: &str = "\
@@ -974,12 +974,14 @@ fn tune_command(argv: &[String]) -> u8 {
         let outcome: Result<(), String> = (|| {
             match flag.as_str() {
                 "--seed" => {
-                    let value = flag_value(argv, &mut index, &flag, "a u64 seed, decimal or 0x-hex")?;
-                    options.tune_seed =
-                        parse_u64(&value).ok_or_else(|| format!("--seed: {value:?} is not a u64"))?;
+                    let value =
+                        flag_value(argv, &mut index, &flag, "a u64 seed, decimal or 0x-hex")?;
+                    options.tune_seed = parse_u64(&value)
+                        .ok_or_else(|| format!("--seed: {value:?} is not a u64"))?;
                 }
                 "--bed" => {
-                    let value = flag_value(argv, &mut index, &flag, "a bed name like goal12-p100-cap7")?;
+                    let value =
+                        flag_value(argv, &mut index, &flag, "a bed name like goal12-p100-cap7")?;
                     options.bed = bed_from_name(&value)
                         .ok_or_else(|| format!("--bed: unknown bed {value:?}"))?;
                 }
@@ -1002,14 +1004,18 @@ fn tune_command(argv: &[String]) -> u8 {
                         .map_err(|_| format!("--iterations must be a number, found {value:?}"))?;
                 }
                 "--data" => {
-                    options.data = PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?)
+                    options.data =
+                        PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?)
                 }
                 "--out" => {
-                    options.out = Some(PathBuf::from(flag_value(argv, &mut index, &flag, "a file")?))
+                    options.out = Some(PathBuf::from(flag_value(
+                        argv, &mut index, &flag, "a file",
+                    )?))
                 }
                 "--rows" => {
-                    options.rows_out =
-                        Some(PathBuf::from(flag_value(argv, &mut index, &flag, "a file")?))
+                    options.rows_out = Some(PathBuf::from(flag_value(
+                        argv, &mut index, &flag, "a file",
+                    )?))
                 }
                 "--quiet" => options.quiet = true,
                 "--replay" => {
@@ -1029,9 +1035,11 @@ fn tune_command(argv: &[String]) -> u8 {
             Ok(())
         })();
         if let Err(message) = outcome {
-            eprintln!("error: {message}
+            eprintln!(
+                "error: {message}
 
-{USAGE}");
+{USAGE}"
+            );
             return 2;
         }
         index += 1;
@@ -1048,7 +1056,9 @@ fn tune_command(argv: &[String]) -> u8 {
                     println!("reproducible: the committed seed draws the committed table");
                     0
                 } else {
-                    eprintln!("REPLAY MISMATCH: the committed seed does not draw the committed table");
+                    eprintln!(
+                        "REPLAY MISMATCH: the committed seed does not draw the committed table"
+                    );
                     1
                 }
             }

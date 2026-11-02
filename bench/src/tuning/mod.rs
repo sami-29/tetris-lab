@@ -57,11 +57,11 @@ use crate::fingerprint::Fnv;
 use crate::width::Bed;
 use q32::{TrainDt, WEIGHT_BOUND};
 
+use rng::SplitMix64;
 /// FNV-1a-64 over the eight `i32` as little-endian bytes: a table's identity.
 /// Re-exported here so the record, the CLI and the audit test all name one
 /// function.
 pub use stats::table_fnv;
-use rng::SplitMix64;
 use stats::{Sample, Stats};
 
 /// The eight Features, in the order every vector in this module is indexed by.
@@ -206,10 +206,7 @@ impl CeParams {
                 record::number_for(self.weight_bound),
             ),
             ("mu0".to_string(), record::number_for(self.mu0)),
-            (
-                "sigma_sq0".to_string(),
-                record::number_for(self.sigma_sq0),
-            ),
+            ("sigma_sq0".to_string(), record::number_for(self.sigma_sq0)),
             ("max_stale".to_string(), self.max_stale.to_string()),
             (
                 "ce_pool".to_string(),
@@ -405,9 +402,10 @@ pub fn search(
         .map(|game| game.seed)
         .ok_or_else(|| "the training dataset is empty".to_string())?;
     let index_of = |seed: u32| -> Result<usize, String> {
-        let offset = seed.checked_sub(first_seed).ok_or_else(|| {
-            format!("seed {seed} is below the dataset's first seed {first_seed}")
-        })? as usize;
+        let offset = seed
+            .checked_sub(first_seed)
+            .ok_or_else(|| format!("seed {seed} is below the dataset's first seed {first_seed}"))?
+            as usize;
         if offset >= games.len() {
             return Err(format!("seed {seed} is past the dataset's last seed"));
         }
@@ -537,7 +535,12 @@ pub fn search(
         // 6. the held-out slice decides which candidate is *kept*: best-of-4,000
         //    on 8-game minibatches would otherwise overfit them.
         let best_index = order[0];
-        let held_out = solve_grid(&[Table::Training(candidates[best_index])], &validation, *bed, width);
+        let held_out = solve_grid(
+            &[Table::Training(candidates[best_index])],
+            &validation,
+            *bed,
+            width,
+        );
         let held_out_fitness = fitness(&held_out, bed.pieces);
         for game in &validation {
             played.push(game.seed);
@@ -553,7 +556,10 @@ pub fn search(
         iterations_run = iteration + 1;
 
         // 7. the stops.
-        if variance.iter().all(|value| value.sqrt() < params.variance_floor.sqrt()) {
+        if variance
+            .iter()
+            .all(|value| value.sqrt() < params.variance_floor.sqrt())
+        {
             stop_reason = "variance_floor".to_string();
             break;
         }
@@ -633,13 +639,23 @@ pub fn train(
     dataset: &TrainingDataset,
     inputs: &RunInputs,
 ) -> Result<(record::Run, Vec<record::Row>), String> {
-    let outcome = search(dataset, &inputs.bed, inputs.width, &inputs.params, inputs.tune_seed)?;
+    let outcome = search(
+        dataset,
+        &inputs.bed,
+        inputs.width,
+        &inputs.params,
+        inputs.tune_seed,
+    )?;
 
     let tables: [(&str, &str, Table); 4] = [
         ("e0", "E0_HEURISTIC", Table::Heuristic(engine::E0_HEURISTIC)),
         ("e1", "E1_PUBLISHED", Table::Dt(engine::E1_PUBLISHED)),
         ("bcts", "BCTS_PUBLISHED", Table::Dt(q32::bcts_table())),
-        ("e2", "E2_TUNED", Table::Dt(DtWeights::from_array(outcome.weights_q16))),
+        (
+            "e2",
+            "E2_TUNED",
+            Table::Dt(DtWeights::from_array(outcome.weights_q16)),
+        ),
     ];
 
     let mut rows: Vec<record::Row> = Vec::new();
@@ -670,12 +686,8 @@ pub fn train(
     let e1 = &samples[1].1;
     let e2 = &samples[3].1;
     let discordant = stats::paired(e1, e2);
-    let ci = stats::paired_bootstrap_ci95(
-        e1,
-        e2,
-        inputs.tune_seed,
-        inputs.params.bootstrap_resamples,
-    );
+    let ci =
+        stats::paired_bootstrap_ci95(e1, e2, inputs.tune_seed, inputs.params.bootstrap_resamples);
     let e1_stats = summaries[1].1.clone();
     let e2_stats = summaries[3].1.clone();
     let win_rate_axis = if e1_stats.saturated() && e2_stats.saturated() {
@@ -741,7 +753,9 @@ pub fn train(
             bootstrap_xor: format!("0x{:016x}", rng::C_BOOTSTRAP),
             bounded: "lemire-rejection".to_string(),
             normal: "irwin-hall-12".to_string(),
-            draw_order: "iteration, game-seeds (index order, without replacement), candidate, dimension".to_string(),
+            draw_order:
+                "iteration, game-seeds (index order, without replacement), candidate, dimension"
+                    .to_string(),
         },
         params: inputs.params.render(),
         iterations_run: outcome.iterations_run,
@@ -932,40 +946,40 @@ pub fn run(options: &Options) -> Result<RunOutcome, String> {
         .join("width-curve.json");
     let width_curve = read_width_curve(&curve_path)?;
 
-    let (dataset, dataset_fingerprint, generator_version, bed_source) =
-        if options.bed.is_shipped() {
-            let config = crate::dataset::CONFIGS
-                .iter()
-                .copied()
-                .find(|config| config.dir == options.bed.name())
-                .ok_or_else(|| format!("{} is not a committed configuration", options.bed.name()))?;
-            let manifest_path = crate::dataset::manifest_path(&options.data, &config);
-            let text = std::fs::read_to_string(&manifest_path)
-                .map_err(|error| format!("read {}: {error}", manifest_path.display()))?;
-            let manifest = crate::dataset::Manifest::parse(&text)?;
-            let dataset = TrainingDataset::load(&options.data, &config, &split)?;
-            (
-                dataset,
-                manifest.fingerprint,
-                manifest.generator_version,
-                "committed-dataset".to_string(),
-            )
-        } else {
-            // §9.1's validation-only bed: never committed, so it is generated
-            // from the split's own seeds and its fingerprint is computed here.
-            let dataset = TrainingDataset::generate(&options.bed, &split)?;
-            let mut fnv = Fnv::new();
-            for game in dataset.games() {
-                let line = crate::dataset::GameLine::from_engine(game);
-                fnv.game(&line);
-            }
-            (
-                dataset,
-                crate::fingerprint::hex(fnv.finish()),
-                1,
-                "generated".to_string(),
-            )
-        };
+    let (dataset, dataset_fingerprint, generator_version, bed_source) = if options.bed.is_shipped()
+    {
+        let config = crate::dataset::CONFIGS
+            .iter()
+            .copied()
+            .find(|config| config.dir == options.bed.name())
+            .ok_or_else(|| format!("{} is not a committed configuration", options.bed.name()))?;
+        let manifest_path = crate::dataset::manifest_path(&options.data, &config);
+        let text = std::fs::read_to_string(&manifest_path)
+            .map_err(|error| format!("read {}: {error}", manifest_path.display()))?;
+        let manifest = crate::dataset::Manifest::parse(&text)?;
+        let dataset = TrainingDataset::load(&options.data, &config, &split)?;
+        (
+            dataset,
+            manifest.fingerprint,
+            manifest.generator_version,
+            "committed-dataset".to_string(),
+        )
+    } else {
+        // §9.1's validation-only bed: never committed, so it is generated
+        // from the split's own seeds and its fingerprint is computed here.
+        let dataset = TrainingDataset::generate(&options.bed, &split)?;
+        let mut fnv = Fnv::new();
+        for game in dataset.games() {
+            let line = crate::dataset::GameLine::from_engine(game);
+            fnv.game(&line);
+        }
+        (
+            dataset,
+            crate::fingerprint::hex(fnv.finish()),
+            1,
+            "generated".to_string(),
+        )
+    };
 
     let record_path = options.record_path();
     let rows_path = options.rows_path();
@@ -1061,7 +1075,19 @@ pub fn replay(record_path: &Path, data: &Path) -> Result<(String, String, bool),
     } else {
         TrainingDataset::generate(&bed, &split)?
     };
-    let params = CeParams::paper();
+    // The record's own hyper-parameters, not today's defaults: a replay that
+    // quietly used a different `N`, `G` or `K` would "reproduce" a table nobody
+    // committed.
+    let mut params = CeParams::paper();
+    for (key, value) in &run.params {
+        let parsed = value.trim().trim_matches('"').parse::<u32>().ok();
+        match (key.as_str(), parsed) {
+            ("candidates", Some(number)) => params.candidates = number,
+            ("games_per_candidate", Some(number)) => params.games_per_candidate = number,
+            ("iterations", Some(number)) => params.iterations = number,
+            _ => {}
+        }
+    }
     let outcome = search(&dataset, &bed, run.width, &params, tune_seed)?;
     let same = outcome.table_fnv == run.table_fnv && outcome.minibatch_fnv == run.minibatch_fnv;
     Ok((run.table_fnv.clone(), outcome.table_fnv, same))
@@ -1077,11 +1103,7 @@ fn machine(wall_clock_seconds: u64) -> record::Machine {
         engine_commit: git(&["rev-parse", "--short", "HEAD"]),
         bench_commit: git(&["rev-parse", "--short", "HEAD"]),
         rustc: command("rustc", &["--version"]),
-        target: format!(
-            "{}-{}",
-            std::env::consts::ARCH,
-            std::env::consts::OS
-        ),
+        target: format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
         cpu: std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unrecorded".to_string()),
         os: std::env::consts::OS.to_string(),
         profile: "release: lto=fat, codegen-units=1, panic=abort, strip=true".to_string(),

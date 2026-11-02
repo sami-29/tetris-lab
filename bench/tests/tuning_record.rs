@@ -58,7 +58,11 @@ fn e2_is_the_same_type_and_the_same_features_as_e1() {
     let one = DellacherieThiery(E1_PUBLISHED);
     let two = DellacherieThiery(E2_TUNED);
     assert_eq!(engine::Evaluator::name(&one), engine::Evaluator::name(&two));
-    assert_ne!(e1.as_array(), e2.as_array(), "the tuned table is not a copy of E1");
+    assert_ne!(
+        e1.as_array(),
+        e2.as_array(),
+        "the tuned table is not a copy of E1"
+    );
 }
 
 /// There is exactly one Dellacherie–Thiery evaluator in the engine, so E2 cannot
@@ -73,7 +77,10 @@ fn the_engine_has_one_dellacherie_thiery_evaluator() {
         .join("evaluator.rs");
     let text = std::fs::read_to_string(&source).expect("read the evaluator");
     assert_eq!(text.matches("pub struct DellacherieThiery").count(), 1);
-    assert_eq!(text.matches("impl Evaluator for DellacherieThiery").count(), 1);
+    assert_eq!(
+        text.matches("impl Evaluator for DellacherieThiery").count(),
+        1
+    );
     // E2 is a second constant of the same type, and nothing else.
     assert_eq!(text.matches("pub const E1_PUBLISHED: DtWeights").count(), 1);
     assert_eq!(text.matches("pub const E2_TUNED: DtWeights").count(), 1);
@@ -149,7 +156,10 @@ fn the_constant_is_the_accepted_run_and_nothing_else() {
                 .expect("the accepted run exists");
             assert_eq!(run.decision, "accepted");
             assert_eq!(run.weights_q16, E2_TUNED.as_array());
-            assert_eq!(run.table_fnv, bench::tuning::table_fnv(&E2_TUNED.as_array()));
+            assert_eq!(
+                run.table_fnv,
+                bench::tuning::table_fnv(&E2_TUNED.as_array())
+            );
             assert_eq!(run.rejection_kind, None);
         }
         None => {
@@ -176,7 +186,9 @@ fn a_rejection_is_visible_in_the_file_and_in_the_constant() {
         .join("src")
         .join("evaluator.rs");
     let text = std::fs::read_to_string(&source).expect("read the evaluator");
-    let at = text.find("pub const E2_TUNED").expect("the constant exists");
+    let at = text
+        .find("pub const E2_TUNED")
+        .expect("the constant exists");
     let head = &text[..at];
     let doc = head
         .rsplit_once("pub const ")
@@ -241,7 +253,11 @@ fn every_per_seed_row_is_a_tuning_seed_at_the_default_width() {
     // Four tables over all 1,000 tuning seeds, for the newest run.
     let newest = record.runs.last().expect("a run").run;
     let count = seen.iter().filter(|(run, _, _)| *run == newest).count();
-    assert_eq!(count, 4 * 1_000, "the rows are not four tables over 1,000 seeds");
+    assert_eq!(
+        count,
+        4 * 1_000,
+        "the rows are not four tables over 1,000 seeds"
+    );
     for evaluator in ["e0", "e1", "bcts", "e2"] {
         let n = seen
             .iter()
@@ -306,4 +322,38 @@ fn the_width_the_run_used_is_the_width_curve_it_named() {
         "the trainer does not read the width curve"
     );
     let _ = width::TUNING_SPLIT;
+}
+
+/// The reader and the writer must agree on every byte.
+///
+/// This is the test that would have caught the first record this ticket wrote: a
+/// trailing comma after the last field of a table's stats object made the file
+/// unparseable, and only `bench tune --replay` noticed. A renderer that cannot
+/// re-read its own output is a record nobody can audit.
+#[test]
+fn the_record_round_trips_byte_for_byte() {
+    let path = measurements().join("e2-tuning.json");
+    let text = std::fs::read_to_string(&path).expect("read the record");
+    let normalised = text.replace(
+        "
+", "
+",
+    );
+    let record = Record::parse(&normalised).expect("the record parses");
+    assert_eq!(
+        record.render(),
+        normalised,
+        "render(parse(text)) is not text: the record would drift on the next append"
+    );
+}
+
+/// The same for one row line.
+#[test]
+fn a_row_round_trips_byte_for_byte() {
+    let path = measurements().join("e2-tuning-rows.jsonl");
+    let text = std::fs::read_to_string(&path).expect("read the rows");
+    for line in text.lines().filter(|line| !line.trim().is_empty()).take(20) {
+        let row = record::Row::parse(line).expect("a row parses");
+        assert_eq!(row.render(), line);
+    }
 }

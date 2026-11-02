@@ -128,9 +128,7 @@ pub fn to_q16(weights: &[f64; 8]) -> [i32; 8] {
 /// It is the one calibration we have that the trainer is in the paper's
 /// neighbourhood, and it lives in `bench` on purpose: committing it beside
 /// `E1_PUBLISHED` would invite someone to ship it.
-pub const BCTS_DECIMAL: [f64; 8] = [
-    -12.63, 6.60, -9.22, -19.77, -13.08, -10.49, -1.61, -24.04,
-];
+pub const BCTS_DECIMAL: [f64; 8] = [-12.63, 6.60, -9.22, -19.77, -13.08, -10.49, -1.61, -24.04];
 
 /// The same vector as the engine's own Q16 table type — so the baseline is
 /// measured by the same scoring path as E1 and E2, not by a second one.
@@ -145,7 +143,19 @@ mod tests {
 
     #[test]
     fn q16_rounds_half_away_from_zero() {
-        assert_eq!(to_q16(&[1.0, -1.0, 0.0, 0.5, -0.5, 0.00000762939453125, -0.00000762939453125, 1024.0])[..5], [65_536, -65_536, 0, 32_768, -32_768]);
+        assert_eq!(
+            to_q16(&[
+                1.0,
+                -1.0,
+                0.0,
+                0.5,
+                -0.5,
+                0.00000762939453125,
+                -0.00000762939453125,
+                1024.0
+            ])[..5],
+            [65_536, -65_536, 0, 32_768, -32_768]
+        );
         // exactly .5 in Q16 units -> away from zero, both signs
         assert_eq!(to_q16(&[1.5 / 65_536.0; 8])[0], 2);
         assert_eq!(to_q16(&[-1.5 / 65_536.0; 8])[0], -2);
@@ -158,9 +168,7 @@ mod tests {
     fn the_bcts_table_is_the_published_one() {
         assert_eq!(
             to_q16(&BCTS_DECIMAL),
-            [
-                -827_720, 432_538, -604_242, -1_295_647, -857_211, -687_473, -105_513, -1_575_485,
-            ]
+            [-827_720, 432_538, -604_242, -1_295_647, -857_211, -687_473, -105_513, -1_575_485,]
         );
     }
 
@@ -168,9 +176,7 @@ mod tests {
     /// weights, `TrainDt` and `DellacherieThiery` must score identically.
     #[test]
     fn the_training_evaluator_scores_like_the_engine_one() {
-        let decimal: [f64; 8] = [
-            -12.63, 6.60, -9.22, -19.77, -13.08, -10.49, -1.61, -24.04,
-        ];
+        let decimal: [f64; 8] = [-12.63, 6.60, -9.22, -19.77, -13.08, -10.49, -1.61, -24.04];
         let train = TrainDt::from_decimal(&decimal);
         let engine_dt = DellacherieThiery(DtWeights::from_array(to_q16(&decimal)));
 

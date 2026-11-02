@@ -160,7 +160,11 @@ pub fn median(sorted: &[f64]) -> f64 {
 /// The pairing is exact because both tables played the same seed, hence the same
 /// Board and the same Sequence (§5.7).
 pub fn paired(reference: &[Sample], judged: &[Sample]) -> Paired {
-    assert_eq!(reference.len(), judged.len(), "a pairing needs equal lengths");
+    assert_eq!(
+        reference.len(),
+        judged.len(),
+        "a pairing needs equal lengths"
+    );
     let mut counts = Paired::default();
     for (a, b) in reference.iter().zip(judged) {
         assert_eq!(a.seed, b.seed, "the rows are not paired by seed");
@@ -175,7 +179,11 @@ pub fn paired(reference: &[Sample], judged: &[Sample]) -> Paired {
 
 /// §9.4's ship rule is ticket 08's; this is only 07's pre-registered *rejection*
 /// rule (notes/07 §6.1), which is about "worse", never about "better".
-pub fn worse_than_published(reference: &[Sample], judged: &[Sample], ci95: [f64; 2]) -> Option<&'static str> {
+pub fn worse_than_published(
+    reference: &[Sample],
+    judged: &[Sample],
+    ci95: [f64; 2],
+) -> Option<&'static str> {
     let discordant = paired(reference, judged);
     let e1_wins = reference.iter().filter(|sample| sample.won).count();
     let e2_wins = judged.iter().filter(|sample| sample.won).count();

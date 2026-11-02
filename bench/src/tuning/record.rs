@@ -294,8 +294,10 @@ fn numbers_i32(values: &[i32]) -> String {
 }
 
 impl Stats {
-    fn render(&self, out: &mut Out) {
-        out.open("stats", '{');
+    /// `last` is the object's final field: a trailing comma would make the record
+    /// unparseable, which is exactly what `bench tune --replay` caught the first
+    /// time this file was written.
+    fn render_fields(&self, out: &mut Out, last: bool) {
         out.field("wins", &self.wins.to_string());
         out.field("games", &self.games.to_string());
         out.field("win_rate", &number(self.win_rate));
@@ -307,8 +309,11 @@ impl Stats {
         out.field("evals_median", &number(self.evals_median));
         out.field("evals_p90", &number(self.evals_p90));
         out.field("ms_median", &number(self.ms_median));
-        out.tail("ms_p90", &number(self.ms_p90));
-        out.close('}', true);
+        if last {
+            out.tail("ms_p90", &number(self.ms_p90));
+        } else {
+            out.field("ms_p90", &number(self.ms_p90));
+        }
     }
 }
 
@@ -337,8 +342,14 @@ impl Run {
         out.open("width_curve", '{');
         out.field("path", &quote(&self.width_curve.path));
         out.field("default_beam", &self.width_curve.default_beam.to_string());
-        out.field("default_beam_basis", &quote(&self.width_curve.default_beam_basis));
-        out.tail("quality_fingerprint", &quote(&self.width_curve.quality_fingerprint));
+        out.field(
+            "default_beam_basis",
+            &quote(&self.width_curve.default_beam_basis),
+        );
+        out.tail(
+            "quality_fingerprint",
+            &quote(&self.width_curve.quality_fingerprint),
+        );
         out.close('}', true);
 
         out.field("split", &quote(&self.split));
@@ -380,7 +391,7 @@ impl Run {
             out.text.push_str(name);
             out.text.push_str("\": {\n");
             out.depth += 1;
-            stats.render(out);
+            stats.render_fields(out, true);
             out.depth -= 1;
             out.indent();
             out.text.push('}');
@@ -416,7 +427,10 @@ impl Run {
         out.field("cpu", &quote(&self.machine.cpu));
         out.field("os", &quote(&self.machine.os));
         out.field("profile", &quote(&self.machine.profile));
-        out.tail("wall_clock_seconds", &self.machine.wall_clock_seconds.to_string());
+        out.tail(
+            "wall_clock_seconds",
+            &self.machine.wall_clock_seconds.to_string(),
+        );
         out.close('}', false);
         out.close('}', !last);
     }
@@ -551,7 +565,10 @@ fn parse_run(value: &Value) -> Result<Run, String> {
                 win_rate_delta: number_of(field(comparison, "e2_vs_e1")?, "win_rate_delta")?,
                 mean_lines_delta: number_of(field(comparison, "e2_vs_e1")?, "mean_lines_delta")?,
                 mean_lines_ci95: pair_of_f64(field(comparison, "e2_vs_e1")?, "mean_lines_ci95")?,
-                evals_median_delta: number_of(field(comparison, "e2_vs_e1")?, "evals_median_delta")?,
+                evals_median_delta: number_of(
+                    field(comparison, "e2_vs_e1")?,
+                    "evals_median_delta",
+                )?,
                 evals_p90_delta: number_of(field(comparison, "e2_vs_e1")?, "evals_p90_delta")?,
             },
             win_rate_axis: text_of(comparison, "win_rate_axis")?,
@@ -631,9 +648,7 @@ impl Row {
 // ------------------------------------------------------------------- readers
 
 fn field<'a>(value: &'a Value, key: &str) -> Result<&'a Value, String> {
-    value
-        .get(key)
-        .ok_or_else(|| format!("{key}: missing"))
+    value.get(key).ok_or_else(|| format!("{key}: missing"))
 }
 
 fn text_of(value: &Value, key: &str) -> Result<String, String> {
@@ -670,7 +685,10 @@ fn pair_of_f64(value: &Value, key: &str) -> Result<[f64; 2], String> {
         .as_array()
         .ok_or_else(|| format!("{key}: expected an array"))?;
     if array.len() != 2 {
-        return Err(format!("{key}: expected two numbers, found {}", array.len()));
+        return Err(format!(
+            "{key}: expected two numbers, found {}",
+            array.len()
+        ));
     }
     Ok([
         array[0]
@@ -687,7 +705,10 @@ fn array_of_f64(value: &Value, key: &str) -> Result<[f64; 8], String> {
         .as_array()
         .ok_or_else(|| format!("{key}: expected an array"))?;
     if array.len() != 8 {
-        return Err(format!("{key}: expected eight numbers, found {}", array.len()));
+        return Err(format!(
+            "{key}: expected eight numbers, found {}",
+            array.len()
+        ));
     }
     let mut out = [0.0f64; 8];
     for (index, entry) in array.iter().enumerate() {
@@ -703,7 +724,10 @@ fn array_of_i32(value: &Value, key: &str) -> Result<[i32; 8], String> {
         .as_array()
         .ok_or_else(|| format!("{key}: expected an array"))?;
     if array.len() != 8 {
-        return Err(format!("{key}: expected eight numbers, found {}", array.len()));
+        return Err(format!(
+            "{key}: expected eight numbers, found {}",
+            array.len()
+        ));
     }
     let mut out = [0i32; 8];
     for (index, entry) in array.iter().enumerate() {

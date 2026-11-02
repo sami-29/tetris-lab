@@ -65,7 +65,10 @@ fn the_draw_order_is_the_one_the_record_claims() {
     let mut rng = bench::tuning::rng::SplitMix64::tune_stream(7);
     let expected_first = rng.bounded(params().ce_pool_len()) + params().ce_pool.0;
     assert_eq!(outcome.per_iteration_seeds[0][0], expected_first);
-    assert_eq!(outcome.per_iteration_seeds.len(), outcome.iterations_run as usize);
+    assert_eq!(
+        outcome.per_iteration_seeds.len(),
+        outcome.iterations_run as usize
+    );
     for seeds in &outcome.per_iteration_seeds {
         assert_eq!(seeds.len(), params().games_per_candidate as usize);
         let mut sorted = seeds.clone();

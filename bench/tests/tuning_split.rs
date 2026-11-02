@@ -55,18 +55,22 @@ fn the_split_rejects_every_test_seed() {
 
 #[test]
 fn a_training_dataset_holds_only_tuning_seeds() {
-    let dataset = TrainingDataset::load(&data(), &GOAL12, &tuning()).expect("load the tuning games");
+    let dataset =
+        TrainingDataset::load(&data(), &GOAL12, &tuning()).expect("load the tuning games");
     let games = dataset.games();
     assert_eq!(games.len(), 1_000);
     assert!(games.iter().all(|game| tuning().contains(game.seed)));
     assert!(games.iter().all(|game| game.seed >= 1_000));
     // Ascending, so the row order is the seed order and a row cannot move.
-    assert!(games.windows(2).all(|pair| pair[1].seed == pair[0].seed + 1));
+    assert!(games
+        .windows(2)
+        .all(|pair| pair[1].seed == pair[0].seed + 1));
 }
 
 #[test]
 fn the_seed_list_fingerprint_is_the_committed_golden() {
-    let dataset = TrainingDataset::load(&data(), &GOAL12, &tuning()).expect("load the tuning games");
+    let dataset =
+        TrainingDataset::load(&data(), &GOAL12, &tuning()).expect("load the tuning games");
     assert_eq!(dataset.seed_list_fnv(), TUNING_SEED_LIST_FNV);
     // And it is the same number computed straight from the split, so the golden
     // is a property of §6's range and not of the file's line order.
@@ -74,7 +78,10 @@ fn the_seed_list_fingerprint_is_the_committed_golden() {
     for seed in tuning().seeds() {
         fnv.u32_le(seed);
     }
-    assert_eq!(format!("0x{}", fingerprint::hex(fnv.finish())), TUNING_SEED_LIST_FNV);
+    assert_eq!(
+        format!("0x{}", fingerprint::hex(fnv.finish())),
+        TUNING_SEED_LIST_FNV
+    );
 }
 
 /// The belt to the type's braces: **the file the trainer reads literally carries
@@ -103,17 +110,22 @@ fn the_test_seeds_in_the_file_never_reach_the_trainer() {
     for (label, path) in [("committed", data()), ("copy", tempdir("tuning-split"))] {
         if label == "copy" {
             std::fs::create_dir_all(path.join(cfg.dir)).expect("make the config directory");
-            std::fs::write(path.join(cfg.dir).join("games.txt"), &text)
-                .expect("write the copy");
+            std::fs::write(path.join(cfg.dir).join("games.txt"), &text).expect("write the copy");
         }
         let dataset =
             TrainingDataset::load(&path, &cfg, &tuning()).expect("load through the guard");
         assert_eq!(dataset.games().len(), 1_000, "{label}");
         assert!(
-            dataset.games().iter().all(|game| tuning().contains(game.seed)),
+            dataset
+                .games()
+                .iter()
+                .all(|game| tuning().contains(game.seed)),
             "{label}: a test seed reached the trainer"
         );
-        assert!(!dataset.games().iter().any(|game| game.seed == 453), "{label}");
+        assert!(
+            !dataset.games().iter().any(|game| game.seed == 453),
+            "{label}"
+        );
         assert_eq!(dataset.seed_list_fnv(), TUNING_SEED_LIST_FNV, "{label}");
         if label == "copy" {
             let _ = std::fs::remove_dir_all(&path);
@@ -149,10 +161,15 @@ fn a_short_training_dataset_is_refused() {
     }
     let dir = tempdir("tuning-short");
     std::fs::create_dir_all(dir.join(cfg.dir)).expect("make the config directory");
-    std::fs::write(dir.join(cfg.dir).join("games.txt"), kept.join("
-") + "
-")
-        .expect("write the short file");
+    std::fs::write(
+        dir.join(cfg.dir).join("games.txt"),
+        kept.join(
+            "
+",
+        ) + "
+",
+    )
+    .expect("write the short file");
     let error = TrainingDataset::load(&dir, &cfg, &tuning()).expect_err("a short file is refused");
     assert!(error.contains("1000") || error.contains("500"), "{error}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -165,7 +182,10 @@ fn a_short_training_dataset_is_refused() {
 fn a_generated_training_dataset_is_also_sealed() {
     let dataset = TrainingDataset::generate(&Bed::GOAL16, &tuning()).expect("generate the bed");
     assert_eq!(dataset.games().len(), 1_000);
-    assert!(dataset.games().iter().all(|game| tuning().contains(game.seed)));
+    assert!(dataset
+        .games()
+        .iter()
+        .all(|game| tuning().contains(game.seed)));
     assert_eq!(dataset.seed_list_fnv(), TUNING_SEED_LIST_FNV);
 }
 
@@ -178,7 +198,9 @@ fn a_generated_training_dataset_is_also_sealed() {
 /// reviewer has to notice.
 #[test]
 fn the_tuning_module_names_no_escape_hatch() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("tuning");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("tuning");
     let mut files: Vec<PathBuf> = Vec::new();
     collect(&root, &mut files);
     assert!(!files.is_empty(), "no sources under {}", root.display());
@@ -204,8 +226,10 @@ fn the_tuning_module_names_no_escape_hatch() {
                 !trimmed.starts_with("//")
             })
             .collect::<Vec<_>>()
-            .join("
-");
+            .join(
+                "
+",
+            );
         for (token, why) in forbidden {
             assert!(
                 !text.contains(token),
