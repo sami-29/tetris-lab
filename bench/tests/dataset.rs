@@ -647,10 +647,9 @@ fn nothing_under_the_dataset_is_ignored() {
     // them, or a byte comparison in the worktree is meaningless.
     let status = Command::new("git")
         .arg("check-attr")
-        .arg("-z")
         .arg("text")
         .arg("--")
-        .arg(root.join("goal8-p40-cap7/games.txt"))
+        .arg(root.join("goal8-p40-cap7").join("games.txt"))
         .current_dir(repo)
         .output()
         .expect("git check-attr");
