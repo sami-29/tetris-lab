@@ -78,6 +78,13 @@ export interface PlaygroundOptions {
   clearTimer?(handle: TimerHandle): void;
 }
 
+/** A node the Playground just built, or a loud failure rather than a `!`. */
+function mustBuild<T extends Element>(root: Element, selector: string): T {
+  const element = root.querySelector<T>(selector);
+  if (!element) throw new Error(`the Playground did not build ${selector}`);
+  return element;
+}
+
 /** One number field and the game field it edits. */
 interface FieldView {
   readonly input: HTMLInputElement;
@@ -146,8 +153,8 @@ export class Playground {
     };
     root.append(grid);
 
-    this.beamOutput = grid.querySelector<HTMLOutputElement>("#beam-readout")!;
-    this.beamTick = grid.querySelector<HTMLElement>("#beam-tick")!;
+    this.beamOutput = mustBuild<HTMLOutputElement>(grid, "#beam-readout");
+    this.beamTick = mustBuild<HTMLElement>(grid, "#beam-tick");
     this.refresh();
   }
 
@@ -194,13 +201,12 @@ export class Playground {
     input.addEventListener("input", () => {
       // Display tier: the game follows the field immediately; the solve waits.
       this.game = applyField(this.game, field, input.value, this.bounds);
-      this.refresh(false);
+      this.paintReadouts();
       this.commit.push(this.game);
     });
     input.addEventListener("change", () => {
-      // Commit tier: normalise what was typed to the clamped value and solve now.
+      // Commit tier: clamp what was typed, show the clamped value, and solve now.
       this.game = applyField(this.game, field, input.value, this.bounds);
-      input.value = String(fieldsOf(this.game)[field]);
       this.refresh();
       this.commit.push(this.game);
       this.commit.flush();
@@ -241,7 +247,7 @@ export class Playground {
     input.setAttribute("aria-label", `${text.label}, ${limit.min} to ${limit.max}`);
     input.addEventListener("input", () => {
       this.game = applyField(this.game, field, input.value, this.bounds);
-      this.refresh(false);
+      this.paintReadouts();
       this.commit.push(this.game);
     });
     input.addEventListener("change", () => {
@@ -266,14 +272,22 @@ export class Playground {
     return { input, field };
   }
 
-  /** Paint the readouts the number fields do not carry themselves. */
-  private refresh(syncFields = true): void {
+  /**
+   * Put every control on `this.game`. Only for a *programmatic* change — loading, a
+   * preset, or the normalising `change` commit — because writing the value a visitor
+   * is in the middle of typing would fight them.
+   */
+  private refresh(): void {
     const values = fieldsOf(this.game);
-    if (syncFields) {
-      for (const { field, input } of Object.values(this.fields)) {
-        if (input.type !== "range") input.value = String(values[field]);
-      }
+    for (const { field, input } of Object.values(this.fields)) {
+      input.value = String(values[field]);
     }
+    this.paintReadouts();
+  }
+
+  /** The display tier: the beam readout and the tick, on the frame the value moved. */
+  private paintReadouts(): void {
+    const values = fieldsOf(this.game);
     const beam = values.beam;
     this.fields.beam.input.value = String(beam);
     const readout = PLAYGROUND_TEXT.beamReadout(beam, this.bounds);

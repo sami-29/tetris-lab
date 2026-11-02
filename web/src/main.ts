@@ -201,6 +201,8 @@ function receive(message: FromWorker): void {
       }
       return;
     }
+    default:
+      return;
   }
 }
 
@@ -231,9 +233,16 @@ function applyGame(candidate: GameInput): void {
 function writeUrl(input: GameInput): void {
   const search = serialiseGame(input, BOUNDS);
   if (location.search === search) return;
-  const url = new URL(location.href);
-  url.search = search;
-  history.replaceState(null, "", url);
+  try {
+    const url = new URL(location.href);
+    url.search = search;
+    history.replaceState(null, "", url);
+  } catch (error) {
+    // Only reachable when the document has no usable URL (a `srcdoc` frame, say).
+    // The solve still goes ahead: the visitor asked for a game, and the address bar
+    // failing to follow it is not a reason to withhold it.
+    console.warn(`[tetris-lab] could not write the URL: ${String(error)}`);
+  }
 }
 
 /** Where a Move is in words, so no figure on the page is unlabelled. */
@@ -451,6 +460,8 @@ function run(action: Action): void {
       return;
     case "restart":
       playback.restart();
+      return;
+    default:
       return;
   }
 }

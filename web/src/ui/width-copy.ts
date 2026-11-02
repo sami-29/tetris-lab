@@ -73,14 +73,15 @@ export function widthTooltip(story: WidthStory = SHIPPED_WIDTH_STORY): string {
     return `The default is the cap (${cap}): ${ended}, so there is no second number to explain.`;
   }
 
-  const named =
-    story.basis === "tie"
-      ? `Default ${story.defaultBeam} is the narrowest width that wins as often as the widest we can afford`
-      : `Default ${story.defaultBeam} was named on cost, not on a quality result: ${
-          story.qualityAxis === "resolved"
-            ? "the widths tied on the ranking bed"
-            : "no measured width beat another, so the widths could not be separated"
-        }`;
+  let named: string;
+  if (story.basis === "tie") {
+    named = `Default ${story.defaultBeam} is the narrowest width that wins as often as the widest we can afford`;
+  } else {
+    const why = story.qualityAxis === "resolved"
+      ? "the widths tied on the ranking bed"
+      : "no measured width beat another, so the widths could not be separated";
+    named = `Default ${story.defaultBeam} was named on cost, not on a quality result: ${why}`;
+  }
 
   return `${named}; cap ${cap} is where ${ended}, so the slider stops while a solve still fits its budget.`;
 }
