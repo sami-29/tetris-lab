@@ -23,7 +23,7 @@
 use std::fmt::Write as _;
 use std::fs;
 
-use engine::{generate_game, solve, shipped, Board, Piece, SolveConfig};
+use engine::{generate_game, shipped, solve, Board, Piece, SolveConfig};
 
 const W: usize = 10;
 const H: usize = 20;
@@ -35,11 +35,7 @@ fn built_cases() -> Vec<(&'static str, [u32; W], Vec<(u8, u8, u8)>)> {
     vec![
         // An empty Board and two pieces that do not clear anything: the drop is
         // the whole event, including an O on the floor.
-        (
-            "empty-no-clear",
-            [0; W],
-            vec![(3, 0, 4), (5, 0, 6)],
-        ),
+        ("empty-no-clear", [0; W], vec![(3, 0, 4), (5, 0, 6)]),
         // Rows 16..19 are full once a vertical I lands in the one empty column:
         // the common four-row clear, and the heaviest collapse there is.
         (
@@ -48,11 +44,7 @@ fn built_cases() -> Vec<(&'static str, [u32; W], Vec<(u8, u8, u8)>)> {
             vec![(0, 1, 9)],
         ),
         // A single row, completed at the bottom.
-        (
-            "one-row",
-            [1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
-            vec![(0, 1, 9)],
-        ),
+        ("one-row", [1, 1, 1, 1, 1, 1, 1, 1, 1, 0], vec![(0, 1, 9)]),
         // One row cleared with a stack standing *above* it: the surviving columns
         // must fall one row, which is the case a flash cannot draw.
         (
@@ -223,7 +215,11 @@ fn main() {
     // Real games: the default configuration the page ships with, at the beam width
     // the page solves at. The Move list is the engine's own, so the fixture is not
     // a synthetic arithmetic test only.
-    for (seed, goal, pieces, cap, beam) in [(0u32, 8u32, 40u32, 7u32, 25u32), (42, 8, 40, 7, 25), (7, 8, 40, 7, 25)] {
+    for (seed, goal, pieces, cap, beam) in [
+        (0u32, 8u32, 40u32, 7u32, 25u32),
+        (42, 8, 40, 7, 25),
+        (7, 8, 40, 7, 25),
+    ] {
         let game = generate_game(seed, pieces, cap).expect("the fixture's game is in the Domain");
         let result = solve(
             &game.board,
@@ -266,7 +262,9 @@ fn main() {
 
     let mut out = String::new();
     out.push_str("{\n");
-    out.push_str("  \"generator\": \"web/scripts/gen-replay-vectors (engine crate, path dependency)\",\n");
+    out.push_str(
+        "  \"generator\": \"web/scripts/gen-replay-vectors (engine crate, path dependency)\",\n",
+    );
     out.push_str(
         "  \"note\": \"Generated, never hand-edited. `frames[k]` is the ten board words after Move k+1,\\n  as engine::Board computes them; `cleared[k]` are the full rows that Move completed, top row\\n  first; `shifts[k]` is the resting shift and `drops[k]` the number of rows the piece fell.\",\n",
     );
@@ -274,7 +272,10 @@ fn main() {
     out.push_str(&cases.join(",\n"));
     out.push_str("\n  ]\n}\n");
 
-    let target = concat!(env!("CARGO_MANIFEST_DIR"), "/../../test/fixtures/replay-vectors.json");
+    let target = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test/fixtures/replay-vectors.json"
+    );
     let path = std::path::Path::new(target);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("the fixtures directory is writable");
