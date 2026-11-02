@@ -13,6 +13,9 @@
 //!                   [--overshoot <width>=<p90_ms> --overshoot-samples <n>
 //!                    [--overshoot-substrate native|wasm] [--overshoot-note "<one line>"]]
 //! bench width-curve --summarise <artifact> [--overshoot ...] [--out <file>]
+//! bench tune [--seed <u64|0x...>] [--bed <name>] [--candidates <n>] [--games <n>]
+//!            [--iterations <n>] [--data <dir>] [--out <file>] [--rows <file>]
+//! bench tune --replay [<record>] [--data <dir>]
 //! ```
 //!
 //! Exit codes: `0` clean, `1` the Dataset drifted or a Gate failed, `2` a usage
@@ -27,6 +30,7 @@ use std::process::ExitCode;
 use bench::dataset::{self, Config};
 use bench::gate::{self, Options as GateOptions};
 use bench::width::{self, MsSource, Options as WidthOptions, WIDTHS};
+use bench::tuning;
 use bench::{export, fingerprint, show, verify};
 
 const USAGE: &str = "\
@@ -43,6 +47,9 @@ usage:
                     [--overshoot <width>=<p90_ms> --overshoot-samples <n>
                      [--overshoot-substrate native|wasm] [--overshoot-note \"<one line>\"]]
   bench width-curve --summarise <artifact> [--overshoot ...] [--out <file>]
+  bench tune        [--seed <u64|0x...>] [--bed <name>] [--candidates <n>] [--games <n>]
+                    [--iterations <n>] [--data <dir>] [--out <file>] [--rows <file>]
+  bench tune        --replay [<record>] [--data <dir>]
 
 configurations: goal8-p40-cap7, goal12-p100-cap7
 width-curve defaults: every doubling point, 3 trials of 200 seeds, 1,000 quality
@@ -55,8 +62,13 @@ would move, and it writes back to the artifact it was given unless --out is set.
 --overshoot records a width probed outside the curve that failed the default
 configuration's 200 ms p90 budget, which is what makes cap_bound \"budget\". A
 probe is never a point: it has no place in the cost or quality series.
-exit codes: 0 clean, 1 Dataset drift or a failed Gate, 2 usage, I/O, or a Gate
-whose prerequisite is missing.";
+bench tune runs ticket 07's cross-entropy search over the tuning Split only, at
+DEFAULT_BEAM read from data/measurements/width-curve.json, measures E0/E1/BCTS/E2
+on all 1,000 tuning seeds and appends one run to data/measurements/e2-tuning.json
+plus its per-seed rows. --replay re-runs a committed run's seed and checks the
+table fingerprint; a rejected run exits 1.
+exit codes: 0 clean, 1 Dataset drift, a failed Gate or a rejected tuning run,
+2 usage, I/O, or a Gate whose prerequisite is missing.";
 
 struct Args {
     configs: Vec<Config>,
@@ -137,6 +149,9 @@ fn main() -> ExitCode {
     }
     if command == "solve" {
         return ExitCode::from(solve_command(&argv[1..]));
+    }
+    if command == "tune" {
+        return ExitCode::from(tune_command(&argv[1..]));
     }
 
     let args = match parse(&argv[1..]) {
@@ -938,4 +953,206 @@ fn runtime_label() -> String {
     format!(
         "{node} (V8: the engine headless Chrome runs, without the DOM); rustc 1.99.1 release bench",
     )
+}
+
+// ------------------------------------------------------------------- tune
+
+/// `bench tune [flags]` and `bench tune --replay [<record>]` -- ticket 07.
+///
+/// Its own flag loop, like `gate` and `solve`, so the trainer cannot grow the
+/// Dataset commands' argument surface and the two cannot drift.
+fn tune_command(argv: &[String]) -> u8 {
+    let mut options = tuning::Options::defaults();
+    options.now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let mut replay: Option<Option<PathBuf>> = None;
+    let mut index = 0;
+    while index < argv.len() {
+        let flag = argv[index].to_string();
+        let outcome: Result<(), String> = (|| {
+            match flag.as_str() {
+                "--seed" => {
+                    let value = flag_value(argv, &mut index, &flag, "a u64 seed, decimal or 0x-hex")?;
+                    options.tune_seed =
+                        parse_u64(&value).ok_or_else(|| format!("--seed: {value:?} is not a u64"))?;
+                }
+                "--bed" => {
+                    let value = flag_value(argv, &mut index, &flag, "a bed name like goal12-p100-cap7")?;
+                    options.bed = bed_from_name(&value)
+                        .ok_or_else(|| format!("--bed: unknown bed {value:?}"))?;
+                }
+                "--candidates" => {
+                    let value = flag_value(argv, &mut index, &flag, "a candidate count")?;
+                    options.params.candidates = value
+                        .parse()
+                        .map_err(|_| format!("--candidates must be a number, found {value:?}"))?;
+                }
+                "--games" => {
+                    let value = flag_value(argv, &mut index, &flag, "a games-per-candidate count")?;
+                    options.params.games_per_candidate = value
+                        .parse()
+                        .map_err(|_| format!("--games must be a number, found {value:?}"))?;
+                }
+                "--iterations" => {
+                    let value = flag_value(argv, &mut index, &flag, "an iteration count")?;
+                    options.params.iterations = value
+                        .parse()
+                        .map_err(|_| format!("--iterations must be a number, found {value:?}"))?;
+                }
+                "--data" => {
+                    options.data = PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?)
+                }
+                "--out" => {
+                    options.out = Some(PathBuf::from(flag_value(argv, &mut index, &flag, "a file")?))
+                }
+                "--rows" => {
+                    options.rows_out =
+                        Some(PathBuf::from(flag_value(argv, &mut index, &flag, "a file")?))
+                }
+                "--quiet" => options.quiet = true,
+                "--replay" => {
+                    // `--replay` takes an optional path; the committed record is
+                    // the default, which is the only case that matters.
+                    let path = argv
+                        .get(index + 1)
+                        .filter(|next| !next.starts_with("--"))
+                        .map(PathBuf::from);
+                    if path.is_some() {
+                        index += 1;
+                    }
+                    replay = Some(path);
+                }
+                other => return Err(format!("unknown argument {other:?}")),
+            }
+            Ok(())
+        })();
+        if let Err(message) = outcome {
+            eprintln!("error: {message}
+
+{USAGE}");
+            return 2;
+        }
+        index += 1;
+    }
+
+    if let Some(path) = replay {
+        let path = path.unwrap_or_else(tuning::record::record_path);
+        println!("tune --replay {}", path.display());
+        return match tuning::replay(&path, &options.data) {
+            Ok((committed, replayed, same)) => {
+                println!("committed table {committed}");
+                println!("replayed  table {replayed}");
+                if same {
+                    println!("reproducible: the committed seed draws the committed table");
+                    0
+                } else {
+                    eprintln!("REPLAY MISMATCH: the committed seed does not draw the committed table");
+                    1
+                }
+            }
+            Err(message) => {
+                eprintln!("error: {message}");
+                2
+            }
+        };
+    }
+
+    println!(
+        "tune: seed 0x{:016x}, bed {}, N={} G={} K={}, tuning Split only",
+        options.tune_seed,
+        options.bed.name(),
+        options.params.candidates,
+        options.params.games_per_candidate,
+        options.params.iterations
+    );
+    match tuning::run(&options) {
+        Ok(outcome) => {
+            println!(
+                "run {} {}: iterations {} ({}), table {}",
+                outcome.run,
+                outcome.decision,
+                outcome.iterations_run,
+                outcome.stop_reason,
+                outcome.table_fnv
+            );
+            for (name, stats) in &outcome.stats {
+                println!(
+                    "  {:<5} win {:.4} [{:.4}, {:.4}]  lines {:.4}  evals p50 {:.0} p90 {:.0}",
+                    name,
+                    stats.win_rate,
+                    stats.win_rate_ci95[0],
+                    stats.win_rate_ci95[1],
+                    stats.mean_lines,
+                    stats.evals_median,
+                    stats.evals_p90
+                );
+            }
+            println!(
+                "  e2 vs e1: b={} c={} p={:.3e}, lines delta {:+.4} [{:+.4}, {:+.4}], win-rate axis {}",
+                outcome.comparison.b,
+                outcome.comparison.c,
+                outcome.comparison.mcnemar_p,
+                outcome.comparison.mean_lines_delta,
+                outcome.comparison.mean_lines_ci95[0],
+                outcome.comparison.mean_lines_ci95[1],
+                outcome.win_rate_axis
+            );
+            println!(
+                "  wrote {} and {} ({} s)",
+                outcome.record_path.display(),
+                outcome.rows_path.display(),
+                outcome.wall_clock_seconds
+            );
+            if outcome.decision == "accepted" {
+                0
+            } else {
+                eprintln!(
+                    "REJECTED run {}: {} - {}",
+                    outcome.run,
+                    outcome.rejection_kind.clone().unwrap_or_default(),
+                    outcome.rejection_reason.clone().unwrap_or_default()
+                );
+                1
+            }
+        }
+        Err(message) => {
+            eprintln!("error: {message}");
+            2
+        }
+    }
+}
+
+/// One flag's value: `argv[index + 1]`, with the flag named in the error.
+fn flag_value(
+    argv: &[String],
+    index: &mut usize,
+    flag: &str,
+    what: &str,
+) -> Result<String, String> {
+    *index += 1;
+    argv.get(*index)
+        .cloned()
+        .ok_or_else(|| format!("{flag} needs a value ({what})"))
+}
+
+fn parse_u64(text: &str) -> Option<u64> {
+    let trimmed = text.trim();
+    match trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        Some(hex) => u64::from_str_radix(hex, 16).ok(),
+        None => trimmed.parse().ok(),
+    }
+}
+
+fn bed_from_name(name: &str) -> Option<width::Bed> {
+    for bed in [width::Bed::GOAL8, width::Bed::GOAL12, width::Bed::GOAL16] {
+        if bed.name() == name {
+            return Some(bed);
+        }
+    }
+    None
 }

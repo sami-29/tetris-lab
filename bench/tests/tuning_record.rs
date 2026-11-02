@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use bench::json::Value;
 use bench::tuning::record::{self, Record};
 use bench::width;
-use engine::{DtWeights, DellacherieThiery, E1_PUBLISHED, E2_TUNED};
+use engine::{DellacherieThiery, DtWeights, Evaluator, E1_PUBLISHED, E2_TUNED};
 
 fn measurements() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -225,7 +225,16 @@ fn every_per_seed_row_is_a_tuning_seed_at_the_default_width() {
         assert!(row.evals > 0);
         assert!(row.moves <= 100);
         if row.won {
-            assert_eq!(row.lines, 12);
+            // A win stops the Solve at the Goal, but the placement that crosses
+            // it can clear up to three lines past it (a 4-line clear from 11
+            // reaches 15), so `lines` is `goal..=goal+3` on a win -- which is
+            // also why a mean of lines can exceed the Goal.
+            assert!(
+                (12..=15).contains(&row.lines),
+                "seed {} won with {} lines",
+                row.seed,
+                row.lines
+            );
         }
         assert!(seen.insert((row.run, row.evaluator.clone(), row.seed)));
     }
@@ -252,8 +261,8 @@ fn the_record_carries_the_paired_statistics_the_ladder_needs() {
                 (0.0..=1.0).contains(&stats.win_rate),
                 "{name}: a win rate is not a rate"
             );
-            assert!(stats.mean_lines >= 0.0 && stats.mean_lines <= 12.0);
-            assert!(stats.evals_median > 0);
+            assert!(stats.mean_lines >= 0.0 && stats.mean_lines <= 15.0);
+            assert!(stats.evals_median > 0.0);
         }
         let comparison = &run.comparison;
         assert!(comparison.e2_vs_e1.b <= 1_000 && comparison.e2_vs_e1.c <= 1_000);

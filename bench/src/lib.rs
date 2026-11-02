@@ -23,6 +23,9 @@
 //!   once and written to `data/measurements/width-curve.json`.
 //! * [`json`] — a reader for the subset of JSON [`width`] writes, so a committed
 //!   artifact can be re-derived in place without re-measuring it.
+//! * [`tuning`] — ticket 07's cross-entropy trainer: E2's weight table, tuned on
+//!   the tuning Split only, with the Split enforced as a type and the run
+//!   reproducible from a committed seed.
 
 pub mod dataset;
 pub mod export;
@@ -31,5 +34,6 @@ pub mod gate;
 pub mod json;
 pub mod replay;
 pub mod show;
+pub mod tuning;
 pub mod verify;
 pub mod width;

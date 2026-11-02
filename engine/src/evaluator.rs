@@ -455,6 +455,25 @@ pub const E1_PUBLISHED: DtWeights = DtWeights {
     rows_with_holes: 0,    // as above
 };
 
+/// E2 — Dellacherie–Thiery with weights tuned by cross-entropy on the tuning
+/// Split only (spec §9.4, ticket 07).
+///
+/// **This constant is a placeholder until the run lands.** It is filled from
+/// `data/measurements/e2-tuning.json` and never by hand: `bench tune --replay`
+/// re-derives the table from the run's committed seed, and
+/// `bench/tests/tuning_record.rs` fails if the eight integers here and the
+/// record's `weights_q16` disagree.
+pub const E2_TUNED: DtWeights = DtWeights {
+    landing_height: E1_PUBLISHED.landing_height,
+    eroded_cells: E1_PUBLISHED.eroded_cells,
+    row_transitions: E1_PUBLISHED.row_transitions,
+    col_transitions: E1_PUBLISHED.col_transitions,
+    holes: E1_PUBLISHED.holes,
+    wells: E1_PUBLISHED.wells,
+    hole_depth: E1_PUBLISHED.hole_depth,
+    rows_with_holes: E1_PUBLISHED.rows_with_holes,
+};
+
 // ── the shipped one ────────────────────────────────────────────────────────
 
 // Both candidates stay instantiated so §9.4's verdict is a one-word edit below and

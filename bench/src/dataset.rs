@@ -796,6 +796,178 @@ fn utf8_width(first: u8) -> usize {
     }
 }
 
+// ── the tuning Split, as a type ────────────────────────────────────────────
+
+/// §6's tuning Split, first seed. Named so the range is in one place.
+pub const TUNING_FIRST: u32 = TUNING_SPLIT.0;
+/// §6's tuning Split, last seed.
+pub const TUNING_LAST: u32 = TUNING_SPLIT.1;
+
+/// A seed range that **can only be the tuning Split**.
+///
+/// Ticket 07: "The trainer cannot read the test Split — enforced in code and
+/// asserted by a test, not left to discipline." Both ranges live in one
+/// `games.txt` (§6), so "cannot read" cannot be a file boundary; it is this
+/// type. The fields are private and there is exactly one constructor, so inside
+/// safe Rust there is no value of this type whose range includes a test seed:
+///
+/// ```compile_fail
+/// // The fields are private: there is no `TrainingSplit { first: 0, .. }`.
+/// let _ = bench::dataset::TrainingSplit { first: 0, last: 999 };
+/// ```
+/// ```compile_fail
+/// // No `Default`, no `From<Range>`, no `new(first, last)`: `tuning()` only.
+/// let _ = bench::dataset::TrainingSplit::new(0, 999);
+/// ```
+/// ```
+/// // And the one inhabitant is §6's range.
+/// let split = bench::dataset::TrainingSplit::tuning();
+/// assert_eq!(split.first(), 1_000);
+/// assert_eq!(split.last(), 1_999);
+/// assert_eq!(split.len(), 1_000);
+/// assert!(!split.contains(999));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TrainingSplit {
+    first: u32,
+    last: u32,
+}
+
+impl TrainingSplit {
+    /// The only way to make one.
+    pub const fn tuning() -> TrainingSplit {
+        TrainingSplit {
+            first: TUNING_FIRST,
+            last: TUNING_LAST,
+        }
+    }
+
+    pub const fn first(&self) -> u32 {
+        self.first
+    }
+
+    pub const fn last(&self) -> u32 {
+        self.last
+    }
+
+    pub fn contains(&self, seed: u32) -> bool {
+        self.first <= seed && seed <= self.last
+    }
+
+    /// Every seed, ascending — the order the rows are written in.
+    pub fn seeds(&self) -> impl Iterator<Item = u32> + '_ {
+        self.first..=self.last
+    }
+
+    pub const fn len(&self) -> usize {
+        (self.last - self.first + 1) as usize
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// §6's range as the artifact spells it.
+    pub fn label(&self) -> String {
+        format!("{}-{}", self.first, self.last)
+    }
+}
+
+/// The games a tuning run may play: **filtered by construction**.
+///
+/// The tuple field is private and both constructors take a [`TrainingSplit`], so
+/// a trainer cannot obtain a `Game` whose seed the split does not contain. The
+/// raw reader ([`parse`]) and the file that holds both splits stay reachable to
+/// `export`/`verify`/`gate`, which is why this is a second type and not a flag on
+/// the first.
+///
+/// ```compile_fail
+/// // The games are not the caller's to supply.
+/// let _ = bench::dataset::TrainingDataset::from_games(Vec::new());
+/// ```
+#[derive(Clone, Debug)]
+pub struct TrainingDataset(Vec<engine::Game>);
+
+impl TrainingDataset {
+    /// The committed games of a configuration, filtered to the split.
+    ///
+    /// The filter is the guarantee, and the assertions after it are the belt: a
+    /// loader that silently returned fewer games would make a run's
+    /// `seed_list_fnv` wrong rather than its table.
+    pub fn load(data: &Path, cfg: &Config, split: &TrainingSplit) -> Result<TrainingDataset, String> {
+        let path = games_path(data, cfg);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let parsed = parse(cfg, &text).map_err(|error| format!("parse {}: {error}", path.display()))?;
+        let games: Vec<engine::Game> = parsed
+            .games
+            .into_iter()
+            .filter(|game| split.contains(game.seed))
+            .map(|game| {
+                let sequence = engine::Sequence::from_letters(&game.sequence).ok_or_else(|| {
+                    format!("seed {} has a sequence byte that is not a piece", game.seed)
+                })?;
+                Ok(engine::Game {
+                    seed: game.seed,
+                    board: game.board(),
+                    sequence,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        TrainingDataset::checked(games, split)
+    }
+
+    /// A bed with no committed Dataset (the validation-only configuration of
+    /// §9.1), generated from the split's own seeds — the same guard, one layer
+    /// further out: there is no seed to pass but `split.seeds()`.
+    pub fn generate(bed: &crate::width::Bed, split: &TrainingSplit) -> Result<TrainingDataset, String> {
+        let mut games = Vec::with_capacity(split.len());
+        for seed in split.seeds() {
+            let game = engine::generate_game(seed, bed.pieces, bed.cap)
+                .map_err(|error| format!("generate seed {seed}: {error:?}"))?;
+            games.push(game);
+        }
+        TrainingDataset::checked(games, split)
+    }
+
+    fn checked(games: Vec<engine::Game>, split: &TrainingSplit) -> Result<TrainingDataset, String> {
+        if games.len() != split.len() {
+            return Err(format!(
+                "{} games for the {} split, which has {} seeds",
+                games.len(),
+                split.label(),
+                split.len()
+            ));
+        }
+        if let Some(stray) = games.iter().find(|game| !split.contains(game.seed)) {
+            return Err(format!(
+                "seed {} is outside the {} split",
+                stray.seed,
+                split.label()
+            ));
+        }
+        if games.windows(2).any(|pair| pair[1].seed != pair[0].seed + 1) {
+            return Err("the games are not in seed order".to_string());
+        }
+        Ok(TrainingDataset(games))
+    }
+
+    pub fn games(&self) -> &[engine::Game] {
+        &self.0
+    }
+
+    /// FNV-1a-64 over the seeds as little-endian `u32`, in order. The number a
+    /// run records as `seed_list_fnv`, so a run cannot claim a Split it did not
+    /// evaluate.
+    pub fn seed_list_fnv(&self) -> String {
+        let mut fnv = crate::fingerprint::Fnv::new();
+        for game in &self.0 {
+            fnv.u32_le(game.seed);
+        }
+        format!("0x{}", crate::fingerprint::hex(fnv.finish()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

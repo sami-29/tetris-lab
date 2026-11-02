@@ -74,68 +74,87 @@ fn the_seed_list_fingerprint_is_the_committed_golden() {
     for seed in tuning().seeds() {
         fnv.u32_le(seed);
     }
-    assert_eq!(fingerprint::hex(fnv.finish()), TUNING_SEED_LIST_FNV);
+    assert_eq!(format!("0x{}", fingerprint::hex(fnv.finish())), TUNING_SEED_LIST_FNV);
 }
 
-/// The belt to the type's braces: a `games.txt` that *does* carry a test seed
-/// still yields none, because the loader filters by the split before it builds
-/// anything the trainer can name.
+/// The belt to the type's braces: **the file the trainer reads literally carries
+/// seeds 0-999** — §6 puts both splits in one `games.txt` — and the loader hands
+/// none of them on. The second half runs the same load from a copy at a different
+/// path, so the guard is a property of the type and not of the committed path.
 #[test]
-fn an_injected_test_seed_never_reaches_the_trainer() {
-    let source = dataset::games_path(&data(), &GOAL12);
-    let text = std::fs::read_to_string(&source).expect("read games.txt");
-    let mut lines = text.lines();
-    let header = lines.next().expect("a header line").to_string();
-    // Keep only tuning seeds, then inject three test seeds at the front.
-    let tuning_lines: Vec<&str> = lines
-        .filter(|line| {
-            line.split_whitespace()
-                .next()
-                .and_then(|seed| seed.parse::<u32>().ok())
-                .is_some_and(|seed| tuning().contains(seed))
-        })
-        .collect();
-    let injected: Vec<String> = ["0", "453", "999"]
-        .iter()
-        .filter_map(|seed| {
-            text.lines()
-                .find(|line| line.split_whitespace().next() == Some(*seed))
-                .map(|line| line.to_string())
-        })
-        .collect();
-    assert_eq!(injected.len(), 3, "the committed file does carry test seeds");
-
-    let mut poisoned = String::from(&header);
-    poisoned.push('\n');
-    for line in injected.iter().chain(tuning_lines.iter()) {
-        poisoned.push_str(line);
-        poisoned.push('\n');
-    }
-
-    let dir = tempdir("tuning-split");
+fn the_test_seeds_in_the_file_never_reach_the_trainer() {
     let cfg = Config {
         dir: "goal12-p100-cap7",
         goal: 12,
         pieces: 100,
         cap: 7,
     };
-    std::fs::create_dir_all(dir.join(cfg.dir)).expect("make the config directory");
-    std::fs::write(dir.join(cfg.dir).join("games.txt"), &poisoned).expect("write the poisoned file");
+    let source = dataset::games_path(&data(), &GOAL12);
+    let text = std::fs::read_to_string(&source).expect("read games.txt");
 
-    // The raw reader does see them -- which is exactly why the trainer is not
-    // allowed to name it.
-    let raw = dataset::parse(&cfg, &poisoned).expect("the poisoned file still parses");
+    // The raw reader, which the tuning module is forbidden to name, sees 2,000
+    // games including every test seed.
+    let raw = dataset::parse(&cfg, &text).expect("the committed file parses");
+    assert_eq!(raw.games.len(), 2_000);
+    let test_seeds = raw.games.iter().filter(|game| game.seed < 1_000).count();
+    assert_eq!(test_seeds, 1_000, "the file does carry the test Split");
     assert!(raw.games.iter().any(|game| game.seed == 453));
 
-    let dataset = TrainingDataset::load(&dir, &cfg, &tuning()).expect("load through the guard");
-    assert_eq!(dataset.games().len(), 1_000);
-    assert!(
-        dataset.games().iter().all(|game| game.seed >= 1_000),
-        "a test seed reached the trainer"
-    );
-    assert!(!dataset.games().iter().any(|game| game.seed == 453));
-    assert_eq!(dataset.seed_list_fnv(), TUNING_SEED_LIST_FNV);
+    for (label, path) in [("committed", data()), ("copy", tempdir("tuning-split"))] {
+        if label == "copy" {
+            std::fs::create_dir_all(path.join(cfg.dir)).expect("make the config directory");
+            std::fs::write(path.join(cfg.dir).join("games.txt"), &text)
+                .expect("write the copy");
+        }
+        let dataset =
+            TrainingDataset::load(&path, &cfg, &tuning()).expect("load through the guard");
+        assert_eq!(dataset.games().len(), 1_000, "{label}");
+        assert!(
+            dataset.games().iter().all(|game| tuning().contains(game.seed)),
+            "{label}: a test seed reached the trainer"
+        );
+        assert!(!dataset.games().iter().any(|game| game.seed == 453), "{label}");
+        assert_eq!(dataset.seed_list_fnv(), TUNING_SEED_LIST_FNV, "{label}");
+        if label == "copy" {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
 
+/// And a file that is *short* a tuning seed is refused rather than silently
+/// training on fewer games: a run whose `seed_list_fnv` disagreed with its Split
+/// would be a reproducibility bug wearing a table.
+#[test]
+fn a_short_training_dataset_is_refused() {
+    let cfg = Config {
+        dir: "goal12-p100-cap7",
+        goal: 12,
+        pieces: 100,
+        cap: 7,
+    };
+    let source = dataset::games_path(&data(), &GOAL12);
+    let text = std::fs::read_to_string(&source).expect("read games.txt");
+    let mut kept: Vec<&str> = Vec::new();
+    let mut lines = text.lines();
+    kept.push(lines.next().expect("a header line"));
+    for line in lines {
+        let seed: u32 = line
+            .split_whitespace()
+            .next()
+            .and_then(|seed| seed.parse().ok())
+            .expect("a seed column");
+        if seed < 1_500 {
+            kept.push(line);
+        }
+    }
+    let dir = tempdir("tuning-short");
+    std::fs::create_dir_all(dir.join(cfg.dir)).expect("make the config directory");
+    std::fs::write(dir.join(cfg.dir).join("games.txt"), kept.join("
+") + "
+")
+        .expect("write the short file");
+    let error = TrainingDataset::load(&dir, &cfg, &tuning()).expect_err("a short file is refused");
+    assert!(error.contains("1000") || error.contains("500"), "{error}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -175,7 +194,18 @@ fn the_tuning_module_names_no_escape_hatch() {
         ("..999", "a test-split upper bound written out"),
     ];
     for file in &files {
-        let text = std::fs::read_to_string(file).expect("read a tuning source");
+        let source = std::fs::read_to_string(file).expect("read a tuning source");
+        // Code only: a doc comment that *denies* the escape hatch must not trip
+        // the lint that forbids it.
+        let text: String = source
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !trimmed.starts_with("//")
+            })
+            .collect::<Vec<_>>()
+            .join("
+");
         for (token, why) in forbidden {
             assert!(
                 !text.contains(token),
