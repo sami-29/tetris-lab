@@ -149,8 +149,20 @@ test("the page names the numbers in one module and nowhere else", () => {
     "width.ts imports the artifact",
   );
 
+  // Ticket 13 moved the default *game* out of `main.ts` into `src/core/game.ts`,
+  // where it takes the two numbers as a `Bounds` argument. So the guard follows the
+  // number: the page builds one pair from the artifact, the URL default and the
+  // Playground's slider both read that pair, and neither types a width.
   const main = readFileSync(`${WEB}/src/main.ts`, "utf8");
-  assert.match(main, /beamWidth:\s*DEFAULT_BEAM/, "the toolbar opens at DEFAULT_BEAM");
-  assert.doesNotMatch(main, /beamWidth:\s*\d+/, "no hard-coded beam width in the page");
+  assert.match(main, /defaultBeam:\s*DEFAULT_BEAM/, "the URL default is DEFAULT_BEAM");
+  assert.match(main, /widthCap:\s*WIDTH_CAP/, "the slider's end is WIDTH_CAP");
   assert.match(main, /from "\.\/config\/width\.ts"/, "the page imports the module");
+
+  const gameState = readFileSync(`${WEB}/src/core/game.ts`, "utf8");
+  assert.match(gameState, /bounds\.defaultBeam/, "the default game reads the bounds");
+  assert.doesNotMatch(gameState, /beamWidth:\s*\d+/, "no hard-coded beam width in the URL state");
+
+  const playground = readFileSync(`${WEB}/src/ui/playground.ts`, "utf8");
+  assert.match(playground, /boundOf\(field, this\.bounds\)/, "the slider's bounds are computed");
+  assert.doesNotMatch(playground, /(defaultBeam|widthCap)\s*[=:]\s*\d/, "no width typed into the controls");
 });

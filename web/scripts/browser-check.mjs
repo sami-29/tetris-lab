@@ -281,6 +281,17 @@ const READ = `(() => {
       const rect = strip?.getBoundingClientRect();
       return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null;
     })(),
+    // Ticket 13: the game in the address bar, and the controls that put it there.
+    search: location.search,
+    historyLength: history.length,
+    outcomeKind: document.getElementById("outcome")?.dataset.outcome ?? "",
+    reason: document.getElementById("playground")?.dataset.reason ?? "",
+    playground: Object.fromEntries(
+      [...document.querySelectorAll("#playground [data-field]")].map((el) => [el.dataset.field, el.value]),
+    ),
+    presets: [...document.querySelectorAll("#playground [data-preset]")].map((el) => el.dataset.preset),
+    beamReadout: text("beam-readout"),
+    beamTickTitled: document.getElementById("beam-tick")?.getAttribute("title") ?? "",
   };
 })()`;
 
@@ -378,7 +389,8 @@ try {
   console.log(`  progress ${solved.progress}`);
 
   check("the page reports an outcome instead of an error", solved.tone !== "error", solved.tone || "ok");
-  check("the outcome came from wasm", /won|lost/.test(solved.outcome) && /evaluations/.test(solved.outcome), solved.outcome);
+  // Ticket 13's words: "Won: the Goal of 8 lines was reached, 8 Lines cleared."
+  check("the outcome came from wasm", /^(Won|Lost): the Goal of \d+ lines/.test(solved.outcome) && /evaluations/.test(solved.outcome), solved.outcome);
   check("the status names the default game", /seed 0/.test(solved.status) && /beam 25/.test(solved.status));
 
   const shot = option("shot", join(tmpdir(), "tetris-lab-check.png"));
@@ -601,6 +613,124 @@ try {
   check("the strip keeps carrying the position", (await read()).seek >= 0);
   await key(" ", "Space", 32); // pause for the last screenshot
   shots.push(await shoot("paused"));
+
+  // ---- ticket 13: a control re-solves, and the URL carries the game ------------
+  //
+  // §2.1.7's promise, checked the way a visitor does it: change a field, and read
+  // back the Board on screen (the pixels), the address bar, and the session history.
+  // `replaceState` means the address bar follows the control while Back still means
+  // "leave the Lab" — one history entry before and after.
+  const setField = async (field, value) => {
+    await cdp.send(
+      "Runtime.evaluate",
+      {
+        expression: `(() => {
+          const input = document.querySelector('#playground [data-field="${field}"]');
+          if (!input) return false;
+          input.value = ${JSON.stringify(String(value))};
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        })()`,
+        returnByValue: true,
+      },
+      sessionId,
+    );
+  };
+  /** Wait for a fresh outcome: the page clears it while a solve is in flight. */
+  const settle = async (after) => {
+    for (let i = 0; i < 40; i += 1) {
+      await sleep(120);
+      const state = await read();
+      if (state && state.outcome.length > 0 && state.outcome !== after) return state;
+    }
+    return read();
+  };
+
+  if (solved.untitled.length === 0) {
+    const before = await read();
+    console.log(`  playground ${before.presets.length} presets, fields ${Object.keys(before.playground).join(", ")}`);
+    check(
+      "the Playground offers both shipped configurations",
+      before.presets.includes("goal8-p40-cap7") && before.presets.includes("goal12-p100-cap7"),
+      before.presets.join(", "),
+    );
+    check(
+      "the width control opens at the default and names the cap",
+      before.playground.beam === "25" && /default 25/.test(before.beamReadout) && /800/.test(before.beamReadout),
+      before.beamReadout,
+    );
+
+    // A seed: the Board must change on screen, and the URL must follow it.
+    await setField("seed", 7);
+    const seeded = await settle(before.outcome);
+    check(
+      "changing the seed re-solves and the Board on screen changes",
+      seeded.mask !== before.mask && /seed 7/.test(seeded.status),
+      `${before.mask.slice(0, 40)}… vs ${seeded.mask.slice(0, 40)}…`,
+    );
+    check(
+      "the URL carries the game in lowercase keys, and Back still leaves the page",
+      seeded.search === "?seed=7" && seeded.historyLength === before.historyLength,
+      `${seeded.search || "(bare)"} · history ${seeded.historyLength}`,
+    );
+
+    // The starting height: a different Board, the same Sequence length, one field.
+    const beforeCap = await read();
+    await setField("cap", 19);
+    const raised = await settle(beforeCap.outcome);
+    check(
+      "raising the starting height changes the Board and touches one field",
+      raised.mask !== beforeCap.mask && raised.search.includes("cap=19"),
+      raised.search || "(bare)",
+    );
+
+    // A goal the search cannot reach: an outcome, in words, not an error.
+    await setField("goal", 20);
+    const lost = await settle(raised.outcome);
+    check(
+      "a game the search cannot win says so with the Lines it reached",
+      /^Lost: the Goal of 20 lines was not reached, \d+ Lines cleared\./.test(lost.outcome) &&
+        lost.tone !== "error",
+      lost.outcome.slice(0, 100),
+    );
+    check(
+      "a loss has no Moves to play, and says so instead of an empty counter",
+      lost.outcomeKind === "lost" && /^No Moves to replay: .*Lines cleared\.$/.test(lost.progress),
+      lost.progress,
+    );
+
+    // A preset: one click fills the fields and lands on the committed game.
+    await cdp.send(
+      "Runtime.evaluate",
+      {
+        expression: `document.querySelector('#playground [data-preset="goal12-p100-cap7"]').click()`,
+        returnByValue: true,
+      },
+      sessionId,
+    );
+    const preset = await settle(lost.outcome);
+    check(
+      "a preset fills every field and reproduces the committed game",
+      preset.search === "?goal=12&pieces=100" &&
+        preset.playground.seed === "0" &&
+        preset.playground.pieces === "100" &&
+        /goal 12 lines · 100 pieces · starting height 7/.test(preset.status),
+      preset.search || "(bare)",
+    );
+
+    // The expert width: the slider runs to the cap and re-solves.
+    const beforeBeam = await read();
+    await setField("beam", 800);
+    const wide = await settle(beforeBeam.outcome);
+    check(
+      "the beam slider re-solves, and the URL carries the width",
+      wide.search.includes("beam=800") && wide.outcome !== beforeBeam.outcome,
+      wide.search,
+    );
+    check("the re-solve reason is named per control", wide.reason === "beam", wide.reason);
+    shots.push(await shoot("playground"));
+  }
 
   for (const file of shots) console.log(`  screenshot ${file}`);
 
