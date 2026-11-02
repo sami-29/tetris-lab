@@ -16,8 +16,15 @@
 // The import attribute is deliberate: Vite accepts it, and it lets `node --test`
 // import this file directly (Node refuses a JSON import without one), which is
 // what makes the drift guard a real import instead of a text comparison.
+//
+// Node exposes a JSON module through `default` only; it does not synthesise
+// named exports from the object's keys the way Vite does. So the artifact is
+// imported whole and the two numbers are projected here. That costs ~2 KB of
+// gzipped bundle (the whole curve, instead of two integers) and buys a module
+// that Node and Vite agree on — the alternative was a check that only ran under
+// one of them, which is exactly the drift this file exists to prevent.
 
-export {
-  default_beam as DEFAULT_BEAM,
-  width_cap as WIDTH_CAP,
-} from "../../../data/measurements/width-curve.json" with { type: "json" };
+import curve from "../../../data/measurements/width-curve.json" with { type: "json" };
+
+export const DEFAULT_BEAM: number = curve.default_beam;
+export const WIDTH_CAP: number = curve.width_cap;
