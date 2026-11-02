@@ -97,6 +97,7 @@ pub extern "C" fn solve(goal: u32, beam_width: u32) -> i64 {
             lines: 0,
             evaluations: 0,
             moves: Vec::new(),
+            tail_truncated: false,
         }
         .packed();
     };

@@ -17,24 +17,14 @@ const SEEDS: &str = include_str!("fixtures/tail-seeds.txt");
 
 /// A configuration with the Tail switched off, which is the beam alone.
 fn beam_only(goal: u32, beam_width: u32) -> SolveConfig {
-    SolveConfig {
-        goal,
-        beam_width,
-        dedup: true,
-        no_suicide: true,
-        tail: false,
-    }
+    let mut cfg = SolveConfig::new(goal, beam_width);
+    cfg.toggles = Toggles::SHIPPED.without(Feature::Tail);
+    cfg
 }
 
 /// The shipped configuration: every search decision on.
 fn shipped_config(goal: u32, beam_width: u32) -> SolveConfig {
-    SolveConfig {
-        goal,
-        beam_width,
-        dedup: true,
-        no_suicide: true,
-        tail: true,
-    }
+    SolveConfig::new(goal, beam_width)
 }
 
 // ── the demonstration Seed ──────────────────────────────────────────────────
@@ -66,7 +56,10 @@ fn the_tail_wins_a_seed_the_beam_loses() {
         shipped(),
     );
     assert!(tail.won, "seed 453 must be won with the Tail on");
-    assert_eq!(tail.lines, 8, "the Tail clears exactly the eight Lines asked");
+    assert_eq!(
+        tail.lines, 8,
+        "the Tail clears exactly the eight Lines asked"
+    );
     assert_eq!(tail.status, Status::Ok);
     assert_eq!(
         tail.moves.len(),
@@ -79,11 +72,16 @@ fn the_tail_wins_a_seed_the_beam_loses() {
         8,
         "the winning Move list replays to eight Lines"
     );
-    // The Tail may not cost more work than the beam it replaces: it prunes the
-    // subtrees that cannot reach the Goal, so a win is cheaper than a loss here.
+    // The Tail is not cheaper here: a layered exact search expands every
+    // placement of the pieces before it can reach the ply that wins, so a Tail
+    // that fires costs more Evaluations than the beam that gave up. What it must
+    // not do is change a result the beam *reached* -- that is the committed Seed
+    // set's test. (The ticket's notes measure the same +2,764 on the scratch
+    // port and call it out as §5.3's "its internal pruning is the implementer's,
+    // its result is not".)
     assert!(
-        tail.evaluations <= beam.evaluations,
-        "Tail evaluations {} vs beam {}",
+        tail.evaluations > beam.evaluations,
+        "a fired Tail enumerates placements the beam never made: {} vs {}",
         tail.evaluations,
         beam.evaluations
     );
@@ -202,7 +200,10 @@ fn the_tail_never_changes_a_result_the_beam_reaches() {
             );
         }
     }
-    assert!(seen >= 16, "the committed Seed set is not empty ({seen} seeds)");
+    assert!(
+        seen >= 16,
+        "the committed Seed set is not empty ({seen} seeds)"
+    );
 }
 
 // ── one place decides the three search decisions ───────────────────────
@@ -233,18 +234,30 @@ fn the_three_search_decisions_are_switchable_from_one_place() {
 
     // One feature off, two untouched -- each of them, on its own.
     let no_dedup = Toggles::SHIPPED.without(Feature::Dedup);
-    assert_eq!((no_dedup.dedup, no_dedup.no_suicide, no_dedup.tail), (false, true, true));
+    assert_eq!(
+        (no_dedup.dedup, no_dedup.no_suicide, no_dedup.tail),
+        (false, true, true)
+    );
     let no_suicide = Toggles::SHIPPED.without(Feature::NoSuicide);
-    assert_eq!((no_suicide.dedup, no_suicide.no_suicide, no_suicide.tail), (true, false, true));
+    assert_eq!(
+        (no_suicide.dedup, no_suicide.no_suicide, no_suicide.tail),
+        (true, false, true)
+    );
     let no_tail = Toggles::SHIPPED.without(Feature::Tail);
-    assert_eq!((no_tail.dedup, no_tail.no_suicide, no_tail.tail), (true, true, false));
+    assert_eq!(
+        (no_tail.dedup, no_tail.no_suicide, no_tail.tail),
+        (true, true, false)
+    );
 
     // All off is reachable from the same place, and is the ladder's worst row.
     let mut all_off = Toggles::SHIPPED;
     for feature in [Feature::Dedup, Feature::NoSuicide, Feature::Tail] {
         all_off = all_off.without(feature);
     }
-    assert_eq!((all_off.dedup, all_off.no_suicide, all_off.tail), (false, false, false));
+    assert_eq!(
+        (all_off.dedup, all_off.no_suicide, all_off.tail),
+        (false, false, false)
+    );
 }
 
 /// Each switch acts on the search, not just on the config: the four rows §9.4
@@ -300,4 +313,121 @@ fn every_ablation_row_still_solves() {
     );
     assert!(on.won, "seed 453 with the Tail on");
     assert!(!off.won, "seed 453 with the Tail off");
+}
+
+// ── determinism ────────────────────────────────────────────────────────────
+
+/// A fingerprint of one game's Solve: everything a golden value and the
+/// determinism gate look at (§9.2 gate 5, gate 6).
+fn fingerprint(seed: u32) -> String {
+    let game = generate_game(seed, 40, 7).expect("in domain");
+    let r = solve(
+        &game.board,
+        game.sequence.as_slice(),
+        &shipped_config(8, 25),
+        shipped(),
+    );
+    let moves: Vec<u32> = r.moves.iter().map(|m| m.packed()).collect();
+    format!(
+        "{} {} {} {} {:?} {}",
+        seed, r.won as u8, r.lines, r.evaluations, moves, r.tail_truncated as u8
+    )
+}
+
+/// §9.2 gate 5, across processes: a second process must agree with this one.
+///
+/// In-process repetition cannot catch the failure this guards — a hash container
+/// whose iteration order is randomised per process, which is exactly the shape
+/// the notes warn a "performance" refactor of Dedup would take. The child is this
+/// same test binary running one test by name.
+#[test]
+fn the_same_seed_solves_identically_in_another_process() {
+    let mine = fingerprint(453);
+    let exe = std::env::current_exe().expect("the test binary's own path");
+    let out = std::process::Command::new(exe)
+        .args([
+            "--exact",
+            "tail_fingerprint_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("TAIL_FINGERPRINT_CHILD", "1")
+        .output()
+        .expect("spawning the test binary again");
+    assert!(
+        out.status.success(),
+        "child failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let theirs = String::from_utf8_lossy(&out.stdout);
+    let line = theirs
+        .lines()
+        .find(|l| l.starts_with("FINGERPRINT "))
+        .unwrap_or_else(|| panic!("no fingerprint from the child:\n{theirs}"));
+    assert_eq!(
+        line.trim_start_matches("FINGERPRINT "),
+        mine,
+        "two processes solved one Seed differently"
+    );
+}
+
+/// The child half of the test above. Ignored so a plain run never spends the
+/// time, and inert unless the parent asked for it.
+#[test]
+#[ignore]
+fn tail_fingerprint_child() {
+    if std::env::var("TAIL_FINGERPRINT_CHILD").is_err() {
+        return;
+    }
+    println!("FINGERPRINT {}", fingerprint(453));
+}
+
+// ── the budget (§9.3) ──────────────────────────────────────────────────────
+
+/// The default-configuration Solve on this machine: the number ticket 09 turns
+/// into a gate and §9.5's width cap is fixed by.
+///
+/// Ignored because it is a measurement, not an assertion: ADR 0002's rule is
+/// that CI guards the fingerprint, not the clock. `DEFAULT_BEAM` is ticket 01's
+/// measured width, 25, until `data/measurements/width-curve.json` lands.
+///
+/// Run it with
+/// `cargo test --release --test tail -- --ignored --nocapture measure`
+#[test]
+#[ignore]
+fn measure_the_default_configuration_p90() {
+    use std::time::Instant;
+
+    const DEFAULT_BEAM: u32 = 25;
+    const SEEDS: u32 = 200;
+    let mut micros = Vec::with_capacity(SEEDS as usize);
+    let mut wins = 0;
+    let mut evaluations = 0u64;
+    for seed in 0..SEEDS {
+        let game = generate_game(seed, 40, 7).expect("in domain");
+        let started = Instant::now();
+        let r = solve(
+            &game.board,
+            game.sequence.as_slice(),
+            &SolveConfig::new(8, DEFAULT_BEAM),
+            shipped(),
+        );
+        micros.push(started.elapsed().as_micros() as u64);
+        wins += r.won as u32;
+        evaluations += r.evaluations as u64;
+    }
+    micros.sort_unstable();
+    let at = |q: f64| micros[((micros.len() as f64 * q) as usize).min(micros.len() - 1)];
+    println!(
+        "default configuration (goal 8, 40 pieces, cap 7, beam {DEFAULT_BEAM}), {SEEDS} seeds:
+  wins {wins}/{SEEDS}
+  p50 {:.2} ms
+  p90 {:.2} ms
+  max {:.2} ms
+  mean evaluations {:.0}",
+        at(0.50) as f64 / 1000.0,
+        at(0.90) as f64 / 1000.0,
+        micros[micros.len() - 1] as f64 / 1000.0,
+        evaluations as f64 / SEEDS as f64
+    );
 }

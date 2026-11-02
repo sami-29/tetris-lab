@@ -118,12 +118,9 @@ pub fn replay(board: &Board, sequence: &[Piece], moves: &[engine::search::Move])
         let piece = sequence[i];
         assert_eq!(mv.piece_index, piece.index(), "move {i} names its piece");
         let before = sim.as_board();
-        let cleared = sim.play(piece, mv.rotation, mv.column).unwrap_or_else(|| {
-            panic!(
-                "move {i} ({mv:?}) is not legal; board {:?}",
-                before.0
-            )
-        });
+        let cleared = sim
+            .play(piece, mv.rotation, mv.column)
+            .unwrap_or_else(|| panic!("move {i} ({mv:?}) is not legal; board {:?}", before.0));
         lines += cleared;
     }
     assert!(sim.as_board().is_legal(), "the replayed board stays legal");

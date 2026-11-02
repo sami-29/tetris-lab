@@ -15,13 +15,7 @@ mod common;
 use common::Sim;
 
 fn config(goal: u32, beam_width: u32) -> SolveConfig {
-    SolveConfig {
-        goal,
-        beam_width,
-        dedup: true,
-        no_suicide: true,
-        tail: true,
-    }
+    SolveConfig::new(goal, beam_width)
 }
 
 fn seed_42_game() -> engine::generator::Game {
