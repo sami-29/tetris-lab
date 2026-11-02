@@ -28,3 +28,46 @@ import curve from "../../../data/measurements/width-curve.json" with { type: "js
 
 export const DEFAULT_BEAM: number = curve.default_beam;
 export const WIDTH_CAP: number = curve.width_cap;
+
+/**
+ * How the two numbers were reached, as the artifact records it. §2.2 asks for "one
+ * tooltip line [that] explains why they differ", and a tooltip written from the
+ * wrong story is a lie in the UI: `default_beam_basis` says whether the default was
+ * named on a quality tie or on cost, `quality_axis` says whether the quality series
+ * could separate the widths at all, and `cap_bound` says whether the sweep ended at
+ * the analysis budget or at the end of the pre-registered doubling list. `ui/width-
+ * copy.ts` composes the sentence from these three, so prose cannot drift from the
+ * measurement.
+ */
+export const DEFAULT_BEAM_BASIS: "cost" | "tie" = oneOf(
+  curve.default_beam_basis,
+  ["cost", "tie"],
+  "default_beam_basis",
+);
+export const CAP_BOUND: "budget" | "schedule" = oneOf(
+  curve.cap_bound,
+  ["budget", "schedule"],
+  "cap_bound",
+);
+export const QUALITY_AXIS: "no-resolution" | "resolved" = oneOf(
+  curve.quality_axis,
+  ["no-resolution", "resolved"],
+  "quality_axis",
+);
+
+/**
+ * A closed set of strings from the artifact, checked at import time.
+ *
+ * The JSON import types every property as `string`, and these three fields are
+ * what a sentence in the UI is composed from, so a typo or a new token is a build
+ * failure rather than a tooltip that says nothing: the same rule as the missing
+ * artifact — fail loudly, never fall back to a literal.
+ */
+function oneOf<T extends string>(value: string, allowed: readonly T[], name: string): T {
+  for (const candidate of allowed) {
+    if (value === candidate) return candidate;
+  }
+  throw new Error(
+    `width-curve.json: ${name} is ${JSON.stringify(value)}, not one of ${allowed.join(" | ")}`,
+  );
+}
