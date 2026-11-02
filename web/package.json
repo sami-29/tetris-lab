@@ -9,7 +9,8 @@
     "dev": "vite",
     "build": "npm run build:wasm && tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "npm run build:wasm && node --test \"test/**/*.test.mjs\""
+    "test": "npm run build:wasm && node --test \"test/**/*.test.mjs\"",
+    "gates": "npm run build && cargo test --workspace && node --test \"test/**/*.test.mjs\" && cargo run --release -p bench -- gate all"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
