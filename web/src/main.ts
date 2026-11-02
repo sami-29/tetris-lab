@@ -45,13 +45,16 @@ import type { FromWorker, GameMessage, GameInput, ToWorker } from "./core/protoc
 import { fieldFrom, emptyField, type Field } from "./ui/field.ts";
 import { BoardView } from "./ui/board.ts";
 import { BandView } from "./ui/band-canvas.ts";
-import { buildBand, countLines, decodeTrace, type BandModel } from "./ui/band-model.ts";
+import { buildBand, countLines, decodeTrace, winningLineage, type BandModel } from "./ui/band-model.ts";
 import { Playback, type PlaybackStatus } from "./ui/playback.ts";
 import { Playground } from "./ui/playground.ts";
 import { letterOf } from "./ui/pieces.ts";
 import { MPS_DEFAULT, MPS_MAX, MPS_MIN, mpsToSlider, msPerMove, sliderToMps } from "./ui/phases.ts";
 import { KEY_MAP, SPEED_STOP, resolveKey, type Action } from "./ui/keys.ts";
 import { moveToX, stripMode, xToMove } from "./ui/seek.ts";
+import { TreePanel } from "./ui/tree-panel.ts";
+import { reconstruct } from "./ui/timeline.ts";
+import type { TreeRef } from "./ui/tree-model.ts";
 
 /**
  * §4's handshake number, echoed in the status line. The loader checks it.
@@ -92,10 +95,18 @@ const bandCanvas = must<HTMLCanvasElement>("#band");
 const bandLabel = must<HTMLElement>("#band-label");
 const bandCaption = must<HTMLElement>("#band-caption");
 const bandCounts = must<HTMLElement>("#band-counts");
+const bandPanel = must<HTMLElement>("#band-panel");
+const treePanelRoot = must<HTMLElement>("#tree-panel");
+const inspectorViews = must<HTMLElement>("#views");
 
 const view = new BoardView(canvas);
 const bandView = new BandView(bandCanvas);
 const lines = { status: statusLine, outcome: outcomeLine, progress: progressLine };
+/**
+ * The inspector's two views. The band is the default; the tree is the drill-down,
+ * with its own bound (never the beam's) and the selected state's card.
+ */
+const treePanel = new TreePanel(treePanelRoot, { bandPanel, views: inspectorViews });
 
 let worker: Worker | null = null;
 let playback: Playback | null = null;
@@ -103,6 +114,12 @@ let playback: Playback | null = null;
 let shown: GameMessage | null = null;
 /** The band's last model, so a resize redraws it instead of blanking it. */
 let bandModel: BandModel | null = null;
+/**
+ * The winning lineage of the trace on screen, as `{layer, rank}` references. The
+ * tree's state card uses it for the one thing the trace *can* answer: the played
+ * chain's Boards, which playback reconstructed from the Move list.
+ */
+let traceLineage: TreeRef[] = [];
 let startTimer = 0;
 let nextRequestId = 1;
 let pending = 0;
@@ -384,6 +401,7 @@ function show(message: GameMessage): void {
   view.resize();
   view.draw(shownBoard);
   showBand(message);
+  showTree(message);
 
   if (message.moves.length === 0) {
     showLoss(message);
@@ -453,6 +471,36 @@ function showBand(message: GameMessage): void {
   bandCounts.replaceChildren(...items);
 }
 
+/**
+ * The bounded tree's half: the same decoded trace the band read, handed to the
+ * drill-down. Nothing here solves, counts or re-derives — §2.3's "on demand: a
+ * bounded tree" is a *projection* of a recording the engine already made.
+ *
+ * `boardFor` answers with the only Boards the ABI lets the page hold: the starting
+ * position, and the played chain's, which playback reconstructed move by move. A
+ * state off that chain has no Board anywhere in the page, so the card says so.
+ */
+function showTree(message: GameMessage): void {
+  if (!message.trace || message.trace.length === 0) {
+    traceLineage = [];
+    treePanel.setTrace(null, undefined, null);
+    return;
+  }
+  const trace = decodeTrace(message.trace, message.band ?? DEFAULT_BEAM);
+  traceLineage = winningLineage(trace).map((point) => ({ layer: point.layer, rank: point.rank }));
+  treePanel.setTrace(trace, message.sequence, boardFor);
+}
+
+/** The selected state's Board, when this page holds it; `null` when it does not. */
+function boardFor(layer: number, rank: number): ArrayLike<number> | null {
+  if (layer === 0 && rank === 0) return shownBoard;
+  if (playback === null) return null;
+  const onPath = traceLineage[layer];
+  if (onPath === undefined || onPath.rank !== rank) return null;
+  if (layer > playback.timeline.steps.length) return null;
+  return reconstruct(playback.timeline, layer);
+}
+
 /* ---- controls ---------------------------------------------------------- */
 
 function currentK(): number {
@@ -481,7 +529,10 @@ function run(action: Action): void {
       setSheet(sheet.dataset.open !== "true");
       return;
     case "close":
+      // Escape closes the map, and clears the tree's selection: one key, "nothing
+      // is pinned any more".
       setSheet(false);
+      treePanel.clearSelection();
       return;
     case "speed": {
       // One key press is one stop on the log scale, so the keys land on the same
@@ -613,6 +664,7 @@ globalThis.addEventListener("resize", () => {
   view.resize();
   bandView.resize();
   bandView.draw(bandModel);
+  treePanel.draw();
   if (playback) {
     playback.draw();
     painted = { k: -1, total: painted.total };
