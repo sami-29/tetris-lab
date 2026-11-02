@@ -40,3 +40,14 @@ host-probe/.chrome-profile/
 web/node_modules/
 web/dist/
 web/pkg/
+
+# The Dataset is a build gate, so nothing under it may ever be ignored (§11).
+# `!data/` comes first: git never descends into an ignored directory. Only the
+# last matching pattern counts, so these win against any broad rule added *above*
+# them and lose to one appended below -- which is why the actual guard is the
+# gate's own ignore check (`cargo run -p bench -- verify`, and the test
+# `nothing_under_the_dataset_is_ignored`). Never `git add -f` a Dataset file: it
+# hides the pattern that will eat the next archive.
+!data/
+!data/dataset/
+!data/dataset/**
