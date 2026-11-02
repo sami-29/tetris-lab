@@ -3,11 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tetris Lab — a board from wasm</title>
-    <!-- Ticket 01: the shell is deliberately plain. The workbench layout, the
-         toolbar and the visual system arrive with tickets 13 and 14. -->
+    <title>Tetris Lab — watch a solve</title>
+    <!-- Tickets 01–10: the shell is deliberately plain. The workbench layout, the
+         readout panels and the visual system arrive with tickets 13 and 14 — when
+         they do, this file's chrome is replaced and `PALETTE` in
+         `src/ui/board.ts` is the whole colour system the canvas draws from. What
+         this page owes its ticket is behaviour: a continuous speed control, drops
+         that land, cleared rows that collapse, a move strip that is a seek bar, and
+         a keyboard map a visitor can find. -->
     <style>
       :root {
+        /* Plain-shell tokens. Ticket 14 replaces them with the workbench's. */
+        --bg: #0b0f14;
+        --panel: #121a23;
+        --panel2: #182333;
+        --line: #1a2430;
+        --ink: #dbe6f2;
+        --muted: #8ea3c0;
+        --amber: #e0a33e;
+        --teal: #7f9dc0;
+        --error: #ff9a8a;
         color-scheme: dark;
         font-variant-numeric: tabular-nums;
       }
@@ -15,22 +30,23 @@
       body {
         margin: 0;
         height: 100%;
-        background: #0b0f14;
-        color: #dbe6f2;
+        background: var(--bg);
+        color: var(--ink);
         font: 14px/1.45 ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
       }
       body {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        padding: 14px 18px;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto auto;
+        gap: 8px;
+        padding: 12px 16px 10px;
         box-sizing: border-box;
+        overflow: hidden;
       }
       header {
         display: flex;
         flex-wrap: wrap;
         align-items: baseline;
-        gap: 6px 18px;
+        gap: 4px 16px;
       }
       h1 {
         margin: 0;
@@ -40,18 +56,16 @@
         text-transform: lowercase;
       }
       #status,
-      #outcome,
-      #progress {
+      #outcome {
         margin: 0;
         font-size: 12px;
-        color: #8ea3c0;
+        color: var(--muted);
         min-height: 1.45em;
       }
       [data-tone="error"] {
-        color: #ff9a8a;
+        color: var(--error);
       }
       #stage {
-        flex: 1;
         min-height: 0;
         display: flex;
         align-items: stretch;
@@ -63,10 +77,139 @@
         height: 100%;
         max-width: 620px;
       }
-      footer {
+      /* The transport: one row, every control labelled and tipped. */
+      #transport {
         display: flex;
-        flex-direction: column;
-        gap: 2px;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px 12px;
+        font-size: 12px;
+      }
+      button {
+        font: inherit;
+        color: var(--ink);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 4px 9px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--panel2);
+      }
+      button[aria-pressed="true"] {
+        border-color: var(--amber);
+        color: var(--amber);
+      }
+      #speed {
+        width: 180px;
+        accent-color: var(--amber);
+      }
+      #speed-readout,
+      #progress {
+        color: var(--muted);
+        margin: 0;
+      }
+      /* The move strip, which *is* the seek bar: one gesture to any Move. */
+      #strip-wrap {
+        position: relative;
+        height: 30px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--panel);
+        overflow: hidden;
+      }
+      #strip {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: 1fr;
+        gap: 0;
+        cursor: pointer;
+        touch-action: none;
+      }
+      #strip:focus-visible {
+        outline: 1px solid var(--amber);
+        outline-offset: 1px;
+      }
+      #strip i {
+        display: block;
+        background: transparent;
+        border-right: 1px solid var(--bg);
+        position: relative;
+      }
+      #strip i[data-played="true"] {
+        background: var(--panel2);
+      }
+      #strip i[data-current="true"] {
+        background: #2a2210;
+        box-shadow: inset 0 0 0 1px var(--amber);
+      }
+      #strip i[data-clears="true"]::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 2px;
+        background: var(--amber);
+      }
+      #caret {
+        position: absolute;
+        top: -1px;
+        bottom: -1px;
+        width: 2px;
+        margin-left: -1px;
+        background: var(--ink);
+        pointer-events: none;
+      }
+      /* The keyboard map: chips in the status bar, the whole list behind `?`. */
+      #statusbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 10px;
+        font-size: 11px;
+        color: var(--muted);
+        min-height: 20px;
+      }
+      .kbd {
+        border: 1px solid var(--line);
+        border-bottom-width: 2px;
+        border-radius: 3px;
+        padding: 0 4px;
+        background: var(--panel);
+        color: var(--ink);
+      }
+      #sheet {
+        position: fixed;
+        inset: 0;
+        display: none;
+        place-items: center;
+        background: rgba(4, 7, 11, 0.72);
+        z-index: 10;
+      }
+      #sheet[data-open="true"] {
+        display: grid;
+      }
+      #sheet dl {
+        margin: 0;
+        padding: 16px 20px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        display: grid;
+        grid-template-columns: auto auto;
+        gap: 6px 18px;
+        font-size: 13px;
+      }
+      #sheet dt {
+        color: var(--amber);
+      }
+      #sheet dd {
+        margin: 0;
+        color: var(--ink);
       }
     </style>
   </head>
@@ -74,16 +217,60 @@
     <header>
       <h1>Tetris Lab</h1>
       <p id="status">booting wasm…</p>
+      <p id="outcome"></p>
     </header>
 
     <main id="stage">
       <canvas id="board" role="img" aria-label="Tetris board"></canvas>
     </main>
 
-    <footer>
-      <p id="outcome"></p>
-      <p id="progress"></p>
+    <section id="transport">
+      <button id="play" type="button" title="Play / pause (Space)" aria-label="Play / pause" aria-pressed="false">play</button>
+      <button id="restart" type="button" title="Restart from the starting Board (R)" aria-label="Restart">restart</button>
+      <label id="speed-label" for="speed" title="Playback speed in Moves per second (- and = move one stop)">speed</label>
+      <input
+        id="speed"
+        type="range"
+        min="0"
+        max="1"
+        step="0.001"
+        title="Playback speed: drag for any speed, not four presets (- and = step it)"
+        aria-label="Playback speed in Moves per second"
+      />
+      <output id="speed-readout" for="speed">1.43 moves/s · 0.70 s per move</output>
+      <p id="progress">waiting for the solve</p>
+    </section>
+
+    <div id="strip-wrap">
+      <div
+        id="strip"
+        role="slider"
+        tabindex="0"
+        aria-label="Move strip: drag to any Move. This is the seek bar."
+        aria-valuemin="0"
+        aria-valuemax="0"
+        aria-valuenow="0"
+        aria-valuetext="Move 0 of 0"
+        title="Drag or click to any Move; the arrow keys step, Home/End jump (← →, Home End)"
+      ></div>
+      <b id="caret" aria-hidden="true"></b>
+    </div>
+
+    <footer id="statusbar">
+      <span>keys</span>
+      <span><span class="kbd">Space</span> play/pause</span>
+      <span><span class="kbd">←</span><span class="kbd">→</span> Move</span>
+      <span><span class="kbd">-</span><span class="kbd">=</span> speed</span>
+      <span><span class="kbd">R</span> restart</span>
+      <span><span class="kbd">?</span> <button id="keys-button" type="button" title="The whole keyboard map (?)">all keys</button></span>
     </footer>
+
+    <div id="sheet" role="dialog" tabindex="-1" aria-modal="true" aria-label="Keyboard map" data-open="false">
+      <dl id="sheet-list">
+        <dt><span class="kbd">Esc</span></dt>
+        <dd>close this list</dd>
+      </dl>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
