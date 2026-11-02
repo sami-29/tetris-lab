@@ -4,422 +4,421 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tetris Lab — watch a solve</title>
-    <!-- Tickets 01–10: the shell is deliberately plain. The workbench layout, the
-         readout panels and the visual system arrive with tickets 13 and 14 — when
-         they do, this file's chrome is replaced and `PALETTE` in
-         `src/ui/board.ts` is the whole colour system the canvas draws from. What
-         this page owes its ticket is behaviour: a continuous speed control, drops
-         that land, cleared rows that collapse, a move strip that is a seek bar, and
-         a keyboard map a visitor can find. -->
-    <style>
-      :root {
-        /* Plain-shell tokens. Ticket 14 replaces them with the workbench's. */
-        --bg: #0b0f14;
-        --panel: #121a23;
-        --panel2: #182333;
-        --line: #1a2430;
-        --ink: #dbe6f2;
-        --muted: #8ea3c0;
-        --amber: #e0a33e;
-        --teal: #7f9dc0;
-        --error: #ff9a8a;
-        color-scheme: dark;
-        font-variant-numeric: tabular-nums;
-      }
-      html,
-      body {
-        margin: 0;
-        height: 100%;
-        background: var(--bg);
-        color: var(--ink);
-        font: 14px/1.45 ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
-      }
-      body {
-        display: grid;
-        grid-template-rows: auto auto minmax(0, 1fr) auto auto;
-        gap: 8px;
-        padding: 12px 16px 10px;
-        box-sizing: border-box;
-        overflow: hidden;
-      }
-      header {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: 4px 16px;
-      }
-      h1 {
-        margin: 0;
-        font-size: 15px;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-        text-transform: lowercase;
-      }
-      #status,
-      #outcome {
-        margin: 0;
-        font-size: 12px;
-        color: var(--muted);
-        min-height: 1.45em;
-      }
-      [data-tone="error"] {
-        color: var(--error);
-      }
-      #stage {
-        min-height: 0;
-        display: flex;
-        align-items: stretch;
-        justify-content: center;
-        gap: 14px;
-      }
-      #board {
-        display: block;
-        width: 100%;
-        height: 100%;
-        max-width: 620px;
-      }
-      /* The inspector: ticket 11 puts the score band in it, ticket 12 the tree and
-         ticket 14 the shell. Plain on purpose — the visual system is 14's. */
-      #inspector {
-        flex: 0 0 clamp(300px, 34vw, 560px);
-        min-width: 300px;
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        padding: 6px 8px;
-        box-sizing: border-box;
-        gap: 4px;
-      }
-      #inspector h2 {
-        margin: 0;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }
-      #band-label,
-      #band-caption {
-        margin: 0;
-        font-size: 10px;
-        color: var(--muted);
-      }
-      #band {
-        display: block;
-        flex: 1 1 auto;
-        width: 100%;
-        min-height: 120px;
-      }
-      #band-counts {
-        margin: 0;
-        padding: 0;
-        list-style: none;
-        font-size: 10px;
-        color: var(--muted);
-        max-height: 30%;
-        overflow-y: auto;
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
-        gap: 0 8px;
-      }
-      #band-counts li[data-lineage="true"] {
-        color: var(--amber);
-      }
-      /* The transport: one row, every control labelled and tipped. */
-      #transport {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 6px 12px;
-        font-size: 12px;
-      }
-      button {
-        font: inherit;
-        color: var(--ink);
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        padding: 4px 9px;
-        cursor: pointer;
-      }
-      button:hover {
-        background: var(--panel2);
-      }
-      button:disabled {
-        opacity: 0.45;
-        cursor: default;
-      }
-      button:disabled:hover {
-        background: var(--panel);
-      }
-      /* The Playground (ticket 13): plain labelled fields, wired to re-solve.
-         Ticket 14 owns the workbench geometry and restyles this whole block. */
-      #playground {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 6px 14px;
-        padding: 6px 8px;
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        background: var(--panel);
-        font-size: 12px;
-      }
-      #playground .legend {
-        margin: 0;
-        color: var(--amber);
-        text-transform: lowercase;
-        letter-spacing: 0.04em;
-      }
-      #playground .presets {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      #playground .presets-label {
-        color: var(--muted);
-      }
-      #playground .fields {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 4px 12px;
-      }
-      #playground label {
-        color: var(--muted);
-        margin-right: 4px;
-      }
-      #playground input[type="number"] {
-        width: 5.5em;
-        font: inherit;
-        color: var(--ink);
-        background: var(--bg);
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        padding: 2px 5px;
-      }
-      #playground .beam {
-        position: relative;
-        display: inline-block;
-        padding-bottom: 6px;
-      }
-      #playground .beam .tick {
-        position: absolute;
-        top: 0;
-        bottom: 4px;
-        width: 2px;
-        margin-left: -1px;
-        background: var(--amber);
-        pointer-events: none;
-      }
-      #beam {
-        width: 160px;
-        accent-color: var(--amber);
-      }
-      #beam-readout {
-        color: var(--muted);
-      }
-      #strip[data-mode="none"] i {
-        color: var(--muted);
-        text-align: center;
-        line-height: 28px;
-        font-style: italic;
-      }
-      button[aria-pressed="true"] {
-        border-color: var(--amber);
-        color: var(--amber);
-      }
-      #speed {
-        width: 180px;
-        accent-color: var(--amber);
-      }
-      #speed-readout,
-      #progress {
-        color: var(--muted);
-        margin: 0;
-      }
-      /* The move strip, which *is* the seek bar: one gesture to any Move. */
-      #strip-wrap {
-        position: relative;
-        height: 30px;
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        background: var(--panel);
-        overflow: hidden;
-      }
-      #strip {
-        position: absolute;
-        inset: 0;
-        display: grid;
-        grid-auto-flow: column;
-        grid-auto-columns: 1fr;
-        gap: 0;
-        cursor: pointer;
-        touch-action: none;
-      }
-      #strip:focus-visible {
-        outline: 1px solid var(--amber);
-        outline-offset: 1px;
-      }
-      #strip i {
-        display: block;
-        background: transparent;
-        border-right: 1px solid var(--bg);
-        position: relative;
-      }
-      #strip i[data-played="true"] {
-        background: var(--panel2);
-      }
-      #strip i[data-current="true"] {
-        background: #2a2210;
-        box-shadow: inset 0 0 0 1px var(--amber);
-      }
-      #strip i[data-clears="true"]::after {
-        content: "";
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        height: 2px;
-        background: var(--amber);
-      }
-      #caret {
-        position: absolute;
-        top: -1px;
-        bottom: -1px;
-        width: 2px;
-        margin-left: -1px;
-        background: var(--ink);
-        pointer-events: none;
-      }
-      /* The keyboard map: chips in the status bar, the whole list behind `?`. */
-      #statusbar {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 4px 10px;
-        font-size: 11px;
-        color: var(--muted);
-        min-height: 20px;
-      }
-      .kbd {
-        border: 1px solid var(--line);
-        border-bottom-width: 2px;
-        border-radius: 3px;
-        padding: 0 4px;
-        background: var(--panel);
-        color: var(--ink);
-      }
-      #sheet {
-        position: fixed;
-        inset: 0;
-        display: none;
-        place-items: center;
-        background: rgba(4, 7, 11, 0.72);
-        z-index: 10;
-      }
-      #sheet[data-open="true"] {
-        display: grid;
-      }
-      #sheet dl {
-        margin: 0;
-        padding: 16px 20px;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        display: grid;
-        grid-template-columns: auto auto;
-        gap: 6px 18px;
-        font-size: 13px;
-      }
-      #sheet dt {
-        color: var(--amber);
-      }
-      #sheet dd {
-        margin: 0;
-        color: var(--ink);
-      }
-    </style>
+    <!--
+      The workbench (§2). One page, no page scroll, five regions and a drawer:
+
+        toolbar · left rail · centre · right inspector · status bar
+        plus the Explainer drawer, which a no-scroll page has nowhere else to put.
+
+      This file is the skeleton and only the skeleton: panel heads, section labels,
+      column heads, the field names, the keyboard chips, and the four toolbar fields.
+      Every value slot is filled by `src/main.ts` from the engine's own numbers, so
+      "a region cannot collapse, because it never had children to remove"
+      (notes/14 §3). A number on this page is either a `[data-figure]` here or one
+      built by `createFigure` from `src/ui/figure.ts`, and both carry the words label
+      and the provenance that make it explainable.
+
+      The style system is `src/styles/tokens.css` (ink, six type steps, two accents)
+      and `src/styles/shell.css` (the grid). No webfont, no icon font, no framework.
+    -->
   </head>
   <body>
-    <header>
-      <h1>Tetris Lab</h1>
-      <p id="status">booting wasm…</p>
-      <p id="outcome"></p>
-    </header>
+    <div id="app" data-solving="false">
+      <!-- ══ toolbar ══════════════════════════════════════════════════════ -->
+      <header class="bar" data-region="toolbar" id="toolbar">
+        <div class="brand">
+          <span data-icon="brand-mark"></span>
+          <div class="brandtext"><b>Tetris Lab</b><span>solver workbench</span></div>
+        </div>
 
-    <!-- Ticket 13's controls. `src/ui/playground.ts` builds every field, label and
-         tooltip in here, so the numbers come from `config/width.ts` and from the
-         Generator's Domain rather than from this file. Ticket 14 moves the
-         container; what it must find intact is the behaviour. -->
-    <section id="playground" aria-label="Playground"></section>
+        <div class="fields" id="toolbar-fields">
+          <span class="field">
+            <span
+              class="fig"
+              data-figure="t1"
+              data-figure-label="Seed"
+              data-figure-source="url"
+              data-figure-kind="number"
+              data-tip="Seed — the integer that fixes this game's starting Board and its Sequence. The same seed is always the same game, up to the height cap."
+            ><span class="flabel">Seed</span><b class="num">0</b><i class="unit">integer</i></span>
+          </span>
+          <span class="field">
+            <span
+              class="fig"
+              data-figure="t2"
+              data-figure-label="Goal"
+              data-figure-source="url"
+              data-figure-kind="number"
+              data-tip="Goal — how many Lines this Solve must clear to count as a win. Changing it re-solves."
+            ><span class="flabel">Goal</span><b class="num">8</b><i class="unit">Lines</i></span>
+          </span>
+          <span class="field">
+            <span
+              class="fig"
+              data-figure="t3"
+              data-figure-label="Pieces"
+              data-figure-source="url"
+              data-figure-kind="number"
+              data-tip="Pieces — how many pieces the Sequence holds. One Piece is one Layer, so this is also the longest the game can run."
+            ><span class="flabel">Pieces</span><b class="num">40</b><i class="unit">pieces</i></span>
+          </span>
+          <span class="field">
+            <span
+              class="fig"
+              data-figure="t4"
+              data-figure-label="Beam width"
+              data-figure-source="dataset"
+              data-figure-kind="number"
+              data-tip="Beam width — how many states survive each Layer. Narrower is cheaper and weaker. It opens at the shipped default from the measured width curve; the slider runs to the Width cap, where searching wider stops fitting its budget."
+            ><span class="flabel">Beam width</span><b class="num">25</b><i class="unit">states per Layer</i></span>
+          </span>
+        </div>
 
-    <main id="stage">
-      <canvas id="board" role="img" aria-label="Tetris board"></canvas>
-      <section id="inspector" aria-label="The search">
-        <h2>the band</h2>
-        <p id="band-label">traced at band —</p>
-        <canvas
-          id="band"
-          role="img"
-          aria-label="Score band: one row per Layer with its states placed by score, and the winning lineage drawn through them"
-        ></canvas>
-        <p id="band-caption">waiting for a traced solve</p>
-        <ol id="band-counts" aria-label="Per-layer counts, from the trace"></ol>
-      </section>
-    </main>
+        <div class="baractions">
+          <button
+            class="tbtn"
+            type="button"
+            id="how"
+            data-tip="How the search works — the Board, the Layer, Dedup and the band, in a drawer. Opens with E; Escape closes it."
+          ><span data-icon="help"></span>How it works</button>
+          <button
+            class="tbtn"
+            type="button"
+            id="run-dataset"
+            disabled
+            data-tip="Run the Dataset in this tab and report it beside the Reference run. Arrives with the Run ticket: nothing is measured here yet, so the rail's Run panel says so rather than showing a figure."
+          ><span data-icon="stop"></span>Run dataset</button>
+          <button
+            class="tbtn go"
+            type="button"
+            id="solve"
+            data-tip="Solve this game again at the settings in the rail. The Solve is traced, so the band, the per-layer table and the readout all come from the same call."
+          ><span data-icon="play"></span>Solve</button>
+        </div>
 
-    <section id="transport">
-      <button id="play" type="button" title="Play / pause (Space)" aria-label="Play / pause" aria-pressed="false">play</button>
-      <button id="restart" type="button" title="Restart from the starting Board (R)" aria-label="Restart">restart</button>
-      <label id="speed-label" for="speed" title="Playback speed in Moves per second (- and = move one stop)">speed</label>
-      <input
-        id="speed"
-        type="range"
-        min="0"
-        max="1"
-        step="0.001"
-        title="Playback speed: drag for any speed, not four presets (- and = step it)"
-        aria-label="Playback speed in Moves per second"
-      />
-      <output id="speed-readout" for="speed">1.43 moves/s · 0.70 s per move</output>
-      <p id="progress">waiting for the solve</p>
-    </section>
+        <div class="clock">
+          <p id="outcome" data-outcome="solving" aria-live="polite">solving · seed 0 · goal 8 Lines</p>
+          <p id="status">seed 0 · goal 8 lines · 40 pieces · starting height 7 · beam 25</p>
+        </div>
+      </header>
 
-    <div id="strip-wrap">
-      <div
-        id="strip"
-        role="slider"
-        tabindex="0"
-        aria-label="Move strip: drag to any Move. This is the seek bar."
-        aria-valuemin="0"
-        aria-valuemax="0"
-        aria-valuenow="0"
-        aria-valuetext="Move 0 of 0"
-        title="Drag or click to any Move; the arrow keys step, Home/End jump (← →, Home End)"
-      ></div>
-      <b id="caret" aria-hidden="true"></b>
+      <!-- ══ left rail: Playground, Engine, Run ═══════════════════════════ -->
+      <aside class="rail" data-region="rail" id="rail">
+        <section class="panel" id="panel-playground" aria-label="Playground">
+          <div class="phead">
+            <span class="t">Playground</span>
+            <span class="s" id="preset-name">the default game</span>
+          </div>
+          <!-- Ticket 13's controls; `src/ui/playground.ts` builds them here. -->
+          <div id="playground"></div>
+        </section>
+
+        <section class="panel" id="panel-engine" aria-label="Engine">
+          <div class="phead">
+            <span class="t">Engine</span>
+            <span class="sp">
+              <button
+                class="iconbtn"
+                type="button"
+                id="expert"
+                aria-expanded="false"
+                aria-controls="engine-weights"
+                data-tip="Expert: the shipped Evaluator's eight Weights, and the bound of each Feature. Read-only on purpose — the ABI has no export for a weight, so this is the table the engine was built with."
+              >Expert<span data-icon="expert-chevron"></span></button>
+            </span>
+          </div>
+          <div class="rows" id="engine-figures"></div>
+          <div class="rows" id="engine-weights" hidden></div>
+        </section>
+
+        <section class="panel" id="panel-run" aria-label="Run">
+          <div class="phead">
+            <span class="t">Run</span>
+            <span class="s" id="run-state">no Run in this tab yet</span>
+          </div>
+          <div class="run-body">
+            <table class="rtable" id="run-table">
+              <thead>
+                <tr><th>figure</th><th>yours</th></tr>
+              </thead>
+              <tbody id="run-rows"></tbody>
+            </table>
+            <p class="refnote" id="reference-labels">no Reference row is committed yet</p>
+          </div>
+        </section>
+      </aside>
+
+      <!-- ══ centre: the Board, its readout, the strip and the transport ══ -->
+      <main class="stage" data-region="centre" id="centre">
+        <section class="panel boardpanel" aria-label="The board and its readout">
+          <div class="phead">
+            <span class="t">position</span>
+            <span class="s" id="layer-line">Layer 0 of 0 · goal 8</span>
+            <span class="sp"><span class="piece-now" id="piece-now"><span class="word">next</span></span></span>
+          </div>
+          <div class="boardbody">
+            <div class="gutter" id="gutter" aria-label="Board rows, 0 at the top and 19 on the floor"></div>
+            <div class="cvwrap">
+              <canvas
+                id="board"
+                role="img"
+                aria-label="The Board: ten columns by twenty rows, drawn from the engine's ten column words"
+              ></canvas>
+            </div>
+            <div class="readout" id="readout">
+              <section class="ro-pane">
+                <p class="ro-sec">What the evaluator charges</p>
+                <div class="ro-body" id="ro-charge">
+                  <p class="ro-empty">
+                    the per-Feature breakdown appears when the first Solve lands — the ABI reports a
+                    state's total score, not the terms it was built from
+                  </p>
+                  <div class="ro-total" id="ro-score"></div>
+                </div>
+              </section>
+
+              <section class="ro-pane">
+                <p class="ro-sec">Column profile</p>
+                <div class="ro-body" id="ro-columns"></div>
+              </section>
+
+              <section class="ro-pane">
+                <p class="ro-sec">This Placement</p>
+                <div class="ro-body place" id="ro-placement"></div>
+              </section>
+
+              <section class="ro-pane">
+                <p class="ro-sec">Next in Sequence</p>
+                <div class="ro-body"><div class="nxt" id="ro-next"></div></div>
+              </section>
+
+              <section class="ro-pane">
+                <p class="ro-sec">This Layer's counts</p>
+                <div class="ro-body ro-layer" id="ro-layer"></div>
+              </section>
+
+              <section class="ro-pane">
+                <p class="ro-sec">Score across Layers</p>
+                <div class="ro-body"><div class="spark" id="spark"></div></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel stagepanel" aria-label="Playback">
+          <div class="stripwrap" id="strip-wrap">
+            <div
+              id="strip"
+              role="slider"
+              tabindex="0"
+              aria-label="Move strip: one cell per Move of the solution, and the seek bar"
+              aria-valuemin="0"
+              aria-valuemax="0"
+              aria-valuenow="0"
+              aria-valuetext="Move 0 of 0"
+              data-tip="Move strip — one cell per Move of the solution, and the seek bar: drag or click to any Move, the arrows step, Home and End jump. A cell with an amber underline is a Move that cleared at least one row."
+            ></div>
+            <b id="caret" aria-hidden="true"></b>
+          </div>
+
+          <div class="transport" id="transport">
+            <button class="tbtn" type="button" id="prev" aria-label="Previous Move" data-tip="Previous Move (←). Stepping pauses the replay, so the picture stops where you put it.">
+              <span data-icon="step-back"></span>
+            </button>
+            <button
+              class="tbtn play"
+              type="button"
+              id="play"
+              aria-pressed="false"
+              aria-label="Play / pause"
+              data-tip="Play or pause the replay (Space). Ignored while typing in a field, so a space stays a space."
+            ><span data-icon="play" id="play-icon"></span><span id="play-word">play</span></button>
+            <button class="tbtn" type="button" id="next" aria-label="Next Move" data-tip="Next Move (→). Stepping pauses the replay, so the picture stops where you put it.">
+              <span data-icon="step-forward"></span>
+            </button>
+            <button class="tbtn" type="button" id="restart" aria-label="Restart" data-tip="Replay from the first Move (R). The speed you chose is kept; the game is not re-solved.">
+              <span data-icon="restart"></span>
+            </button>
+            <span id="move-figure"></span>
+            <div class="spd">
+              <label
+                for="speed"
+                data-tip="Playback speed, continuous from 0.25 to 40 Moves a second on a log scale — not four presets. Minus and equals step it one stop."
+              >speed</label>
+              <input
+                id="speed"
+                type="range"
+                min="0"
+                max="1"
+                step="0.001"
+                aria-label="Playback speed in Moves per second"
+                data-tip="Drag for any speed. The readout beside it gives both the Moves per second and the seconds per Move, because those are the two ways to read a pace."
+              />
+              <output
+                id="speed-readout"
+                for="speed"
+                class="fig"
+                data-figure="m4"
+                data-figure-label="Playback speed"
+                data-figure-source="control"
+                data-figure-kind="number"
+                data-tip="Playback speed — continuous, not four presets: 0.25 to 40 Moves a second on a log scale. The time per Move is its reciprocal, and it is a preference, so it survives a new Solve."
+              ><b class="num">1.43</b><i class="unit">Moves/s · 0.70 s per Move</i></output>
+            </div>
+            <p id="progress" aria-live="off">Move 0 of 0 · paused</p>
+          </div>
+        </section>
+      </main>
+
+      <!-- ══ right inspector: the band, the tree, the table, the log ══════ -->
+      <aside class="inspector" data-region="inspector" id="inspector">
+        <section class="panel bandpanel" id="band-panel" aria-label="The band">
+          <div class="phead">
+            <span class="t">The band</span>
+            <span class="s" id="band-label">traced at band 25 = the shipped beam</span>
+            <span class="sp">
+              <button
+                class="iconbtn"
+                type="button"
+                id="tree-toggle"
+                aria-pressed="false"
+                aria-controls="tree-panel"
+                data-tip="Draw the bounded tree — the band's drill-down: the top 24 states of each Layer, ticks for states with no child, stems for a parent outside the bound."
+              ><span data-icon="tree-toggle"></span>tree</button>
+            </span>
+          </div>
+          <canvas
+            id="band"
+            role="img"
+            aria-label="Score band: one row per Layer with its states placed by score, and the winning lineage drawn through them"
+          ></canvas>
+          <p id="band-caption">
+            waiting for a traced solve — the band is the beam, so it keeps exactly as many states per
+            Layer as the search did
+          </p>
+          <div class="legend" id="band-legend"></div>
+          <ol id="band-counts" aria-label="Per-layer counts, from the trace"></ol>
+        </section>
+
+        <section class="panel treepanel" id="tree-panel" hidden aria-label="The tree">
+          <div class="phead">
+            <span class="t">The tree</span>
+            <span class="s" id="tree-note">top 24 per Layer</span>
+          </div>
+          <div class="tree" id="tree">
+            the tree draws from the same trace as the band — one column per Layer, the top 24 states
+            of each, ticks where a state has no child in the trace
+          </div>
+        </section>
+
+        <section class="panel layerpanel" aria-label="Per-layer table">
+          <div class="phead">
+            <span class="t">Per-layer</span>
+            <span class="s" id="layer-count">0 of 0 Layers</span>
+          </div>
+          <div class="tablewrap">
+            <table id="layers">
+              <thead>
+                <tr>
+                  <th>Layer</th>
+                  <th>Piece</th>
+                  <th>Best score</th>
+                  <th>Lines cleared</th>
+                  <th>States kept</th>
+                </tr>
+              </thead>
+              <tbody id="layer-rows">
+                <tr>
+                  <td class="empty" colspan="5">
+                    no Layer yet — every column of this table is the trace's, so it fills when the
+                    first Solve lands
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel logpanel" aria-label="Log">
+          <div class="phead">
+            <span class="t">Log</span>
+            <span class="s" id="log-state">milliseconds since this page loaded</span>
+          </div>
+          <ol id="log" aria-label="What happened, when, in order"></ol>
+        </section>
+      </aside>
+
+      <!-- ══ status bar ══════════════════════════════════════════════════ -->
+      <footer class="statusbar" data-region="status" id="statusbar">
+        <span class="grp" id="status-figures"></span>
+        <span
+          class="grp kbdmap"
+          id="kbdmap"
+          aria-label="Keyboard map"
+          data-figure="s5"
+          data-figure-label="Keyboard map"
+          data-figure-source="control"
+          data-figure-kind="picture"
+          data-tip="Keyboard map — every key the page takes. Space plays and pauses; the arrows step; Home and End jump; minus and equals change the speed; R restarts; E opens the explainer; ? opens the whole list. A focused field keeps its own keys."
+        >
+          <span data-tip="Space — play or pause (ignored while typing in a field, so a space stays a space)."><span class="kbd">space</span>play</span>
+          <span data-tip="The arrow keys step one Move at a time; with Shift they step ten."><span class="kbd">←</span><span class="kbd">→</span>step</span>
+          <span data-tip="R — replay from the first Move, keeping the speed you chose."><span class="kbd">R</span>restart</span>
+          <span data-tip="E — open the Explainer drawer; Escape closes it again."><span class="kbd">E</span>explainer</span>
+          <span data-tip="? — the whole keyboard map, including Home and End and the two speed keys."><span class="kbd">?</span>keys</span>
+        </span>
+        <span class="grp right" id="boot">booting wasm…</span>
+      </footer>
     </div>
 
-    <footer id="statusbar">
-      <span>keys</span>
-      <span><span class="kbd">Space</span> play/pause</span>
-      <span><span class="kbd">←</span><span class="kbd">→</span> Move</span>
-      <span><span class="kbd">-</span><span class="kbd">=</span> speed</span>
-      <span><span class="kbd">R</span> restart</span>
-      <span><span class="kbd">?</span> <button id="keys-button" type="button" title="The whole keyboard map (?)">all keys</button></span>
-    </footer>
+    <!-- ══ the Explainer drawer, its scrim, and the keyboard sheet ═══════ -->
+    <div id="scrim" aria-hidden="true" data-open="false"></div>
+    <aside id="drawer" data-open="false" role="dialog" aria-modal="false" aria-labelledby="drawer-title" aria-hidden="true">
+      <div class="dhead">
+        <span class="t" id="drawer-title">How the search works</span>
+        <button class="iconbtn close" type="button" id="drawer-close" data-tip="Close the explainer (E toggles it, Escape closes it).">
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <div class="dbody">
+        <h3>The Board</h3>
+        <p>
+          The Board is ten column words. Bit <i>n</i> of a column is row 19−<i>n</i>, so bit 0 is the
+          floor and row 0 is the top: a filled cell is a set bit, and the whole Board is forty bytes.
+          A cleared row is a row where all ten columns are set at once; removing it drops every bit
+          above it by one, which is the fall you can watch.
+        </p>
+        <h3>The Layer, and the beam</h3>
+        <p>
+          A Layer is the beam stage reached after placing one Piece of the Sequence. Dedup removes
+          duplicate Boards inside one Layer — never across Layers — keeping the state that has cleared
+          more Lines. A Placement becomes a Move when it survives into the returned solution, and the
+          Move list is what the replay consumes.
+        </p>
+        <p class="note">
+          The band in the right-hand inspector is the beam: one row per Layer, and exactly as many
+          states per row as survived it. Each state is placed by its score, not by its rank, because
+          consecutive ranks differ by about a tenth of a point and a rank axis reads as arbitrary
+          seams. The amber line is the winning lineage — it leaves the front and comes back.
+        </p>
+        <h3>Where the numbers come from</h3>
+        <p>
+          Every figure on the page is traceable: the packed Solve result (won or lost, Lines cleared,
+          evaluations, Moves), the trace the engine recorded (one record per kept state), a replay of
+          the Move list, the committed width curve, or this page's own clock — which is why the elapsed
+          time says it is this tab's and not the Reference run's. Nothing is estimated here.
+        </p>
+        <div id="sheet" data-open="false" role="dialog" aria-label="Keyboard map">
+          <h3>Keys</h3>
+          <dl id="sheet-list">
+            <dt><span class="kbd">Esc</span></dt>
+            <dd>close this list</dd>
+          </dl>
+        </div>
+      </div>
+    </aside>
 
-    <div id="sheet" role="dialog" tabindex="-1" aria-modal="true" aria-label="Keyboard map" data-open="false">
-      <dl id="sheet-list">
-        <dt><span class="kbd">Esc</span></dt>
-        <dd>close this list</dd>
-      </dl>
-    </div>
-
+    <div id="tip" role="tooltip" aria-hidden="true"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -58,7 +58,7 @@ test("all eight Weights on screen are the Rust integers, in the Rust's own order
   assert.deepEqual(keys, Object.keys(rust), "the page's rows are the Rust struct's fields, in order");
   for (const feature of SHIPPED_EVALUATOR.features) {
     assert.equal(feature.weightQ16, rust[feature.key], `${feature.key}: Q16 is the engine's integer`);
-    assert.equal(feature.weightQ16 % Q16, 0, `${feature.key}: a whole unit, as the published table is`);
+    assert.ok(feature.weightQ16 % Q16 === 0, `${feature.key}: a whole unit, as the published table is`);
   }
 });
 

@@ -71,11 +71,15 @@ test("Space is play/pause, and the keys that scroll are taken deliberately", () 
   assert.deepEqual(resolveKey(key({ key: "=" })), { type: "speed", direction: 1 });
   assert.deepEqual(resolveKey(key({ key: "+" })), { type: "speed", direction: 1 });
   assert.deepEqual(resolveKey(key({ key: "?" })), { type: "keys" }, "the map itself is a key");
+  // Ticket 14's one new row: §2 says the Explainer drawer opens with `E`, so `E` is
+  // in the same table as everything else — not an out-of-band listener.
+  assert.deepEqual(resolveKey(key({ key: "e" })), { type: "explainer" });
+  assert.deepEqual(resolveKey(key({ key: "E" })), { type: "explainer" }, "either case");
   assert.deepEqual(resolveKey(key({ key: "Escape" })), { type: "close" });
 });
 
 test("a modifier chord belongs to the browser, and typing is not a shortcut", () => {
-  for (const name of [" ", "ArrowLeft", "ArrowRight", "Home", "End", "r", "-", "=", "?", "Escape"]) {
+  for (const name of [" ", "ArrowLeft", "ArrowRight", "Home", "End", "r", "e", "-", "=", "?", "Escape"]) {
     assert.equal(resolveKey(key({ key: name, ctrlKey: true })), null, `Ctrl+${name} is not ours`);
     assert.equal(resolveKey(key({ key: name, metaKey: true })), null, `Meta+${name} is not ours`);
     assert.equal(resolveKey(key({ key: name, altKey: true })), null, `Alt+${name} is not ours`);
@@ -92,7 +96,7 @@ test("a modifier chord belongs to the browser, and typing is not a shortcut", ()
     { tagName: "BUTTON" },
     { tagName: "DIV", isContentEditable: true },
   ]) {
-    for (const name of [" ", "ArrowLeft", "r", "?"]) {
+    for (const name of [" ", "ArrowLeft", "r", "e", "?"]) {
       assert.equal(resolveKey(key({ key: name, target })), null, `${target.tagName} keeps ${name}`);
     }
   }

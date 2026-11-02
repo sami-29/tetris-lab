@@ -30,6 +30,8 @@ export type Action =
   | { type: "restart" }
   /** Open the keyboard-map sheet. */
   | { type: "keys" }
+  /** Open (or close) the Explainer drawer — the same action as `How it works`. */
+  | { type: "explainer" }
   | { type: "close" };
 
 export interface KeyEventLike {
@@ -86,6 +88,11 @@ export function resolveKey(event: KeyEventLike): Action | null {
       return { type: "restart" };
     case "?":
       return { type: "keys" };
+    case "e":
+    case "E":
+      // §2: "a drawer behind `How it works` (open with `E`)". A bare letter, no
+      // modifier, and the guard above keeps it out of a focused field.
+      return { type: "explainer" };
     case "Escape":
       return { type: "close" };
     default:
@@ -104,6 +111,7 @@ export const KEY_MAP: ReadonlyArray<{ keys: string; does: string }> = [
   { keys: "Home End", does: "first / last Move" },
   { keys: "- =", does: "slower / faster" },
   { keys: "R", does: "restart" },
+  { keys: "E", does: "open or close the explainer" },
   { keys: "?", does: "this list" },
   { keys: "Esc", does: "close" },
 ];

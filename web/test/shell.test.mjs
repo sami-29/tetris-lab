@@ -80,22 +80,35 @@ test("the type scale is six steps and every numeral is tabular", () => {
 });
 
 test("the two accents are the palette's, and there is no third", () => {
+  const tokens = read("src", "styles", "tokens.css");
   for (const colour of ["#e0a33e", "#3d8f8a", "#5fc0b8", "#c6ccd3", "#8b959f", "#5e6873", "#454e57", "#0e1012", "#15181b", "#191d21"]) {
-    assert.ok(css.includes(colour), `${colour} is a token`);
+    assert.ok(tokens.includes(colour), `${colour} is a token`);
   }
-  const hexes = new Set((css.match(/#[0-9a-f]{6}/g) ?? []).map((hex) => hex.toLowerCase()));
-  const allowed = new Set(["#e0a33e", "#3d8f8a", "#5fc0b8", "#c6ccd3", "#8b959f", "#5e6873", "#454e57",
-    "#0e1012", "#15181b", "#191d21", "#23282d", "#2c3238", "#8a6524", "#101315", "#000000", "#0b0f14", "#ffffff"]);
-  const strangers = [...hexes].filter((hex) => !allowed.has(hex));
-  assert.deepEqual(strangers, [], "no colour outside the ink ramp, the two accents and the board's own palette");
+  // One place owns colour. A hex in a component file is how a third accent appears.
+  const known = new Set((tokens.match(/#[0-9a-f]{6}/g) ?? []).map((hex) => hex.toLowerCase()));
+  const strangers = (css.match(/#[0-9a-f]{6}/g) ?? []).filter((hex) => !known.has(hex.toLowerCase()));
+  assert.deepEqual(strangers, [], "shell.css names no colour the token sheet does not");
+  // And the ceiling holds: amber and teal are the only saturated colours in the sheet.
+  const saturated = [...known].filter((hex) => {
+    const [r, g, b] = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
+    return Math.max(r, g, b) - Math.min(r, g, b) > 40;
+  });
+  assert.deepEqual(saturated.sort(), ["#3d8f8a", "#5fc0b8", "#8a6524", "#e0a33e", "#f0b659"].sort(),
+    "two accents and their two dim/bright steps, nothing else");
 });
 
 test("no emoji, no dingbats, no stock furniture: the icons are hand-made SVG", () => {
-  const banned = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{25A0}-\u{25FF}]/u;
+  // The notes' ban list (notes/14 §4.4): emoji, dingbats and the filled glyphs the
+  // mockup's icons replace. Arrows stay allowed — a keyboard chip that says
+  // "ArrowLeft" instead of "←" is worse — but not as decoration.
+  const banned = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/u;
+  const replaced = ["\u25B6", "\u23F8", "\u23ED", "\u21BB", "\u2713", "\u2715", "\u25CF", "\u25A0", "\u25B2"];
   for (const file of [join(WEB, "index.html"), ...sources(join(WEB, "src"))]) {
     const text = readFileSync(file, "utf8");
     assert.equal(banned.test(text), false, `${file} carries a glyph that should be an SVG`);
-    assert.doesNotMatch(text, /\bemoji\b/i, `${file} talks about emoji`);
+    for (const glyph of replaced) {
+      assert.equal(text.includes(glyph), false, `${file} carries ${JSON.stringify(glyph)}, which is an icon here`);
+    }
   }
   // The icon set is the notes' eleven, each drawn here and not fetched.
   const icons = read("src", "ui", "icons.ts");
@@ -166,9 +179,28 @@ test("the Explainer drawer and its scrim exist, and the keyboard sheet lives ins
 test("the ids the headless harness drives survive the shell being replaced", () => {
   // notes/14 §10: keep `#status`/`#outcome`/`#progress` as slots so the ticket-01
   // harness keeps passing while the new assertions land.
+  // `beam-readout` and the preset buttons are built by ticket 13's Playground at boot,
+  // so they are not in the static markup; everything below is.
   for (const id of ["board", "band", "strip", "caret", "play", "restart", "speed", "speed-readout",
     "status", "outcome", "progress", "sheet", "sheet-list", "playground", "band-label",
-    "band-caption", "band-counts", "beam-readout"]) {
+    "band-caption", "band-counts"]) {
     assert.ok(html.includes(`id="${id}"`), `#${id} is still on the page`);
+  }
+});
+
+test("a static figure says exactly what the registry says it says", () => {
+  // The toolbar's four fields and the keyboard map are in the markup so the first
+  // paint has words in it. They are still *registry* figures: label, provenance,
+  // kind and tooltip must be the registry's, or the page has two tables to keep in
+  // step and one of them is a lie.
+  for (const [, id, attrs] of html.matchAll(/data-figure="([a-z0-9-]+)"([^>]*)>/g)) {
+    const spec = FIGURES[id];
+    assert.ok(spec, `${id} is a figure the registry knows`);
+    const read = (name) => (attrs.match(new RegExp(`data-figure-${name}="([^"]*)"`)) ?? [])[1];
+    assert.equal(read("label"), spec.label, `${id}: the label`);
+    assert.equal(read("source"), spec.source, `${id}: the provenance`);
+    assert.equal(read("kind"), spec.kind, `${id}: the kind`);
+    const tip = (attrs.match(/data-tip="([^"]*)"/) ?? [])[1];
+    assert.equal(tip, spec.tip, `${id}: the tooltip`);
   }
 });
