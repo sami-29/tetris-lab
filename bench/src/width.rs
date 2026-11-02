@@ -36,6 +36,7 @@ use std::time::Instant;
 
 use crate::dataset::{self, Config};
 use crate::fingerprint::{self, Fnv};
+use crate::json::{self, Value};
 
 // ------------------------------------------------------------------ the record
 
@@ -49,6 +50,11 @@ pub const DEFAULT_BUDGET_MS: u64 = 200;
 
 /// §9.3: the harder configuration's Solve budget.
 pub const HARDER_BUDGET_MS: u64 = 1_000;
+
+/// §9.3's two budgets, in `Bed::SHIPPED` order. The default configuration is the
+/// binding constraint (§9.5's cap criterion is 200 ms); the harder one gets a
+/// second. One array, so nothing in this file can disagree about which is which.
+pub const BUDGETS_MS: [u64; 2] = [DEFAULT_BUDGET_MS, HARDER_BUDGET_MS];
 
 /// §9.1: a configuration winning this percentage cannot rank anything, at any
 /// width.
@@ -390,7 +396,12 @@ pub struct CostRow {
 impl CostRow {
     /// Both budgets hold at this width.
     pub fn fits(&self) -> bool {
-        self.p90_ms[0] <= DEFAULT_BUDGET_MS as f64 && self.p90_ms[1] <= HARDER_BUDGET_MS as f64
+        self.p90_ms[0] <= BUDGETS_MS[0] as f64 && self.p90_ms[1] <= BUDGETS_MS[1] as f64
+    }
+
+    /// One bed's budget, by the same index the row holds it at.
+    fn budget(index: usize) -> u64 {
+        BUDGETS_MS[index]
     }
 }
 
@@ -398,9 +409,12 @@ impl CostRow {
 /// tooltip must say which (§2.2), so it is not a comment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapBound {
-    /// A measured width above the cap failed a budget.
+    /// A width failed a budget — measured above the cap, or probed there.
     Budget,
-    /// Every measured width passed; the doubling list is what stopped it.
+    /// Every pre-registered width was measured and passed; the doubling list is
+    /// what stopped it. **Only reachable for a complete curve**: a run that asked
+    /// for a prefix of the list was stopped by its own request, and calling that
+    /// the schedule would tell the page's tooltip the climb was still rising.
     Schedule,
 }
 
@@ -436,6 +450,290 @@ pub fn width_cap(rows: &[CostRow]) -> Result<(u32, CapBound), String> {
     }
     cap.map(|width| (width, bound))
         .ok_or_else(|| "no measured width fits both budgets".to_string())
+}
+
+// -------------------------------------------------- the evidence a curve rests on
+
+/// A width probed **outside** the curve, to confirm the stop rule instead of
+/// guessing at it: one bed, one substrate, too few solves to be a doubling point.
+///
+/// This is evidence about *why* the climb stopped, and it is never a point. A point
+/// is a width measured on both shipped beds with §9.5's trials and seeds; letting a
+/// ten-seed probe into `points` would let it decide the cap, the default width and
+/// the quality fingerprint, none of which it has the sample size to decide. So it
+/// gets its own object in the artifact, and its one job is to make
+/// `cap_bound: "budget"` checkable rather than asserted in prose.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Overshoot {
+    /// The probed width: a pre-registered doubling point above the cap.
+    pub width: u32,
+    /// The substrate the probe ran on (`native` or `wasm`). The curve's own cost
+    /// series may be on the other one, which is what [`Overshoot::note`] is for.
+    pub substrate: String,
+    /// Solves behind [`Overshoot::ms_p90`] — a p90 without a sample size is not a
+    /// measurement (§9.3).
+    pub samples: u32,
+    pub ms_p90: f64,
+    /// The operator's sentence: what the probe showed, and how it extrapolates to
+    /// the substrate the cost series is measured on. Prose, because it is a human's
+    /// claim and the reader has to be able to see that it is one.
+    pub note: String,
+}
+
+impl Overshoot {
+    /// §9.5's cap criterion is the default configuration's budget, so a probe exists
+    /// to show that one number was crossed.
+    fn budget_ms(&self) -> u64 {
+        BUDGETS_MS[0]
+    }
+
+    /// The bed whose budget the probe failed: the default configuration, the
+    /// binding constraint.
+    fn bed(&self) -> String {
+        Bed::SHIPPED[0].name()
+    }
+
+    /// Evidence, or nothing: a probe is only evidence about the stop rule if it is
+    /// a pre-registered width, above the cap, with a real sample size, over the
+    /// budget it claims to fail, on a substrate it names.
+    pub fn check(&self, cap: u32) -> Result<(), String> {
+        if !WIDTHS.contains(&self.width) {
+            return Err(format!(
+                "the overshoot probe at width {} is not one of the pre-registered doubling points",
+                self.width
+            ));
+        }
+        if self.width <= cap {
+            return Err(format!(
+                "the overshoot probe at width {} is not above the cap {cap}: a width that fails a \
+                 budget cannot sit at or below the largest width that fits both",
+                self.width
+            ));
+        }
+        if self.samples == 0 {
+            return Err(format!(
+                "the overshoot probe at width {} records no samples: a p90 without a sample size \
+                 is not a measurement",
+                self.width
+            ));
+        }
+        if !self.ms_p90.is_finite() || self.ms_p90 <= self.budget_ms() as f64 {
+            return Err(format!(
+                "the overshoot probe at width {} reads p90 {:.2} ms against the {} ms budget: a \
+                 probe that fits is not why the climb stopped",
+                self.width,
+                self.ms_p90,
+                self.budget_ms()
+            ));
+        }
+        if self.substrate.trim().is_empty() {
+            return Err(format!(
+                "the overshoot probe at width {} does not say which substrate it ran on",
+                self.width
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The fields an artifact **derives** from its evidence rather than measures. One
+/// place computes them, for a live run and for a re-derivation of a committed file,
+/// so the two cannot disagree about what the curve did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Summary {
+    pub width_cap: u32,
+    pub cap_bound: CapBound,
+    pub complete: bool,
+    pub missing_widths: Vec<u32>,
+    pub incomplete_reason: String,
+}
+
+/// Derive the summary fields from the measured points and the probe, against the
+/// **pre-registered** doubling list.
+///
+/// That distinction is the whole function. A run may legitimately ask for a prefix
+/// of §9.5's nine points (`--widths 25,50,100,200,400,800` is how the committed
+/// artifact was produced), so `complete` cannot mean "the widths I was asked for
+/// all came back": it means "every pre-registered point is a measured point".
+/// Likewise `cap_bound: schedule` is reachable only when that is true *and* every
+/// point passed its budget, because the word drives a tooltip that says "the curve
+/// was still climbing at the last measured width" — which is a lie about a curve
+/// that won 1,000/1,000 sends everywhere it was measured. A truncated curve that
+/// records no failing width and no probe has nothing to put there, so it is an
+/// error: the honest answer is that the artifact cannot say what stopped the climb.
+pub fn summarise(points: &[Point], overshoot: Option<&Overshoot>) -> Result<Summary, String> {
+    let rows: Vec<CostRow> = points
+        .iter()
+        .map(|point| CostRow {
+            width: point.width,
+            p90_ms: [
+                point.cost.first().map_or(f64::NAN, |bed| bed.ms_p90),
+                point.cost.get(1).map_or(f64::NAN, |bed| bed.ms_p90),
+            ],
+        })
+        .collect();
+    // Checks the list is non-empty and ascending, and names the cap.
+    let (width_cap, measured_bound) = width_cap(&rows)?;
+    for point in points {
+        if !WIDTHS.contains(&point.width) {
+            return Err(format!(
+                "width {} is not one of the pre-registered doubling points, so it cannot be part \
+                 of the curve",
+                point.width
+            ));
+        }
+    }
+
+    if let Some(probe) = overshoot {
+        probe.check(width_cap)?;
+        if points.iter().any(|point| point.width == probe.width) {
+            return Err(format!(
+                "width {} is recorded both as a measured point and as an overshoot probe: a probe \
+                 is a width the curve did not measure",
+                probe.width
+            ));
+        }
+    }
+
+    let missing_widths: Vec<u32> = WIDTHS
+        .iter()
+        .copied()
+        .filter(|width| !points.iter().any(|point| point.width == *width))
+        .collect();
+    let probed = overshoot.filter(|probe| probe.width > width_cap).is_some();
+    let cap_bound = if measured_bound == CapBound::Budget || probed {
+        CapBound::Budget
+    } else if missing_widths.is_empty() {
+        CapBound::Schedule
+    } else {
+        return Err(format!(
+            "widths {} were not measured and nothing on the record says why the climb stopped: \
+             the pre-registered list does not end at {width_cap} and no probe failed a budget. \
+             Measure the next point, or record the probe that failed it",
+            list(&missing_widths)
+        ));
+    };
+
+    let complete = missing_widths.is_empty();
+    let incomplete_reason = if complete {
+        String::new()
+    } else {
+        stop_reason(points, overshoot, width_cap, &missing_widths)?
+    };
+    Ok(Summary {
+        width_cap,
+        cap_bound,
+        complete,
+        missing_widths,
+        incomplete_reason,
+    })
+}
+
+/// `1600, 3200, 6400`, the way the artifact's prose lists widths.
+fn list(widths: &[u32]) -> String {
+    widths
+        .iter()
+        .map(|width| width.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `1600 and 3200`: the same widths inside a sentence.
+fn prose_list(widths: &[u32]) -> String {
+    let parts: Vec<String> = widths.iter().map(|width| width.to_string()).collect();
+    match parts.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
+/// One sentence a reader can check: which width ended the climb, on what evidence,
+/// and why the pre-registered points above it are absent.
+fn stop_reason(
+    points: &[Point],
+    overshoot: Option<&Overshoot>,
+    width_cap: u32,
+    missing: &[u32],
+) -> Result<String, String> {
+    let stop_rule = "the sweep stops at the first width that fails a budget";
+
+    // A probed width that is missing from the series is the stop rule's evidence.
+    if let Some(probe) = overshoot.filter(|probe| probe.width > width_cap) {
+        let mut reason = format!(
+            "width {} was probed outside the curve and failed the default configuration's {} ms \
+             p90 budget at {:.2} ms on {} ({} seeds)",
+            probe.width,
+            probe.budget_ms(),
+            probe.ms_p90,
+            probe.substrate,
+            probe.samples
+        );
+        let note = probe.note.trim();
+        if !note.is_empty() {
+            reason.push_str(&format!("; {note}"));
+        }
+        reason.push_str("; it is recorded as the probe it is and not as a measured point");
+        let rest: Vec<u32> = missing
+            .iter()
+            .copied()
+            .filter(|width| *width != probe.width)
+            .collect();
+        if rest.is_empty() {
+            reason.push_str("; every other pre-registered width was measured");
+        } else {
+            reason.push_str(&format!(
+                "; {} {} not measured because {stop_rule}",
+                prose_list(&rest),
+                if rest.len() == 1 { "was" } else { "were" }
+            ));
+        }
+        return Ok(reason);
+    }
+
+    // A measured width that failed: the point itself is the evidence, so the reason
+    // is about the width above the cap rather than about a probe.
+    let failing = points
+        .iter()
+        .filter(|point| point.width > width_cap)
+        .find_map(|point| {
+            point
+                .cost
+                .iter()
+                .enumerate()
+                .find(|(bed_index, bed)| bed.ms_p90 > CostRow::budget(*bed_index) as f64)
+                .map(|(bed_index, bed)| (point, bed_index, bed))
+        });
+    if let Some((failed, bed_index, bed)) = failing {
+        let rest: Vec<u32> = missing
+            .iter()
+            .copied()
+            .filter(|width| *width != failed.width)
+            .collect();
+        let mut reason = format!(
+            "width {} was measured and {} p90 {:.2} ms against its {} ms budget",
+            failed.width,
+            bed.bed,
+            bed.ms_p90,
+            CostRow::budget(bed_index)
+        );
+        if rest.is_empty() {
+            reason.push_str("; it was the last pre-registered width");
+        } else {
+            reason.push_str(&format!(
+                "; {} {} not measured because {stop_rule}",
+                prose_list(&rest),
+                if rest.len() == 1 { "was" } else { "were" }
+            ));
+        }
+        return Ok(reason);
+    }
+
+    Err(format!(
+        "widths {} are missing and the artifact records neither a failing width nor a probe: \
+         there is no honest sentence for why the climb stopped",
+        list(missing)
+    ))
 }
 
 // ------------------------------------------------------------ the default width
@@ -614,17 +912,22 @@ pub struct Artifact {
     pub default_beam_basis: DefaultBasis,
     pub width_cap: u32,
     pub cap_bound: CapBound,
+    /// The probe that failed a budget above the cap, when the stop rule was
+    /// confirmed that way rather than by measuring the failing point. Never a
+    /// point, never in the series: see [`Overshoot`].
+    pub overshoot: Option<Overshoot>,
     pub quality_fingerprint: String,
     pub reason: String,
-    /// Every pre-registered doubling point was measured and every phase ran. A
-    /// cost sweep that stopped at its pre-registered stop rule leaves this
-    /// `false`: the wider points were deliberately not measured, and the artifact
-    /// says so instead of implying a full list.
+    /// Every pre-registered doubling point is a measured point. A cost sweep that
+    /// stopped at its pre-registered stop rule leaves this `false`: the wider
+    /// points were deliberately not measured, and the artifact says so instead of
+    /// implying a full list. Derived by [`summarise`], never from the widths the
+    /// run was asked for.
     pub complete: bool,
-    /// Widths the run did not measure, in ascending order. Empty only when
-    /// [`Artifact::complete`].
+    /// Pre-registered widths the run did not measure, in ascending order. Empty
+    /// only when [`Artifact::complete`].
     pub missing_widths: Vec<u32>,
-    /// Why those widths are missing: the cost sweep's own stop rule, or (on an
+    /// Why those widths are missing: the stop rule's own evidence, or (on an
     /// in-flight copy) the phases that had not run yet. Empty when complete.
     pub incomplete_reason: String,
     /// The width at which §9.5's quality stop rule (two consecutive flat steps)
@@ -707,20 +1010,90 @@ impl Artifact {
                 }
             }
         }
-        if self.cap_bound == CapBound::Budget {
-            let cap = self
-                .points
-                .iter()
-                .find(|point| point.width == self.width_cap);
-            let after = self
-                .points
-                .iter()
-                .find(|point| point.width > self.width_cap);
-            if cap.is_none() || after.is_none() {
+        // Coverage is derived from the measured points against §9.5's list, not
+        // taken on trust. `complete` and `missing_widths` are the fields the
+        // committed defect got wrong (they were computed from the widths a run was
+        // *asked* for), so a curve that claims `complete: true` over a six-point
+        // prefix must be refused — even when its own fields agree with each other,
+        // which is precisely what a wrong derivation produces.
+        let unmeasured: Vec<u32> = WIDTHS
+            .iter()
+            .copied()
+            .filter(|width| !self.points.iter().any(|point| point.width == *width))
+            .collect();
+        if self.missing_widths != unmeasured {
+            return Err(format!(
+                "missing_widths [{}] is not the pre-registered list minus the measured points \
+                 ([{}]): coverage is derived from the doubling list, never from the widths a run \
+                 asked for",
+                list(&self.missing_widths),
+                list(&unmeasured)
+            ));
+        }
+        // What stopped the climb is a claim about evidence, so it is checked
+        // against the evidence: a measured failing width above the cap, or a probe
+        // there. Neither field may be taken on trust, because the page's tooltip
+        // renders the difference (§2.2).
+        match self.cap_bound {
+            CapBound::Budget => {
+                let measured_failure =
+                    self.points.iter().any(|point| {
+                        point.width > self.width_cap
+                            && point.cost.iter().enumerate().any(|(bed_index, bed)| {
+                                bed.ms_p90 > CostRow::budget(bed_index) as f64
+                            })
+                    });
+                let probed = self
+                    .overshoot
+                    .as_ref()
+                    .is_some_and(|probe| probe.width > self.width_cap);
+                if !measured_failure && !probed {
+                    return Err(
+                        "cap_bound is \"budget\" but neither a measured point above the cap nor an \
+                         overshoot probe failed a budget"
+                            .to_string(),
+                    );
+                }
+            }
+            CapBound::Schedule => {
+                if self.overshoot.is_some() {
+                    return Err(
+                        "cap_bound is \"schedule\" but the artifact records an overshoot probe that \
+                         failed a budget: a probe that fails a budget is a budget"
+                            .to_string(),
+                    );
+                }
+                if !self.complete {
+                    return Err(
+                        "cap_bound is \"schedule\" says the pre-registered list stopped the climb, \
+                         but this curve did not measure every pre-registered width"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        if let Some(probe) = &self.overshoot {
+            probe.check(self.width_cap)?;
+            if self.points.iter().any(|point| point.width == probe.width) {
+                return Err(format!(
+                    "width {} is recorded both as a measured point and as an overshoot probe: a \
+                     probe is a width the curve did not measure",
+                    probe.width
+                ));
+            }
+            if self.complete {
                 return Err(
-                    "cap_bound is \"budget\" but no failing width above the cap was measured"
+                    "a complete curve measured every pre-registered width, so it cannot also carry \
+                     an overshoot probe"
                         .to_string(),
                 );
+            }
+            if !self.missing_widths.contains(&probe.width) {
+                return Err(format!(
+                    "the overshoot probe at width {} is not one of the widths this curve says it \
+                     did not measure, so the probe would be a point the series is missing",
+                    probe.width
+                ));
             }
         }
         if self.saturation.checked_at_width != self.width_cap {
@@ -780,6 +1153,20 @@ impl Artifact {
         if self.reason.trim().is_empty() {
             return Err("a measurement must carry its one-line reason".to_string());
         }
+        Ok(())
+    }
+
+    /// Recompute the derived fields from the evidence this artifact already holds —
+    /// its measured points and its probe — and nothing else. This is the single
+    /// derivation a live run and a re-derivation of a committed file both go
+    /// through, so a curve cannot be summarised two ways.
+    pub fn refresh_summary(&mut self) -> Result<(), String> {
+        let summary = summarise(&self.points, self.overshoot.as_ref())?;
+        self.width_cap = summary.width_cap;
+        self.cap_bound = summary.cap_bound;
+        self.complete = summary.complete;
+        self.missing_widths = summary.missing_widths;
+        self.incomplete_reason = summary.incomplete_reason;
         Ok(())
     }
 
@@ -1108,6 +1495,27 @@ impl Artifact {
             CapBound::Schedule => "schedule",
         };
         line(&mut out, "cap_bound", &quote(bound), 1);
+        // The probe, if any, goes beside the bound it justifies: it is evidence
+        // about the stop rule, so a reader checking the word above finds the number
+        // underneath it. `probe: true` is the field that keeps it out of `points`.
+        match &self.overshoot {
+            None => line(&mut out, "overshoot", "null", 1),
+            Some(probe) => {
+                out.push_str("  \"overshoot\": {\n");
+                line(&mut out, "width", &probe.width.to_string(), 2);
+                line(&mut out, "bed", &quote(&probe.bed()), 2);
+                line(&mut out, "substrate", &quote(&probe.substrate), 2);
+                line(&mut out, "samples", &probe.samples.to_string(), 2);
+                // Two decimals, one fewer than the cost series: this is a probe,
+                // not a point, and it should not look like one.
+                line(&mut out, "ms_p90", &format!("{:.2}", probe.ms_p90), 2);
+                line(&mut out, "budget_ms", &probe.budget_ms().to_string(), 2);
+                line(&mut out, "probe", "true", 2);
+                line(&mut out, "note", &quote(probe.note.trim()), 2);
+                seal(&mut out);
+                out.push_str("  },\n");
+            }
+        }
         let source = match self.default_beam_source {
             DefaultSource::Tied => "tie",
             DefaultSource::SelfTie => "self",
@@ -1158,6 +1566,341 @@ impl Artifact {
         out.push_str("}\n");
         out
     }
+
+    /// Read an artifact back out of its own rendering.
+    ///
+    /// This exists for `--summarise`: the measured series is exactly the part a
+    /// later command must never touch, so the reader is written against
+    /// [`Artifact::render`] and the two are held together by a round-trip test on
+    /// the committed file — parse then render has to reproduce it byte for byte.
+    /// Anything the writer emits and the reader drops would show up there as a diff
+    /// rather than as a measured number quietly changing.
+    pub fn from_text(text: &str) -> Result<Artifact, String> {
+        let root = json::parse(text).map_err(|error| format!("not JSON: {error}"))?;
+        if json_count(&root, "format", "format")? != 1 {
+            return Err("format: this reader knows format 1 only".to_string());
+        }
+        let kind = json_text(&root, "kind", "kind")?;
+        if kind != "width-curve" {
+            return Err(format!("kind: expected \"width-curve\", found {kind:?}"));
+        }
+
+        let engine = json_field(&root, "engine", "engine")?;
+        let wasm = json_field(engine, "wasm", "engine.wasm")?;
+
+        let datasets = json_field(&root, "dataset", "dataset")?
+            .as_object()
+            .ok_or_else(|| "dataset: expected an object".to_string())?
+            .iter()
+            .map(|(name, entry)| {
+                let path = format!("dataset.{name}");
+                Ok((
+                    name.clone(),
+                    json_text(entry, "fingerprint", &path)?,
+                    json_count(entry, "generator_version", &path)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        let evaluator = json_field(&root, "evaluator", "evaluator")?;
+        let machine = json_field(&root, "machine", "machine")?;
+        let protocol = json_field(&root, "protocol", "protocol")?;
+        let saturation = json_field(&root, "saturation", "saturation")?;
+
+        let mut widths = Vec::new();
+        for (index, width) in json_field(protocol, "widths", "protocol")?
+            .as_array()
+            .ok_or_else(|| "protocol.widths: expected an array".to_string())?
+            .iter()
+            .enumerate()
+        {
+            widths.push(json_u32_of(width, &format!("protocol.widths[{index}]"))?);
+        }
+        let quality_stop_at = match json_field(protocol, "quality_stop_rule_fired_at", "protocol")?
+        {
+            Value::Null => None,
+            value => Some(json_u32_of(value, "protocol.quality_stop_rule_fired_at")?),
+        };
+
+        let mut beds = Vec::new();
+        for (name, tally) in json_field(saturation, "beds", "saturation")?
+            .as_object()
+            .ok_or_else(|| "saturation.beds: expected an object".to_string())?
+        {
+            let path = format!("saturation.beds.{name}");
+            beds.push((
+                name.clone(),
+                Tally {
+                    wins: json_count(tally, "wins", &path)?,
+                    games: json_count(tally, "games", &path)?,
+                },
+            ));
+        }
+        let quality_split = json_split(saturation, "quality_split", "saturation")?;
+
+        let mut points = Vec::new();
+        for (index, point) in json_field(&root, "points", "points")?
+            .as_array()
+            .ok_or_else(|| "points: expected an array".to_string())?
+            .iter()
+            .enumerate()
+        {
+            let path = format!("points[{index}]");
+            let width = json_count(point, "width", &path)?;
+            let mut cost = Vec::new();
+            for (bed_index, bed) in json_field(point, "cost", &path)?
+                .as_array()
+                .ok_or_else(|| format!("{path}.cost: expected an array"))?
+                .iter()
+                .enumerate()
+            {
+                let bed_path = format!("{path}.cost[{bed_index}]");
+                let mut trials = Vec::new();
+                for (trial_index, ms) in json_field(bed, "trials_ms_p90", &bed_path)?
+                    .as_array()
+                    .ok_or_else(|| format!("{bed_path}.trials_ms_p90: expected an array"))?
+                    .iter()
+                    .enumerate()
+                {
+                    trials.push(json_number_of(
+                        ms,
+                        &format!("{bed_path}.trials_ms_p90[{trial_index}]"),
+                    )?);
+                }
+                cost.push(BedCost {
+                    bed: json_text(bed, "bed", &bed_path)?,
+                    matches: Tally {
+                        wins: json_count(bed, "wins", &bed_path)?,
+                        games: json_count(bed, "games", &bed_path)?,
+                    },
+                    evaluations_p50: json_count(bed, "evaluations_p50", &bed_path)?,
+                    ms_p50: json_number(bed, "ms_p50", &bed_path)?,
+                    ms_p90: json_number(bed, "ms_p90", &bed_path)?,
+                    ms_max: json_number(bed, "ms_max", &bed_path)?,
+                    trials_ms_p90: trials,
+                });
+            }
+            let quality_node = point.get("quality");
+            let quality = match quality_node {
+                None | Some(Value::Null) => None,
+                Some(node) => {
+                    let quality_path = format!("{path}.quality");
+                    let paired = json_field(node, "paired_vs_cap", &quality_path)?;
+                    Some(QualityRow {
+                        width,
+                        tally: Tally {
+                            wins: json_count(node, "wins", &quality_path)?,
+                            games: json_count(node, "games", &quality_path)?,
+                        },
+                        paired: Paired {
+                            b: json_count(paired, "b", &format!("{quality_path}.paired_vs_cap"))?,
+                            c: json_count(paired, "c", &format!("{quality_path}.paired_vs_cap"))?,
+                        },
+                    })
+                }
+            };
+            // `flat_step` is the quality block's own verdict on the step above it, so
+            // it is read from there — where [`Artifact::render`] writes it.
+            let flat_step = match quality_node.and_then(|node| node.get("flat_step")) {
+                None | Some(Value::Null) => None,
+                Some(value) => Some(value.as_bool().ok_or_else(|| {
+                    format!("{path}.quality.flat_step: expected a boolean or null")
+                })?),
+            };
+            points.push(Point {
+                width,
+                cost,
+                quality,
+                flat_step,
+            });
+        }
+
+        let overshoot = match root.get("overshoot") {
+            None | Some(Value::Null) => None,
+            Some(probe) => {
+                let path = "overshoot";
+                if let Some(bed) = probe.get("bed") {
+                    let bed = bed
+                        .as_str()
+                        .ok_or_else(|| format!("{path}.bed: expected a string"))?;
+                    if bed != Bed::SHIPPED[0].name() {
+                        return Err(format!(
+                            "{path}.bed: expected {:?}, found {bed:?} — §9.5's cap criterion is \
+                             the default configuration's budget",
+                            Bed::SHIPPED[0].name()
+                        ));
+                    }
+                }
+                if probe.get("budget_ms").is_some()
+                    && json_count(probe, "budget_ms", path)? != BUDGETS_MS[0] as u32
+                {
+                    return Err(format!("{path}.budget_ms: expected {}", BUDGETS_MS[0]));
+                }
+                if probe.get("probe").is_some() && !json_bool(probe, "probe", path)? {
+                    return Err(format!(
+                        "{path}.probe: false — an overshoot that is not a probe is a point, and a \
+                         point belongs in the series"
+                    ));
+                }
+                Some(Overshoot {
+                    width: json_count(probe, "width", path)?,
+                    substrate: json_text(probe, "substrate", path)?,
+                    samples: json_count(probe, "samples", path)?,
+                    ms_p90: json_number(probe, "ms_p90", path)?,
+                    note: json_text(probe, "note", path)?,
+                })
+            }
+        };
+
+        let cap_bound = match json_text(&root, "cap_bound", "cap_bound")?.as_str() {
+            "budget" => CapBound::Budget,
+            "schedule" => CapBound::Schedule,
+            other => {
+                return Err(format!(
+                    "cap_bound: expected \"budget\" or \"schedule\", found {other:?}"
+                ))
+            }
+        };
+        let default_beam_source =
+            match json_text(&root, "default_beam_source", "default_beam_source")?.as_str() {
+                "tie" => DefaultSource::Tied,
+                "self" => DefaultSource::SelfTie,
+                other => {
+                    return Err(format!(
+                        "default_beam_source: expected \"tie\" or \"self\", found {other:?}"
+                    ))
+                }
+            };
+        let quality_axis = match json_text(&root, "quality_axis", "quality_axis")?.as_str() {
+            "pending" => QualityAxis::Pending,
+            "resolved" => QualityAxis::Resolved,
+            "no-resolution" => QualityAxis::NoResolution,
+            other => {
+                return Err(format!(
+                    "quality_axis: expected \"pending\", \"resolved\" or \"no-resolution\", found \
+                     {other:?}"
+                ))
+            }
+        };
+        let default_beam_basis =
+            match json_text(&root, "default_beam_basis", "default_beam_basis")?.as_str() {
+                "quality" => DefaultBasis::Quality,
+                "cost" => DefaultBasis::Cost,
+                other => {
+                    return Err(format!(
+                        "default_beam_basis: expected \"quality\" or \"cost\", found {other:?}"
+                    ))
+                }
+            };
+        let mut missing_widths = Vec::new();
+        for (index, width) in json_field(&root, "missing_widths", "missing_widths")?
+            .as_array()
+            .ok_or_else(|| "missing_widths: expected an array".to_string())?
+            .iter()
+            .enumerate()
+        {
+            missing_widths.push(json_u32_of(width, &format!("missing_widths[{index}]"))?);
+        }
+
+        Ok(Artifact {
+            generated_at: json_text(&root, "generated_at", "generated_at")?,
+            engine_commit: json_text(engine, "commit", "engine")?,
+            wasm_bytes: json_count(wasm, "bytes", "engine.wasm")? as u64,
+            wasm_fingerprint: json_text(wasm, "fingerprint", "engine.wasm")?,
+            wasm_path: json_text(wasm, "path", "engine.wasm")?,
+            datasets,
+            evaluator_id: json_text(evaluator, "id", "evaluator")?,
+            evaluator_name: json_text(evaluator, "name", "evaluator")?,
+            evaluator_table: json_text(evaluator, "table", "evaluator")?,
+            machine: json_text(machine, "label", "machine")?,
+            runtime: json_text(machine, "runtime", "machine")?,
+            substrate: json_text(protocol, "substrate", "protocol")?,
+            widths,
+            cost_trials: json_count(protocol, "cost_trials", "protocol")?,
+            cost_seeds_per_trial: json_count(protocol, "cost_seeds_per_trial", "protocol")?,
+            quality_games: json_count(protocol, "quality_games_per_point", "protocol")?,
+            points,
+            saturation: Saturation {
+                checked_at_width: json_count(saturation, "checked_at_width", "saturation")?,
+                beds,
+                quality_bed: json_text(saturation, "quality_bed", "saturation")?,
+                quality_split,
+                fallback_reason: json_text(saturation, "fallback_reason", "saturation")?,
+            },
+            quality_axis,
+            default_beam: json_count(&root, "default_beam", "default_beam")?,
+            default_beam_source,
+            default_beam_basis,
+            width_cap: json_count(&root, "width_cap", "width_cap")?,
+            cap_bound,
+            overshoot,
+            quality_fingerprint: json_text(&root, "quality_fingerprint", "quality_fingerprint")?,
+            reason: json_text(
+                json_field(&root, "provenance", "provenance")?,
+                "reason",
+                "provenance",
+            )?,
+            complete: json_bool(&root, "complete", "complete")?,
+            missing_widths,
+            incomplete_reason: json_text(&root, "incomplete_reason", "incomplete_reason")?,
+            quality_stop_at,
+        })
+    }
+}
+
+// ------------------------------------------------- reading the artifact's fields
+
+fn json_field<'a>(value: &'a Value, key: &str, path: &str) -> Result<&'a Value, String> {
+    value
+        .get(key)
+        .ok_or_else(|| format!("{path}: missing {key:?}"))
+}
+
+fn json_text(value: &Value, key: &str, path: &str) -> Result<String, String> {
+    match json_field(value, key, path)? {
+        Value::String(text) => Ok(text.clone()),
+        other => Err(format!(
+            "{path}.{key}: expected a string, found {}",
+            other.kind()
+        )),
+    }
+}
+
+fn json_count(value: &Value, key: &str, path: &str) -> Result<u32, String> {
+    let found = json_field(value, key, path)?;
+    json_u32_of(found, &format!("{path}.{key}"))
+}
+
+fn json_u32_of(value: &Value, path: &str) -> Result<u32, String> {
+    value
+        .as_u32()
+        .ok_or_else(|| format!("{path}: expected a whole number, found {}", value.kind()))
+}
+
+fn json_number(value: &Value, key: &str, path: &str) -> Result<f64, String> {
+    json_number_of(json_field(value, key, path)?, &format!("{path}.{key}"))
+}
+
+fn json_number_of(value: &Value, path: &str) -> Result<f64, String> {
+    value
+        .as_f64()
+        .ok_or_else(|| format!("{path}: expected a number, found {}", value.kind()))
+}
+
+fn json_bool(value: &Value, key: &str, path: &str) -> Result<bool, String> {
+    let found = json_field(value, key, path)?;
+    found
+        .as_bool()
+        .ok_or_else(|| format!("{path}.{key}: expected a boolean, found {}", found.kind()))
+}
+
+fn json_split(value: &Value, key: &str, path: &str) -> Result<(u32, u32), String> {
+    let split = json_field(value, key, path)?;
+    let at = format!("{path}.{key}");
+    Ok((
+        json_count(split, "first", &at)?,
+        json_count(split, "last", &at)?,
+    ))
 }
 
 fn quote(text: &str) -> String {
@@ -1239,6 +1982,135 @@ pub fn quality_fingerprint(points: &[Point]) -> String {
     format!("fnv1a64:{}", fingerprint::hex(hash.finish()))
 }
 
+// ------------------------------------------------------- the re-derivation
+
+/// What a `--summarise` run changed: the same artifact, with the summary fields it
+/// should have had, and the fields it had before. Both are reported, because a
+/// command that rewrites a committed measurement must be auditable on its own
+/// output.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Resummary {
+    pub before: Summary,
+    pub after: Summary,
+    pub artifact: Artifact,
+}
+
+/// Recompute an artifact's derived summary fields from the evidence it already
+/// records — no solving, no clock, no Dataset — and refuse to write anything that
+/// would move a measured number.
+///
+/// This is the honest repair for a curve whose derived fields came out wrong: the
+/// cost and quality series are the expensive, measured part, and re-deriving four
+/// fields must not mean paying for them again (and must not tempt anyone to hand-edit
+/// the file, which is the failure mode this command exists to prevent).
+///
+/// `overshoot` supplies the probe, because a probe may be evidence a previous run
+/// recorded only in prose: pass it here to put it in the file. When it is `None` the
+/// artifact's own probe is used, so re-summarising with the same evidence is a
+/// no-op that changes nothing (byte for byte).
+pub fn summarise_file(
+    path: &Path,
+    out: &Path,
+    overshoot: Option<Overshoot>,
+) -> Result<Resummary, String> {
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let mut artifact =
+        Artifact::from_text(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+    let before = Summary {
+        width_cap: artifact.width_cap,
+        cap_bound: artifact.cap_bound,
+        complete: artifact.complete,
+        missing_widths: artifact.missing_widths.clone(),
+        incomplete_reason: artifact.incomplete_reason.clone(),
+    };
+    if let Some(overshoot) = overshoot {
+        artifact.overshoot = Some(overshoot);
+    }
+    artifact.refresh_summary()?;
+    artifact.validate()?;
+
+    let rendered = with_line_endings(&artifact.render(), &text);
+    // The one guarantee that makes this command safe on a committed measurement:
+    // everything outside the derived summary block has to come back byte for byte.
+    match (evidence_regions(&rendered), evidence_regions(&text)) {
+        (Some((rendered_evidence, rendered_tail)), Some((evidence, tail)))
+            if rendered_evidence == evidence && rendered_tail == tail => {}
+        _ => {
+            return Err(format!(
+                "refusing to summarise {}: re-rendering it would move a measured number ({}), and \
+                 this command may only rewrite the derived summary fields",
+                path.display(),
+                first_difference(&rendered, &text)
+            ))
+        }
+    }
+
+    let after = Summary {
+        width_cap: artifact.width_cap,
+        cap_bound: artifact.cap_bound,
+        complete: artifact.complete,
+        missing_widths: artifact.missing_widths.clone(),
+        incomplete_reason: artifact.incomplete_reason.clone(),
+    };
+    write_text(&rendered, out)?;
+    Ok(Resummary {
+        before,
+        after,
+        artifact,
+    })
+}
+
+/// Match the line endings the artifact was checked out with.
+///
+/// The writer emits LF (the manifests' convention), but `core.autocrlf` can hand a
+/// worktree a CRLF copy of the same committed file. Rewriting every line ending
+/// would turn a one-field repair into a whole-file change, so the re-derivation
+/// keeps the convention of the file it read and the guard compares real bytes.
+fn with_line_endings(rendered: &str, source: &str) -> String {
+    if source.contains("\r\n") {
+        rendered.replace('\n', "\r\n")
+    } else {
+        rendered.to_string()
+    }
+}
+
+/// Where a rendering's derived summary block starts and ends. Outside it is
+/// evidence: identity, protocol, statistic, §9.1's pilot, the measured points and
+/// the provenance. `--summarise` may only rewrite what is inside.
+fn evidence_regions(text: &str) -> Option<(&str, &str)> {
+    let summary = text.find(SUMMARY_START)?;
+    let tail = text.find(PROVENANCE_START)?;
+    if tail < summary {
+        return None;
+    }
+    Some((&text[..summary], &text[tail..]))
+}
+
+/// The first line two renderings disagree on, for the guard's refusal: "refusing"
+/// without saying which number it was protecting is not a diagnosis.
+fn first_difference(rendered: &str, original: &str) -> String {
+    for (index, (generated, found)) in rendered.lines().zip(original.lines()).enumerate() {
+        if generated != found {
+            return format!(
+                "line {}: wrote {generated:?}, the file has {found:?}",
+                index + 1
+            );
+        }
+    }
+    let generated = rendered.lines().count();
+    let found = original.lines().count();
+    if generated != found {
+        return format!("{generated} lines written against {found} in the file");
+    }
+    "the same lines, differing in their line endings".to_string()
+}
+
+/// The first line of [`Artifact::render`]'s derived block.
+const SUMMARY_START: &str = "  \"default_beam\": ";
+/// The last block of a rendering, which the derived fields sit in front of.
+const PROVENANCE_START: &str = "  \"provenance\": {";
+
 // ------------------------------------------------------------------ the run
 
 /// Where the milliseconds come from. §9.3's budgets are browser budgets, so the
@@ -1269,6 +2141,11 @@ pub struct Options {
     pub reason: String,
     pub quiet: bool,
     pub now_secs: u64,
+    /// The probe that failed a budget above the cap, if the operator has one. It is
+    /// recorded beside the bound it justifies and never as a point; a run whose
+    /// stop has no such evidence and no measured failing width is refused, because
+    /// the artifact could not say what stopped the climb.
+    pub overshoot: Option<Overshoot>,
 }
 
 /// One solve the curve asked for, and what came back.
@@ -1416,9 +2293,7 @@ pub fn run(options: &Options) -> Result<Artifact, String> {
 
     // ---- phase 1: cost. Ascending, stopping at the first width that fails a budget.
     let mut points: Vec<Point> = Vec::new();
-    let mut cost_rows: Vec<CostRow> = Vec::new();
-    let mut stopped_at: Option<usize> = None;
-    for (index, width) in widths.iter().copied().enumerate() {
+    for width in widths.iter().copied() {
         let mut cost = Vec::new();
         for bed in &games {
             cost.push(measure_cost(bed, width, options)?);
@@ -1450,35 +2325,19 @@ pub fn run(options: &Options) -> Result<Artifact, String> {
             quality: None,
             flat_step: None,
         });
-        cost_rows.push(row);
         if !row.fits() {
-            stopped_at = Some(index);
             break;
         }
     }
 
-    let missing: Vec<u32> = match stopped_at {
-        Some(index) => widths[index + 1..].to_vec(),
-        None => Vec::new(),
-    };
-    let (cap, cap_bound) = width_cap(&cost_rows)?;
-    let cost_stop_reason = match stopped_at {
-        Some(index) => format!(
-            "the cost sweep stopped at width {} (the pre-registered stop rule: the first width \
-             that fails a budget — {} p90 {:.1} ms against {} ms), so the wider doubling points \
-             {} were not measured",
-            widths[index],
-            Bed::SHIPPED[0].name(),
-            cost_rows[index].p90_ms[0],
-            DEFAULT_BUDGET_MS,
-            missing
-                .iter()
-                .map(|width| width.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        None => String::new(),
-    };
+    // The summary fields are derived once, from the measured points and the probe,
+    // against the pre-registered list — the same call `--summarise` makes on a
+    // committed file. Deriving them from `options.widths` is exactly the defect this
+    // replaces: `--widths 25,…,800` would call a six-point prefix a complete curve
+    // and a truncated schedule the thing that stopped it. A run with neither a
+    // failing width nor a probe is refused here, before it writes anything.
+    let summary = summarise(&points, options.overshoot.as_ref())?;
+    let cap = summary.width_cap;
 
     // A partial artifact, so an interrupted run is still evidence.
     let mut artifact = Artifact {
@@ -1513,16 +2372,26 @@ pub fn run(options: &Options) -> Result<Artifact, String> {
         default_beam: cap,
         default_beam_source: DefaultSource::SelfTie,
         default_beam_basis: DefaultBasis::Cost,
-        width_cap: cap,
-        cap_bound,
+        width_cap: summary.width_cap,
+        cap_bound: summary.cap_bound,
+        overshoot: options.overshoot.clone(),
         quality_fingerprint: quality_fingerprint(&points),
         reason: options.reason.clone(),
+        // An in-flight copy is never complete: the phases below have not run. What
+        // stopped the *cost* sweep is already known, so it is already on the record.
         complete: false,
-        missing_widths: missing.clone(),
-        incomplete_reason: format!(
-            "in-flight copy written after the cost sweep: §9.1's pilot and the quality series \
-             had not run yet. {cost_stop_reason}"
-        ),
+        missing_widths: summary.missing_widths.clone(),
+        incomplete_reason: if summary.incomplete_reason.is_empty() {
+            "in-flight copy written after the cost sweep: §9.1's pilot and the quality series had \
+             not run yet"
+                .to_string()
+        } else {
+            format!(
+                "in-flight copy written after the cost sweep: §9.1's pilot and the quality series \
+                 had not run yet. {}",
+                summary.incomplete_reason
+            )
+        },
         quality_stop_at: None,
     };
     write(&artifact, &options.out)?;
@@ -1727,19 +2596,12 @@ pub fn run(options: &Options) -> Result<Artifact, String> {
     artifact.default_beam = default_beam;
     artifact.default_beam_source = default_beam_source;
     artifact.default_beam_basis = basis;
-    artifact.width_cap = cap;
-    artifact.cap_bound = cap_bound;
+    // The derived fields, again and from one place: `complete`, `missing_widths` and
+    // `incomplete_reason` are about the pre-registered doubling list, never about the
+    // widths this run was asked for, and `cap_bound` is what the evidence says
+    // stopped the climb.
+    artifact.refresh_summary()?;
     artifact.quality_fingerprint = quality_fingerprint(&artifact.points);
-    // `complete` is about the pre-registered doubling list, not about whether this
-    // process finished: a sweep that stopped at its own stop rule did not measure
-    // 3,200 or 6,400, and the file says so rather than implying a full curve.
-    artifact.complete = missing.is_empty();
-    artifact.missing_widths = missing;
-    artifact.incomplete_reason = if artifact.complete {
-        String::new()
-    } else {
-        cost_stop_reason
-    };
     artifact.quality_stop_at = quality_stop;
     // A curve whose ranking bed could not separate the widths must say so in the
     // one field a reader reads first. A cost decision is never described as a
@@ -1981,11 +2843,16 @@ fn identities(data: &Path) -> Result<Identities, String> {
 }
 
 fn write(artifact: &Artifact, out: &Path) -> Result<(), String> {
+    write_text(&artifact.render(), out)
+}
+
+fn write_text(text: &str, out: &Path) -> Result<(), String> {
     if let Some(parent) = out.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("create {}: {error}", parent.display()))?;
+        }
     }
-    let text = artifact.render();
     let mut file =
         fs::File::create(out).map_err(|error| format!("write {}: {error}", out.display()))?;
     file.write_all(text.as_bytes())

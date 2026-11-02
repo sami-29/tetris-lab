@@ -16,7 +16,7 @@ use std::sync::Mutex;
 
 use bench::width::{
     self, Artifact, Bed, BedCost, CapBound, CostRow, DefaultBasis, DefaultSource, MsSource,
-    Options, Overshoot, Paired, Point, QualityAxis, QualityRow, Summary, Tally, WIDTHS,
+    Options, Overshoot, Paired, Point, QualityAxis, QualityRow, Tally, WIDTHS,
 };
 
 const DEFAULT_BED: &str = "goal8-p40-cap7";
@@ -177,8 +177,7 @@ fn probe(width: u32, ms_p90: f64) -> Overshoot {
         substrate: "native".to_string(),
         samples: 10,
         ms_p90,
-        note: "≈215 ms on the wasm substrate this curve's cost series is measured on"
-            .to_string(),
+        note: "≈215 ms on the wasm substrate this curve's cost series is measured on".to_string(),
     }
 }
 
@@ -189,7 +188,6 @@ fn the_doubling_points_are_the_ones_the_spec_pre_registered() {
     assert_eq!(WIDTHS, [25, 50, 100, 200, 400, 800, 1_600, 3_200, 6_400]);
 }
 
-#[test]
 // ------------------------------------- the summary fields are derived, not requested
 
 #[test]
@@ -202,7 +200,10 @@ fn a_truncated_width_list_cannot_produce_a_complete_curve_or_the_schedule() {
     // measured. `complete: true` would be the same lie in a different field.
     let points = measured_to_800();
     let error = width::summarise(&points, None).expect_err("a truncated list is not a curve");
-    assert!(error.contains("1600"), "the reason names the widths: {error}");
+    assert!(
+        error.contains("1600"),
+        "the reason names the widths: {error}"
+    );
     assert!(error.contains("not measured"), "{error}");
 }
 
@@ -751,19 +752,21 @@ fn a_curve_that_did_not_measure_every_point_says_which_ones_and_why() {
     // accident. That is `complete: false` with a reason — not a curve that claims
     // to have measured 6,400.
     let mut artifact = measure_quick("coverage");
-    artifact.complete = false;
-    artifact.missing_widths = vec![3_200, 6_400];
+    let missing = artifact.missing_widths.clone();
+    assert!(!artifact.complete, "two of nine points were measured");
+    assert!(!missing.is_empty());
+
+    artifact.incomplete_reason.clear();
     assert!(
         artifact.validate().is_err(),
         "a partial curve must say why the widths are missing"
     );
     artifact.incomplete_reason =
-        "the cost sweep stopped at width 1600 (the pre-registered stop rule)".to_string();
+        "the cost sweep stopped at width 100 (the pre-registered stop rule)".to_string();
     assert_eq!(artifact.validate(), Ok(()));
 
     // And the other direction: a complete curve cannot carry either field.
     artifact.complete = true;
-    artifact.missing_widths = vec![3_200, 6_400];
     assert!(
         artifact.validate().is_err(),
         "a complete curve measured every doubling point, so nothing can be missing"
@@ -784,8 +787,44 @@ fn a_curve_that_did_not_measure_every_point_says_which_ones_and_why() {
     assert!(artifact.validate().is_err(), "budget with no evidence");
     // Only now is it a whole schedule that ran out, which is the one state that may
     // say so.
+    // Only a curve that measured all nine may say the schedule ran out. Making the
+    // fields agree with each other does not make them true: two measured points and
+    // `missing_widths: []` are still two measured points.
     artifact.cap_bound = CapBound::Schedule;
-    assert_eq!(artifact.validate(), Ok(()));
+    assert!(
+        artifact.validate().is_err(),
+        "two of nine points cannot be a complete curve"
+    );
+}
+
+#[test]
+fn a_complete_curve_measured_every_pre_registered_width_not_just_the_requested_ones() {
+    // The committed defect's exact shape, made internally consistent: the curve
+    // recorded a two-point prefix, then claimed `complete: true`, `missing_widths:
+    // []` and `cap_bound: "schedule"`. Every field agrees with every other field and
+    // the artifact is still a lie, because coverage is what §9.5's **pre-registered**
+    // list says was measured — so `validate` derives it from the points instead of
+    // trusting the field the derivation wrote.
+    let mut artifact = measure_quick("consistent-lie");
+    assert_eq!(artifact.points.len(), 2);
+    artifact.complete = true;
+    artifact.missing_widths.clear();
+    artifact.incomplete_reason.clear();
+    artifact.overshoot = None;
+    artifact.cap_bound = CapBound::Schedule;
+
+    let error = artifact
+        .validate()
+        .expect_err("a two-point prefix is not a complete curve");
+    assert!(error.contains("missing_widths"), "{error}");
+    assert!(
+        error.contains("1600"),
+        "the derivation names the widths that were not measured: {error}"
+    );
+    assert!(
+        error.contains("pre-registered"),
+        "and says which list it derived them from: {error}"
+    );
 }
 
 #[test]
@@ -796,7 +835,9 @@ fn a_partial_curve_may_not_claim_the_schedule_stopped_it() {
     let mut artifact = measure_quick("schedule");
     assert!(!artifact.complete, "two of nine points were measured");
     artifact.cap_bound = CapBound::Schedule;
-    let error = artifact.validate().expect_err("a truncated curve is not a schedule");
+    let error = artifact
+        .validate()
+        .expect_err("a truncated curve is not a schedule");
     assert!(error.contains("schedule"), "{error}");
 }
 
@@ -962,9 +1003,12 @@ fn the_committed_artifact_round_trips_through_the_reader_and_the_writer() {
     // number of decimals would be a measured number silently changing.
     let text = fs::read_to_string(committed_path()).expect("the committed width curve");
     let artifact = Artifact::from_text(&text).expect("parse");
+    // The artifact's own convention is LF (the manifests'), and `core.autocrlf` may
+    // have handed the worktree a CRLF copy of the same committed bytes; the writer
+    // is held to the file's content, not to the checkout's line endings.
     assert_eq!(
         artifact.render(),
-        text,
+        text.replace("\r\n", "\n"),
         "the reader and the writer agree byte for byte"
     );
 }
@@ -1017,10 +1061,13 @@ fn a_probe_turns_the_bound_into_a_budget_without_moving_a_measured_number() {
 
     // Every measured point, both numbers and the quality fingerprint are the ones
     // that were committed: the fix is to derived fields, not to the measurement.
-    assert_eq!(report.after.points, stale.points);
-    assert_eq!(report.after.width_cap, stale.width_cap);
-    assert_eq!(report.after.default_beam, stale.default_beam);
-    assert_eq!(report.after.quality_fingerprint, stale.quality_fingerprint);
+    assert_eq!(report.artifact.points, stale.points);
+    assert_eq!(report.artifact.width_cap, stale.width_cap);
+    assert_eq!(report.artifact.default_beam, stale.default_beam);
+    assert_eq!(
+        report.artifact.quality_fingerprint,
+        stale.quality_fingerprint
+    );
     let rewritten = fs::read_to_string(&path).unwrap();
     assert!(
         rewritten.contains("\"ms_p90\": 111.474"),
