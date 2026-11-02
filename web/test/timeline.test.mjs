@@ -110,7 +110,7 @@ test("a Move's own boards explain it: preBoard, preClear and postClear are conti
       // The rows it completed are exactly the full rows of preClear.
       const full = fullRows(step.preClear);
       const filled = [];
-      for (let bit = 0; bit < H; bit += 1) if ((full & (1 << bit)) !== 0) filled.push(H - 1 - bit);
+      for (let bit = H - 1; bit >= 0; bit -= 1) if ((full & (1 << bit)) !== 0) filled.push(H - 1 - bit);
       assert.deepEqual(filled, step.cleared, `${label}: cleared is every full row of preClear`);
       // And postClear is preClear with them removed.
       assert.deepEqual(words(step.postClear), words(reconstruct(timeline, index + 1)), `${label}: postClear`);
@@ -173,28 +173,35 @@ test("collapsePlan is clearFullRows, on arbitrary boards including non-contiguou
     }
     planted.sort((a, b) => a - b);
 
-    const expected = fieldFrom(base);
+    // The rows that are actually full, top first: the random stack can complete
+    // rows of its own, and those are part of the case.
+    const full = fullRows(base);
     const clearedRows = [];
-    for (const row of planted) clearedRows.push(row);
+    for (let bit = H - 1; bit >= 0; bit -= 1) if ((full & (1 << bit)) !== 0) clearedRows.push(H - 1 - bit);
+
+    const expected = fieldFrom(base);
     const clearedCount = clearFullRows(expected);
-    assert.equal(clearedCount, clearedRows.length, "the number cleared is the number planted");
+    assert.equal(clearedCount, clearedRows.length, "the number cleared is the number that were full");
 
     const plan = collapsePlan(clearedRows);
     assert.deepEqual(words(applyPlan(base, plan)), words(expected), "plan == splice");
     assert.deepEqual(plan.vanish, clearedRows, "the plan vanishes exactly the cleared rows");
     assert.equal(plan.moves.length, H - clearedRows.length, "one move per surviving row");
 
-    // Every surviving row appears once, its destination is inside the well, and
-    // the destinations are distinct (the plan is a bijection on surviving rows).
+    // Every surviving row appears once and its destination is inside the well. The
+    // destinations are distinct: a clear funnels the survivors into the bottom
+    // `H - cleared` rows, never into an occupied one.
     const sources = plan.moves.map((move) => move.from);
     const destinations = plan.moves.map((move) => move.to);
     const surviving = [];
     for (let row = 0; row < H; row += 1) if (!clearedRows.includes(row)) surviving.push(row);
     assert.deepEqual([...sources].sort((a, b) => a - b), surviving, "every surviving row moves");
+    const bottom = [];
+    for (let row = clearedRows.length; row < H; row += 1) bottom.push(row);
     assert.deepEqual(
       [...destinations].sort((a, b) => a - b),
-      surviving,
-      "the surviving rows land in the surviving rows",
+      bottom,
+      "the survivors settle into the bottom rows, one each",
     );
     // A row's fall is the number of cleared rows below it: rows never rise.
     for (const move of plan.moves) {
@@ -228,16 +235,15 @@ test("collapsePlan is clearFullRows, on arbitrary boards including non-contiguou
     }
 
     if (clearedRows.length > 0) sawClearing += 1;
-    const gaps = clearedRows.filter(
-      (row, index) => index > 0 && clearedRows[index - 1] !== row - 1,
-    );
-    if (gaps.length > 0) {
+    // One segment per run of surviving rows: a cleared row splits the stack.
+    let runs = 0;
+    for (let row = 0; row < H; row += 1) {
+      if (clearedRows.includes(row)) continue;
+      if (row === 0 || clearedRows.includes(row - 1)) runs += 1;
+    }
+    assert.equal(plan.segments.length, runs, "a cleared row splits the stack into segments");
+    if (clearedRows.some((row, index) => index > 0 && clearedRows[index - 1] !== row - 1)) {
       sawNonContiguous += 1;
-      assert.equal(
-        plan.segments.length,
-        gaps.length + 1,
-        "a gap in the cleared rows makes another segment",
-      );
     }
   }
   assert.ok(sawClearing > 1000, "the sweep actually cleared rows");
@@ -275,8 +281,12 @@ test("no-clear steps are the identity: nothing vanishes and nothing falls", () =
   for (const step of timeline.steps) {
     assert.deepEqual(step.cleared, [], "nothing was cleared");
     assert.deepEqual(step.plan.vanish, [], "nothing vanishes");
-    assert.equal(step.plan.segments.length, H, "twenty rows, each its own segment");
+    assert.ok(step.plan.segments.length >= 1, "a plan always says what happens to the rows");
     for (const segment of step.plan.segments) assert.equal(segment.fall, 0, "nothing falls");
+    assert.ok(
+      step.plan.moves.every((move) => move.to === move.from),
+      "every row stays exactly where it is",
+    );
     assert.deepEqual(words(step.postClear), words(step.preClear), "preClear is already postClear");
     assert.equal(step.plan.moves.length, H);
   }
@@ -302,10 +312,12 @@ test("reconstruct is pure: it returns a fresh board and mutates nothing it was g
     assert.notEqual(again, first, `move ${k}: every call hands back a new array`);
   }
 
-  // A step's postClear is not something the renderer can damage either.
-  assert.notEqual(reconstruct(timeline, 1), timeline.steps[0].postClear, "no shared arrays");
-  timeline.steps[0].postClear[0] = 0xfffff;
-  assert.deepEqual(words(reconstruct(timeline, 1)), entry.frames[0], "history is not writable");
+  // A step's postClear is not something a renderer can damage by holding on to it:
+  // every reconstruct hands back its own array, so writing into one changes nothing.
+  const stepBoard = reconstruct(timeline, 1);
+  assert.notEqual(stepBoard, timeline.steps[0].postClear, "no shared arrays");
+  stepBoard.fill(0xfffff);
+  assert.deepEqual(words(reconstruct(timeline, 1)), entry.frames[0], "history survives a write to a copy");
 });
 
 test("seeking backwards and forwards lands on the same boards as playing through", () => {

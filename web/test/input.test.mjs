@@ -81,7 +81,7 @@ test("a modifier chord belongs to the browser, and typing is not a shortcut", ()
     assert.equal(resolveKey(key({ key: name, altKey: true })), null, `Alt+${name} is not ours`);
   }
   // Shift is the page's only modifier, and only where the map says so.
-  assert.equal(resolveKey(key({ key: " " })), resolveKey(key({ key: " ", shiftKey: true })), "Shift+Space is Space");
+  assert.deepEqual(resolveKey(key({ key: " " })), resolveKey(key({ key: " ", shiftKey: true })), "Shift+Space is Space");
 
   // A focused field or button keeps its own keys: Space would otherwise type a
   // space or click the button a second time.

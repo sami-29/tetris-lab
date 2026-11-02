@@ -45,10 +45,15 @@ function gameTimeline(name = "game-seed0") {
   return { entry, timeline: buildTimeline(entry.board0, entry.moves.map(word)) };
 }
 
-/** Play a cadence of frames from `t = 0` to `until`, re-anchoring like the page. */
+/** A state that is playing from the starting Board at `mps`. */
+function playingFrom(timeline, mps) {
+  return resume(timeline, initialState(mps, 0), 0);
+}
+
+/** Play a cadence of frames up to `until`, re-anchoring like the page does. */
 function playCadence(timeline, state, until, frameMs) {
   let current = state;
-  for (let now = frameMs; now <= until + 1e-9; now += frameMs) {
+  for (let now = state.t + frameMs; now <= until + 1e-9; now += frameMs) {
     current = reanchor(timeline, current, now);
   }
   return current;
@@ -62,7 +67,7 @@ test("k depends on elapsed time, not on the frame rate", () => {
   // Three cadences over the same 3000 ms: they must agree on k, and on how far
   // into that step they are (to floating point).
   const results = [1000 / 120, 1000 / 60, 1000 / 30].map((frameMs) => {
-    const state = playCadence(timeline, initialState(4, 0), until, frameMs);
+    const state = playCadence(timeline, playingFrom(timeline, 4), until, frameMs);
     return position(timeline, state, until);
   });
   for (const result of results) {
@@ -77,8 +82,11 @@ test("k depends on elapsed time, not on the frame rate", () => {
 
   // A fast speed must not skip Moves at a normal frame rate: at 16 mps a step is
   // 62.5 ms and a 60 Hz frame is 16.7 ms, so at most one Move per frame.
-  const fast = buildTimeline(timeline.board0, timeline.moves.map((move) => word([move.piece, move.rotation, move.column])));
-  let state = initialState(16, 0);
+  const fast = buildTimeline(
+    timeline.board0,
+    timeline.moves.map((move) => word([move.piece, move.rotation, move.column])),
+  );
+  let state = playingFrom(fast, 16);
   let previous = position(fast, state, 0).k;
   for (let now = 1000 / 60; now <= 600; now += 1000 / 60) {
     state = reanchor(fast, state, now);
@@ -93,7 +101,7 @@ test("a frame longer than a step samples the timeline later instead of tearing",
   const { timeline } = gameTimeline();
   const mps = 16;
   const stepMs = msPerMove(mps);
-  let state = initialState(mps, 0);
+  let state = playingFrom(timeline, mps);
   // A 100 ms frame over a 62.5 ms step: the picture is always the exact state of
   // the step in progress, at a later sample.
   for (let now = 100; now <= 2000; now += 100) {
@@ -107,8 +115,8 @@ test("a frame longer than a step samples the timeline later instead of tearing",
 test("the clock stops at the last Move instead of running off the end", () => {
   const { timeline } = gameTimeline();
   const total = timeline.steps.length;
-  const state = reanchor(timeline, initialState(4, 0), 1e6);
-  const at = position(timeline, state, 1e6);
+  const state = playCadence(timeline, playingFrom(timeline, 4), 30_000, 50);
+  const at = position(timeline, state, 30_000);
   assert.equal(at.k, total, "the last position is the last Move");
   assert.equal(at.into, 0, "with nothing left to play into");
   assert.equal(at.atEnd, true, "and it says so, because the button becomes a restart");
@@ -122,7 +130,7 @@ test("pause freezes the position without snapping it, and resume continues from 
   const mps = 1.43;
   const stepMs = msPerMove(mps);
 
-  const playing = reanchor(timeline, initialState(mps, 0), 200);
+  const playing = reanchor(timeline, playingFrom(timeline, mps), 200);
   const before = position(timeline, playing, 200);
   assert.ok(before.into > 0, "the first Move is in flight");
 
@@ -136,9 +144,11 @@ test("pause freezes the position without snapping it, and resume continues from 
   assert.equal(later.k, before.k, "a paused clock does not advance");
   assert.ok(Math.abs(later.into - before.into) < 1e-9, "and does not drift");
 
-  const resumed = resume(timeline, paused, 200 + 60_000);
-  const after = position(timeline, resumed, 200 + 60_000 + 500);
-  const expected = before.into + 500;
+  const resumeAt = 200 + 60_000;
+  const resumed = resume(timeline, paused, resumeAt);
+  const played = playCadence(timeline, resumed, resumeAt + 600, 100);
+  const after = position(timeline, played, resumeAt + 600);
+  const expected = before.into + 600;
   assert.equal(
     after.k,
     before.k + Math.floor(expected / stepMs),
@@ -154,7 +164,7 @@ test("pause freezes the position without snapping it, and resume continues from 
 
 test("changing speed keeps the fraction of the Move that is already played", () => {
   const { timeline } = gameTimeline();
-  const start = reanchor(timeline, initialState(1.43, 0), 200);
+  const start = reanchor(timeline, playingFrom(timeline, 1.43), 200);
   const before = position(timeline, start, 200);
   const fraction = before.into / msPerMove(1.43);
 
@@ -212,7 +222,7 @@ test("the stall guard clamps a hidden tab and does not replay the missing minute
   const { timeline } = gameTimeline();
   const mps = 4;
   const stepMs = msPerMove(mps);
-  const state = initialState(mps, 0);
+  const state = playingFrom(timeline, mps);
 
   const at = position(timeline, state, 60_000);
   const most = Math.ceil(STALL_MS / stepMs);
@@ -229,7 +239,7 @@ test("the stall guard clamps a hidden tab and does not replay the missing minute
 
 test("restart goes back to move 0, playing, at the speed the visitor chose", () => {
   const { timeline } = gameTimeline();
-  const playing = setSpeed(timeline, reanchor(timeline, initialState(1.43, 0), 5_000), 2, 5_000);
+  const playing = setSpeed(timeline, playCadence(timeline, playingFrom(timeline, 1.43), 5_000, 50), 2, 5_000);
   const at = position(timeline, playing, 5_000);
   assert.ok(at.k > 0, "we are somewhere in the game");
 

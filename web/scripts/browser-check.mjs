@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Headless acceptance for the page: open it in a real browser, watch a real wasm
-// instance solve a real game, and check the board actually plays back.
+// instance solve a real game, drive the controls the way a visitor does, and read
+// the pixels back.
 //
 //   node scripts/browser-check.mjs                 # serves dist/ itself
 //   node scripts/browser-check.mjs --url https://… # against a live URL
@@ -8,9 +9,14 @@
 //
 // No dependencies: a static file server, then the Chrome DevTools Protocol over
 // Node's built-in WebSocket (the shape `host-probe/browser-check.mjs` established).
-// It asserts what a test can honestly assert about a canvas — that the page solved,
-// that playback advances, that the drawn stack changes as pieces land and rows
-// collapse — and writes a screenshot for the judgment a test cannot make.
+//
+// What it checks, and why it is here rather than in `node --test`: everything below
+// needs a real page. That the Solve arrives; that a **gesture** on the move strip
+// lands on a Move and the board drawn is the engine's board at that Move; that the
+// arrow keys, Space, Home/End, R, `?` and Escape do what the map says; that the
+// speed control is continuous; that frames between two boards are drawn at all — so
+// a drop and a collapse are motion, not a painted end state. Then it writes
+// screenshots, which is the part no assertion owns.
 //
 // Exit code 0 means every assertion passed; 1 means one named check failed.
 
@@ -57,36 +63,35 @@ const CHROME_CANDIDATES = [
 const checks = [];
 
 /**
- * What the page should end up showing, computed here from the artifact: generate
- * the same default game, solve it, and play the Move list out on the field module.
- * The page never sees this; it is the yardstick the drawn pixels are held against.
+ * The yardstick, computed here from the artifact and never from the page: generate
+ * the same default game, solve it, build the replay timeline, and read the settled
+ * mask after *every* Move. A seek to Move k must draw `masks[k]`, and a collapse in
+ * progress must draw something that is in no mask at all.
  */
-async function expectedFinalMask() {
+function maskOf(field) {
+  let mask = "";
+  for (let row = 0; row < 20; row += 1) {
+    for (let col = 0; col < 10; col += 1) mask += field[col] & (1 << (19 - row)) ? "1" : "0";
+  }
+  return mask;
+}
+
+async function expectedBoards() {
   const { pathToFileURL } = await import("node:url");
   const load = (path) => import(pathToFileURL(path).href);
   const { loadEngineFromBytes } = await load(resolve(WEB, "src", "core", "loader.ts"));
-  const { fieldFrom, place, restShift, clearFullRows } = await load(resolve(WEB, "src", "ui", "field.ts"));
-  const { rotationOf } = await load(resolve(WEB, "src", "ui", "pieces.ts"));
+  const { buildTimeline, reconstruct } = await load(resolve(WEB, "src", "ui", "timeline.ts"));
 
-  const bytes = new Uint8Array(readFileSync(ARTIFACT));
-  const engine = await loadEngineFromBytes(bytes);
+  const engine = await loadEngineFromBytes(new Uint8Array(readFileSync(ARTIFACT)));
   engine.genGame(0, 40, 7);
-  const field = fieldFrom(engine.board());
+  const board = Uint32Array.from(engine.board());
   const outcome = engine.solve(8, 25);
-  const moves = engine.moves(outcome.moveCount);
-  for (const word of moves) {
-    const shape = rotationOf((word >>> 16) & 0xff, (word >>> 8) & 0xff);
-    const shift = restShift(field, shape, word & 0xff);
-    place(field, shape, word & 0xff, shift);
-    clearFullRows(field);
-  }
-  let mask = "";
-  for (let row = 0; row < 20; row += 1) {
-    for (let col = 0; col < 10; col += 1) {
-      mask += field[col] & (1 << (19 - row)) ? "1" : "0";
-    }
-  }
-  return { mask, outcome };
+  const moves = Uint32Array.from(engine.moves(outcome.moveCount));
+  const timeline = buildTimeline(board, [...moves]);
+  const masks = [];
+  for (let k = 0; k <= timeline.steps.length; k += 1) masks.push(maskOf(reconstruct(timeline, k)));
+  const clearing = timeline.steps.filter((step) => step.cleared.length > 0).map((step) => step.k);
+  return { outcome, timeline, masks, clearing, total: timeline.steps.length };
 }
 function check(name, ok, detail = "") {
   checks.push({ name, ok, detail });
@@ -189,6 +194,9 @@ const READ = `(() => {
       }
     }
   }
+  const strip = document.getElementById("strip");
+  const play = document.getElementById("play");
+  const sheet = document.getElementById("sheet");
   return {
     status: text("status"),
     outcome: text("outcome"),
@@ -196,6 +204,23 @@ const READ = `(() => {
     tone: document.getElementById("status")?.dataset.tone ?? "",
     mask,
     canvas: { width: canvas?.width ?? 0, height: canvas?.height ?? 0, ...drawn },
+    // The controls, as a visitor sees them.
+    seek: Number(strip?.getAttribute("aria-valuenow") ?? -1),
+    seekMax: Number(strip?.getAttribute("aria-valuemax") ?? -1),
+    seekText: strip?.getAttribute("aria-valuetext") ?? "",
+    playText: (play?.textContent ?? "").trim(),
+    pressed: play?.getAttribute("aria-pressed") ?? "",
+    speed: text("speed-readout"),
+    sheetOpen: sheet?.dataset.open === "true",
+    sheetRows: document.querySelectorAll("#sheet dt").length,
+    stripCells: document.querySelectorAll("#strip i").length,
+    untitled: [...document.querySelectorAll("button, input, [role=slider]")]
+      .filter((el) => !el.getAttribute("title"))
+      .map((el) => el.id || el.tagName),
+    stripRect: (() => {
+      const rect = strip?.getBoundingClientRect();
+      return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null;
+    })(),
   };
 })()`;
 
@@ -294,63 +319,199 @@ try {
     return file;
   };
 
-  // Playback: the progress line must advance, and the drawn stack must change as
-  // pieces land and rows collapse. A sample is taken every 300 ms, and the middle
-  // one is written out so a human can see a drop in flight.
+  const expected = await expectedBoards();
+  const shots = [await shoot("start")];
+  console.log(`  total    ${expected.total} Moves, clearing at ${expected.clearing.join(", ")}`);
+
+  const key = async (keyName, code, vk) => {
+    await cdp.send(
+      "Input.dispatchKeyEvent",
+      { type: "rawKeyDown", key: keyName, code, windowsVirtualKeyCode: vk },
+      sessionId,
+    );
+    await cdp.send(
+      "Input.dispatchKeyEvent",
+      { type: "keyUp", key: keyName, code, windowsVirtualKeyCode: vk },
+      sessionId,
+    );
+    await sleep(120);
+  };
+
+  /** Click the move strip at `fraction` of its width: one gesture to any Move. */
+  const clickStrip = async (fraction) => {
+    const state = await read();
+    const rect = state.stripRect;
+    const x = Math.round(rect.x + rect.width * fraction);
+    const y = Math.round(rect.y + rect.height / 2);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }, sessionId);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }, sessionId);
+    await sleep(150);
+    return read();
+  };
+
+  const setSpeedSlider = async (position) => {
+    await cdp.send(
+      "Runtime.evaluate",
+      {
+        expression: `(() => { const s = document.getElementById("speed"); s.value = "${position}"; s.dispatchEvent(new Event("input", { bubbles: true })); return s.value; })()`,
+        returnByValue: true,
+      },
+      sessionId,
+    );
+    await sleep(150);
+    return read();
+  };
+
+  const diff = (a, b) => [...(a ?? "")].filter((bit, index) => bit !== b?.[index]).length;
+
+  // ---- the page solved, and its chrome is discoverable -------------------------
+  check("the Move strip is one cell per Move, and addresses every one", solved.seekMax === expected.total && solved.stripCells === expected.total, `${solved.stripCells} cells, max ${solved.seekMax}, ${expected.total} Moves`);
+  check("every control carries a tooltip", solved.untitled.length === 0, solved.untitled.join(", ") || "all titled");
+  check("the keyboard map is on the page", solved.sheetRows >= 7, `${solved.sheetRows} rows behind ?`);
+  check("the speed is labelled in words", /moves\/s/.test(solved.speed) && /s per move/.test(solved.speed), solved.speed);
+
+  // ---- playback advances, and the picture changes -----------------------------
   const first = solved;
   const drawn = new Set([first.canvas.cells]);
   let advanced = false;
-  let middle = { progress: "", canvas: first.canvas };
-  const shots = [await shoot("start")];
   for (let i = 0; i < 24; i += 1) {
-    await sleep(300);
+    await sleep(250);
     const state = await read();
     if (!state) continue;
     drawn.add(state.canvas.cells);
-    if (state.progress !== first.progress && state.progress.length > 0) advanced = true;
-    if (i === 8) {
-      middle = state;
-      shots.push(await shoot("mid"));
-    }
+    if (state.seek > first.seek) advanced = true;
   }
-  shots.push(await shoot("end"));
-  console.log(`  mid-point ${middle.progress}`);
+  check("the Move list plays back", advanced, `Move ${first.seek} → ${(await read()).seek}`);
+  check("the board is drawn", first.canvas.cells > 0, `${first.canvas.cells} lit pixels`);
+  check("the stack changes as pieces land", drawn.size >= 3, `${drawn.size} distinct fills seen`);
 
-  // Playback holds the finished board for a beat before it starts over, so the
-  // settled mask can be read back and compared with the engine's own Move list.
-  let finalMask = null;
-  for (let i = 0; i < 40 && finalMask === null; i += 1) {
-    const state = await read();
-    const played = /move (\d+) of (\d+)/.exec(state?.progress ?? "");
-    if (played && played[1] === played[2] && state.canvas.cells > 0) finalMask = state.mask;
-    else await sleep(200);
-  }
-  const expected = await expectedFinalMask();
-  if (finalMask === null) {
-    check("the page draws the settled board", false, "playback never reported its last move");
-  } else {
-    const wrong = [...expected.mask].filter((bit, i) => bit !== finalMask[i]).length;
+  // ---- pause, resume, restart, and the map that does it -----------------------
+  await key(" ", "Space", 32);
+  const paused = await read();
+  check("Space pauses", /paused/.test(paused.progress) && paused.playText === "play", paused.progress.slice(0, 60));
+  const pausedAt = paused.seek;
+  await sleep(400);
+  check("a paused playback does not advance", (await read()).seek === pausedAt, `still Move ${pausedAt}`);
+
+  await key(" ", "Space", 32);
+  check("Space resumes", /playing/.test((await read()).progress));
+
+  await key("ArrowRight", "ArrowRight", 39);
+  const stepped = await read();
+  check("→ steps one Move forward (and pauses)", stepped.seek === Math.min(expected.total, pausedAt + 1) && /paused/.test(stepped.progress), `Move ${stepped.seek}`);
+  await key("ArrowLeft", "ArrowLeft", 37);
+  check("← steps one Move back", (await read()).seek === Math.min(expected.total, pausedAt), `Move ${(await read()).seek}`);
+
+  await key("End", "End", 35);
+  const atEnd = await read();
+  check("End reaches the last Move", atEnd.seek === expected.total && atEnd.playText === "replay", `Move ${atEnd.seek} of ${atEnd.seekMax}`);
+  shots.push(await shoot("end"));
+  check(
+    "the last Move draws the engine's Move list played out",
+    diff(atEnd.mask, expected.masks[expected.total]) === 0,
+    `${diff(atEnd.mask, expected.masks[expected.total])} of 200 cells differ`,
+  );
+
+  await key("Home", "Home", 36);
+  const atStart = await read();
+  check("Home returns to the starting Board", atStart.seek === 0, `Move ${atStart.seek}`);
+  check("move 0 is the Board the engine generated", diff(atStart.mask, expected.masks[0]) === 0);
+
+  await key("r", "KeyR", 82);
+  const restarted = await read();
+  check("R restarts and plays", restarted.seek === 0 && /playing/.test(restarted.progress), restarted.progress.slice(0, 60));
+
+  await key("?", "Slash", 191);
+  check("? opens the keyboard sheet", (await read()).sheetOpen);
+  await key("Escape", "Escape", 27);
+  check("Escape closes it", !(await read()).sheetOpen);
+
+  // ---- the move strip is the seek bar -----------------------------------------
+  await key(" ", "Space", 32); // pause, so the mask holds still while it is read
+  for (const fraction of [0.6, 0.25, 0.95, 0.05, 0.45]) {
+    const state = await clickStrip(fraction);
+    const target = Math.round(fraction * expected.total);
     check(
-      "the settled board on screen is the engine's Move list played out",
-      wrong === 0,
-      wrong === 0 ? "200 cells agree" : `${wrong} of 200 cells differ`,
+      `a gesture at ${Math.round(fraction * 100)}% seeks to Move ${target}`,
+      Math.abs(state.seek - target) <= 1,
+      `Move ${state.seek}`,
+    );
+    check(
+      `Move ${target} is drawn as the engine's board at that Move`,
+      diff(state.mask, expected.masks[state.seek]) === 0,
+      `${diff(state.mask, expected.masks[state.seek])} of 200 cells differ`,
     );
   }
+  const scrubbed = await read();
+  check("a gesture pauses, so the drag is not fighting the clock", /paused/.test(scrubbed.progress));
 
-  check("the Move list plays back", advanced, first.progress);
-  check("playback leaves the starting position", middle.canvas.cells !== first.canvas.cells, middle.progress);
-  check("the board is drawn", first.canvas.cells > 0, `${first.canvas.cells} lit pixels`);
+  // ---- playing from a scrubbed position continues correctly -------------------
+  await key(" ", "Space", 32); // play again from the scrubbed Move
+  await sleep(1200);
+  const resumed = await read();
   check(
-    "the stack changes as pieces land",
-    drawn.size >= 3,
-    `${drawn.size} distinct fills seen`,
+    "playing from a scrub continues forward from that Move",
+    resumed.seek > scrubbed.seek || resumed.seek === expected.total,
+    `Move ${scrubbed.seek} → ${resumed.seek}`,
   );
+  check(
+    "and lands on boards only the engine's Move list has",
+    expected.masks.includes(resumed.mask) || resumed.mask === expected.masks[expected.total],
+    `${diff(resumed.mask, expected.masks[resumed.seek])} of 200 cells differ from Move ${resumed.seek}`,
+  );
+
+  // ---- the speed control is continuous ---------------------------------------
+  await key(" ", "Space", 32); // pause
+  const speeds = [];
+  for (const position of [0.1, 0.5, 0.9]) {
+    const state = await setSpeedSlider(position);
+    speeds.push(state.speed);
+  }
+  console.log(`  speeds   ${speeds.join(" | ")}`);
+  check("the speed control yields more than four values", new Set(speeds).size === 3, speeds.join(" | "));
+  check(
+    "and none of them is a preset multiplier",
+    speeds.every((label) => !/^[0-9.]+×/.test(label)),
+    speeds.join(" | "),
+  );
+
+  await key("=", "Equal", 187);
+  const faster = await read();
+  await key("-", "Minus", 189);
+  const slower = await read();
+  check("= and - move one speed stop", faster.speed !== slower.speed, `${faster.speed} → ${slower.speed}`);
+  shots.push(await shoot("mid"));
+
+  // ---- motion: a drop and a collapse are drawn, not jumped over ---------------
+  await setSpeedSlider(0.32); // about 0.9 moves/s: slow enough to sample a collapse
+  await key("Home", "Home", 36);
+  await key(" ", "Space", 32);
+  const sampled = new Set();
+  let sawUnknown = null;
+  for (let i = 0; i < 40; i += 1) {
+    await sleep(120);
+    const state = await read();
+    if (!state) continue;
+    sampled.add(state.mask);
+    if (!expected.masks.includes(state.mask) && sawUnknown === null) {
+      sawUnknown = { mask: state.mask, seek: state.seek };
+      shots.push(await shoot("collapse"));
+    }
+  }
+  check(
+    "a frame between two boards is drawn: the drop and the collapse are motion",
+    sawUnknown !== null,
+    sawUnknown ? `an intermediate picture at Move ${sawUnknown.seek}` : `${sampled.size} distinct frames, all end states`,
+  );
+  check("the strip keeps carrying the position", (await read()).seek >= 0);
+  await key(" ", "Space", 32); // pause for the last screenshot
+  shots.push(await shoot("paused"));
 
   for (const file of shots) console.log(`  screenshot ${file}`);
 
   const failed = checks.filter((entry) => !entry.ok);
   exitCode = failed.length === 0 ? 0 : 1;
-  console.log(exitCode === 0 ? "\nPASS the page solves and plays back" : `\nFAIL ${failed.length} check(s)`);
+  console.log(exitCode === 0 ? "\nPASS the page solves, plays back, and can be driven" : `\nFAIL ${failed.length} check(s)`);
 } catch (error) {
   console.error(`browser check failed: ${error.message}`);
   exitCode = 1;

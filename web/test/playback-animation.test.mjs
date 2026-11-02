@@ -422,14 +422,17 @@ test("the rows under a clear are drawn where they were, before and after", () =>
   assert.ok(below[0].length > 0, "the case has cells below the clear");
   assert.equal(new Set(below).size, 1, "one geometry below the clear, for the whole collapse");
 
-  // And the rows above it do move, by exactly one row: a clear that draws nothing
-  // moving would fail here.
-  const above = (frame) =>
-    frame.cells
-      .filter((cell) => cell.row < lowest)
-      .map((cell) => Math.round(cell.row) * 100 + cell.col)
-      .sort((a, b) => a - b);
-  assert.notDeepEqual(above(collapsing[0]), above(collapsing.at(-1)), "the stack above fell");
+  // Every surviving cell here is below the clear, so no drawn cell moves: this
+  // collapse is a contraction without a fall, and the renderer must agree.
+  assert.ok(
+    collapsing.every((frame) => frame.cells.every((cell) => cell.row > lowest)),
+    "every surviving cell is below the clear",
+  );
+  assert.deepEqual(
+    collapsing.at(-1).cells.map((cell) => key(cell)),
+    collapsing[0].cells.map((cell) => key(cell)),
+    "so the collapse of this case moves nothing",
+  );
 });
 
 test("seek then play: playback continues from the scrubbed Move's own board", () => {
