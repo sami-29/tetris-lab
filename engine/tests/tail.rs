@@ -8,7 +8,7 @@
 
 use engine::evaluator::shipped;
 use engine::generator::generate_game;
-use engine::search::{solve, SolveConfig, Status};
+use engine::search::{solve, Feature, SolveConfig, Status, Toggles};
 
 mod common;
 use common::{data_lines, replay};
@@ -188,6 +188,12 @@ fn the_tail_never_changes_a_result_the_beam_reaches() {
             tail.evaluations,
             beam.evaluations
         );
+        assert!(
+            !tail.tail_truncated,
+            "seed {seed} at goal {goal}, width {width}: the Tail's frontier cap bound,\n\
+             so this game was searched approximately. Either the cap is too small\n\
+             or the committed set needs a narrower width."
+        );
         if tail.won {
             assert_eq!(
                 replay(&game.board, game.sequence.as_slice(), &tail.moves),
@@ -197,4 +203,101 @@ fn the_tail_never_changes_a_result_the_beam_reaches() {
         }
     }
     assert!(seen >= 16, "the committed Seed set is not empty ({seen} seeds)");
+}
+
+// ── one place decides the three search decisions ───────────────────────
+
+/// Ticket 04: "Dedup, the No-suicide rule and the Tail search are each
+/// independently switchable from one place, so an Ablation is a configuration
+/// change and not a second engine build."
+///
+/// The shipped row is constructed in exactly one place, and taking one feature
+/// off it leaves the other two alone: a sweep of §9.4's ladder is
+/// `Toggles::SHIPPED.without(feature)` for `feature` in `FEATURES`.
+#[test]
+fn the_three_search_decisions_are_switchable_from_one_place() {
+    assert_eq!(
+        Toggles::SHIPPED,
+        Toggles {
+            dedup: true,
+            no_suicide: true,
+            tail: true,
+        },
+        "the shipped row has every decision on"
+    );
+    assert_eq!(
+        SolveConfig::new(8, 25).toggles,
+        Toggles::SHIPPED,
+        "a SolveConfig is shipped behaviour unless it says otherwise"
+    );
+
+    // One feature off, two untouched -- each of them, on its own.
+    let no_dedup = Toggles::SHIPPED.without(Feature::Dedup);
+    assert_eq!((no_dedup.dedup, no_dedup.no_suicide, no_dedup.tail), (false, true, true));
+    let no_suicide = Toggles::SHIPPED.without(Feature::NoSuicide);
+    assert_eq!((no_suicide.dedup, no_suicide.no_suicide, no_suicide.tail), (true, false, true));
+    let no_tail = Toggles::SHIPPED.without(Feature::Tail);
+    assert_eq!((no_tail.dedup, no_tail.no_suicide, no_tail.tail), (true, true, false));
+
+    // All off is reachable from the same place, and is the ladder's worst row.
+    let mut all_off = Toggles::SHIPPED;
+    for feature in [Feature::Dedup, Feature::NoSuicide, Feature::Tail] {
+        all_off = all_off.without(feature);
+    }
+    assert_eq!((all_off.dedup, all_off.no_suicide, all_off.tail), (false, false, false));
+}
+
+/// Each switch acts on the search, not just on the config: the four rows §9.4
+/// compares are four `SolveConfig`s over the same game, and all of them are
+/// Solves, not errors.
+#[test]
+fn every_ablation_row_still_solves() {
+    // Seed 42 is won by the beam alone, so its outcome cannot depend on the Tail;
+    // seed 453 needs the Tail, which is what makes the Tail row visible.
+    let won_by_beam = generate_game(42, 40, 7).expect("seed 42 in domain");
+    let needs_tail = generate_game(453, 40, 7).expect("seed 453 in domain");
+
+    let mut rows: Vec<(&str, SolveConfig)> = vec![("shipped", SolveConfig::new(8, 25))];
+    for feature in [Feature::Dedup, Feature::NoSuicide, Feature::Tail] {
+        let name = match feature {
+            Feature::Dedup => "dedup off",
+            Feature::NoSuicide => "no-suicide off",
+            Feature::Tail => "tail off",
+        };
+        let mut cfg = SolveConfig::new(8, 25);
+        cfg.toggles = Toggles::SHIPPED.without(feature);
+        rows.push((name, cfg));
+    }
+
+    for (name, cfg) in &rows {
+        let result = solve(
+            &won_by_beam.board,
+            won_by_beam.sequence.as_slice(),
+            cfg,
+            shipped(),
+        );
+        assert_eq!(result.status, Status::Ok, "row {name} must solve, not fail");
+        assert!(result.won, "row {name}: seed 42 is won by the beam alone");
+        assert_eq!(result.lines, 8, "row {name}: same Lines cleared");
+    }
+
+    // The Tail is the one switch that decides this Seed: on wins, off loses.
+    let on = solve(
+        &needs_tail.board,
+        needs_tail.sequence.as_slice(),
+        &rows[0].1,
+        shipped(),
+    );
+    let off_row = rows
+        .iter()
+        .find(|(name, _)| *name == "tail off")
+        .expect("the tail-off row");
+    let off = solve(
+        &needs_tail.board,
+        needs_tail.sequence.as_slice(),
+        &off_row.1,
+        shipped(),
+    );
+    assert!(on.won, "seed 453 with the Tail on");
+    assert!(!off.won, "seed 453 with the Tail off");
 }
