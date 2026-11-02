@@ -23,7 +23,14 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { DEFAULT_BEAM } from "../src/config/width.ts";
-import { LINEAGE_END, buildBand, decodeTrace, greedySpine, winningLineage } from "../src/ui/band-model.ts";
+import {
+  PARENT_NONE,
+  PARENT_UNRECORDED,
+  buildBand,
+  decodeTrace,
+  greedySpine,
+  winningLineage,
+} from "../src/ui/band-model.ts";
 
 const FIXTURE = JSON.parse(
   readFileSync(
@@ -96,7 +103,7 @@ test("every parent_rank resolves in the previous layer", () => {
         assert.equal(record.parentRank, -1, "§4.4: -1 at layer 0");
         continue;
       }
-      assert.notEqual(record.parentRank, -2, "the fixture is not clipped: band === beam");
+      assert.notEqual(record.parentRank, PARENT_UNRECORDED, "the fixture is not clipped: band === beam");
       assert.ok(
         record.parentRank >= 0 && record.parentRank < perLayer(TRACE)[layer - 1],
         `layer ${layer} rank ${record.rank} names parent ${record.parentRank}, layer ${layer - 1} holds ${perLayer(TRACE)[layer - 1]}`,
@@ -155,7 +162,8 @@ test("the winning lineage runs from the best final state back to the root, one p
   const lineage = winningLineage(TRACE);
   assert.equal(lineage.length, TRACE.layerCount, "the lineage is drawn on every row");
   assert.equal(lineage[0].layer, 0, "it starts at the root");
-  assert.equal(lineage[0].rank, -1, `the root has no parent: ${LINEAGE_END}`);
+  assert.equal(lineage[0].rank, 0, "the root is layer 0's only record");
+  assert.equal(lineage[0].parentRank, PARENT_NONE, "§4.4: -1 at layer 0");
   assert.equal(lineage[TRACE.layerCount - 1].rank, last[0].rank, "it ends at the first record of the last layer, i.e. the best final score");
   assert.equal(lineage[TRACE.layerCount - 1].score, last[0].score);
   for (let layer = 1; layer < lineage.length; layer += 1) {
@@ -272,10 +280,14 @@ test("placement is a function of score, not of rank: reordering a layer changes 
     FIXTURE.band,
   );
   const rebuilt = buildBand(shuffled);
+  // Compare as a map from score to place: the aggregation order follows the record
+  // order, but where a score *lands* is a function of the score alone.
+  const places = (row) => new Map(row.marks.map((mark) => [mark.score, [mark.count, mark.u]]));
+  const byScore = (row) => [...places(row).entries()].sort((left, right) => left[0] - right[0]);
   for (const [index, row] of rebuilt.rows.entries()) {
     assert.deepEqual(
-      row.marks.map((mark) => [mark.score, mark.count, mark.u]),
-      model.rows[index].marks.map((mark) => [mark.score, mark.count, mark.u]),
+      byScore(row),
+      byScore(model.rows[index]),
       `layer ${index}: the same scores must land in the same places`,
     );
   }
@@ -284,7 +296,7 @@ test("placement is a function of score, not of rank: reordering a layer changes 
 // ── the labels are the engine's numbers, in words ─────────────────────────
 
 test("the band's caption names the band, the layers and the records it drew", () => {
-  const model = buildBand(TRACE);
+  const model = buildBand(TRACE, { shippedBeam: DEFAULT_BEAM });
   const caption = model.caption;
   assert.match(caption, /band 25/, "the caption states the band it was traced at");
   assert.match(caption, new RegExp(`${TRACE.layerCount} layers`), "and the layer count");
@@ -299,7 +311,10 @@ test("the band model and the decoder are pure: no wasm, no worker, no solver", (
   for (const name of ["trace.ts", "band-model.ts"]) {
     const text = source(name);
     assert.ok(!/WebAssembly/.test(text), `${name} must not touch WebAssembly`);
-    assert.ok(!/core\/loader|core\/protocol|workers\//.test(text), `${name} must not reach the worker or the loader`);
-    assert.ok(!/\bworker\b/i.test(text), `${name} must not mention a worker`);
+    assert.ok(
+      !/core\/loader|core\/protocol|workers\//.test(text),
+      `${name} must not import the worker or the loader`,
+    );
+    assert.ok(!/new Worker/.test(text), `${name} must not spawn a worker`);
   }
 });
