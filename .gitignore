@@ -3,3 +3,34 @@ __pycache__/
 tetris_solver.db
 winnable_games.csv
 log.txt
+
+# AI agent / scratch (local only)
+.scratch/
+docs/agents/
+AGENTS.md
+CLAUDE.md
+.pi/
+.claude/
+.cursor/
+.aider*
+GLOSSARY.md
+!/GLOSSARY.md
+GLOSSARY-MAP.md
+CONTEXT.md
+CONTEXT-MAP.md
+
+# ticket 06 spike build output and measurements (regenerate with prototype/run-bench.sh)
+prototype/rs/target/
+prototype/artifacts/
+prototype/cpp/*.exe
+prototype/data/
+
+# ticket 09 host probe: build output, local wrangler state, captured URLs
+host-probe/dist/
+host-probe/node_modules/
+host-probe/.wrangler/
+host-probe/rs/target/
+host-probe/.env
+host-probe/dev.log
+host-probe/probe-dom.html
+host-probe/.chrome-profile/

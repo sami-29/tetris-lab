@@ -1,0 +1,1317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tetris Lab — look prototype (ticket 10)</title>
+<!--
+  THROWAWAY. Ticket 10 of .scratch/browser-tetris-lab/map.md: "how should the Lab look?"
+  Round 2 after the operator rejected the A/B/C shells: workbench direction, no page scroll,
+  dense, real SVG, motion, tooltips, nothing unexplained.
+  Canned data, honest playback: the board really plays a 16-wide-beam solve of the canned game.
+  Everything else (run table, layer numbers, tree population) is fabricated for the mockup.
+-->
+<style>
+:root{
+  --bg:#0e1012; --panel:#15181b; --panel2:#191d21; --line:#23282d; --line2:#2c3238;
+  --ink:#c6ccd3; --ink2:#8b959f; --ink3:#5e6873; --ink4:#454e57;
+  --amber:#e0a33e; --amber-dim:#8a6524;
+  --teal:#3d8f8a; --teal2:#5fc0b8;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:ui-sans-serif,system-ui,"Segoe UI",Inter,Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--ink);font:12px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+#app{display:grid;height:100vh;
+  grid-template-columns:236px minmax(0,1fr) 326px;
+  grid-template-rows:42px minmax(0,1fr) 24px;
+  grid-template-areas:"bar bar bar" "rail stage inspect" "status status status"}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:1px solid var(--amber);outline-offset:2px}
+input[type=range]{-webkit-appearance:none;appearance:none;background:transparent;width:100%;height:14px;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--line2);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:9px;height:14px;margin-top:-6px;border-radius:1px;
+  background:var(--amber);border:1px solid #3a2c12}
+input[type=range]:hover::-webkit-slider-thumb{background:#f0b659}
+svg{display:block}
+.num{font:11px var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* ---------- toolbar ---------- */
+.bar{grid-area:bar;display:flex;align-items:center;gap:0;border-bottom:1px solid var(--line);background:#101315}
+.brand{display:flex;align-items:center;gap:8px;padding:0 14px 0 12px;height:100%;border-right:1px solid var(--line)}
+.brand b{font:600 12px/1 var(--sans);letter-spacing:.02em;color:#e8edf2}
+.brand span{font:400 10px/1 var(--mono);letter-spacing:.14em;color:var(--ink4);text-transform:uppercase}
+.fields{display:flex;align-items:stretch;height:100%}
+.field{display:flex;flex-direction:column;justify-content:center;gap:1px;padding:0 12px;border-right:1px solid var(--line);
+  transition:background .12s}
+.field:hover{background:#171b1f}
+.field label{font:500 9px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink4)}
+.field input{font:12px/1.2 var(--mono);color:#e2e8ee;background:none;border:0;padding:0;width:56px;outline:none}
+.field input:focus{color:var(--amber)}
+.baractions{margin-left:auto;display:flex;align-items:center;height:100%}
+.tbtn{display:flex;align-items:center;gap:6px;height:100%;padding:0 14px;border-left:1px solid var(--line);
+  font:500 11px/1 var(--sans);color:var(--ink2);transition:background .12s,color .12s;position:relative}
+.tbtn:hover{background:#171b1f;color:#e6ecf2}
+.tbtn.go{color:#0f1214;background:var(--amber);font-weight:600}
+.tbtn.go:hover{background:#f0b659;color:#0f1214}
+.clock{display:flex;align-items:center;gap:7px;height:100%;padding:0 14px;border-left:1px solid var(--line);
+  font:11px var(--mono);color:var(--ink2)}
+.dot{width:5px;height:5px;border-radius:50%;background:var(--teal2);box-shadow:0 0 0 0 #5fc0b855;animation:pulse 2.4s ease-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 #5fc0b866}70%{box-shadow:0 0 0 5px #5fc0b800}100%{box-shadow:0 0 0 0 #5fc0b800}}
+
+/* ---------- panels ---------- */
+.panel{border:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.phead{display:flex;align-items:center;gap:8px;padding:0 9px;height:26px;flex:0 0 26px;
+  border-bottom:1px solid var(--line);background:linear-gradient(#171b1f,#141820)}
+.phead .t{font:600 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.phead .s{font:10px var(--mono);color:var(--ink4)}
+.phead .sp{margin-left:auto;display:flex;align-items:center;gap:6px}
+.icobtn{width:18px;height:18px;display:grid;place-items:center;border:1px solid transparent;border-radius:2px;color:var(--ink3)}
+.icobtn:hover{color:var(--ink);border-color:var(--line2);background:#1d2227}
+.icobtn[aria-pressed=true]{color:var(--amber);border-color:#3a2c12;background:#221a0d}
+
+/* ---------- rail ---------- */
+.rail{grid-area:rail;display:flex;flex-direction:column;gap:1px;background:var(--line);border-right:1px solid var(--line);min-height:0}
+.rail .panel{border:0;border-bottom:1px solid var(--line)}
+.presets{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);padding:0}
+.presets button{background:var(--panel2);padding:6px 0;font:500 11px/1 var(--sans);color:var(--ink2);transition:background .12s,color .12s}
+.presets button:hover{background:#1f242a;color:var(--ink)}
+.presets button[aria-pressed=true]{background:#26200f;color:var(--amber);box-shadow:inset 0 -1px 0 var(--amber)}
+.sliders{padding:8px 9px 9px;display:grid;gap:9px}
+.sl{display:grid;grid-template-columns:1fr auto;align-items:center;gap:2px 6px}
+.sl label{grid-column:1;font:11px/1 var(--sans);color:var(--ink2)}
+.sl output{grid-column:2;font:11px/1 var(--mono);color:#dbe2e9;font-variant-numeric:tabular-nums}
+.sl input{grid-column:1/-1}
+.expert{font:9px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink4);cursor:pointer;padding:1px 4px;border:1px solid var(--line2);border-radius:2px}
+.expert[aria-expanded=true]{color:var(--amber);border-color:#3a2c12}
+.solvebar{padding:9px}
+.primary{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;
+  background:var(--amber);color:#14100a;font:600 12px/1 var(--sans);letter-spacing:.02em;padding:9px 0;border-radius:2px;
+  transition:background .12s}
+.primary:hover{background:#f0b659}
+.dtable{width:100%;border-collapse:collapse;font:11px var(--mono);font-variant-numeric:tabular-nums}
+.dtable th{font:500 9px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink4);text-align:right;padding:0 9px 5px}
+.dtable th:first-child{text-align:left}
+.dtable td{padding:3px 9px;border-top:1px solid var(--line);color:var(--ink2)}
+.dtable td:first-child{color:var(--ink3)}
+.dtable td+td{text-align:right;color:#dbe2e9}
+.dtable td.hl{color:var(--teal2)}
+.dtable tr:last-child td{border-bottom:1px solid var(--line)}
+.refnote{padding:7px 9px 8px;font:10.5px/1.45 var(--sans);color:var(--ink4)}
+.refnote b{color:var(--ink2);font-weight:500}
+
+/* ---------- stage ---------- */
+.stage{grid-area:stage;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:1px;background:var(--line);padding:1px;min-height:0;overflow:hidden}
+.boardpanel{background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.boardbody{flex:1;display:grid;grid-template-columns:30px minmax(0,1fr) 272px;gap:8px;min-height:0;padding:8px;overflow:hidden}
+.cvwrap{display:grid;place-items:center;min-height:0;min-width:0}
+#board{display:block;background:#0c0e10;border:1px solid var(--line2);border-radius:2px}
+.gutter{display:flex;flex-direction:column;justify-content:space-between;text-align:right;padding:2px 0;
+  font:9.5px/1 var(--mono);color:var(--ink4);pointer-events:none}
+.readout{min-width:0;display:flex;flex-direction:column;border-left:1px solid var(--line);padding-left:12px;overflow:hidden}
+.ro-sec{font:600 9px/1 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--ink4);margin:11px 0 6px}
+.ro-sec:first-child{margin-top:0}
+.ro-row{display:grid;grid-template-columns:92px minmax(0,1fr) 46px;align-items:center;gap:8px;font:10.5px var(--mono);color:var(--ink3);margin-bottom:5px}
+.ro-row .b{height:3px;background:#22282e;border-radius:1px;overflow:hidden}
+.ro-row .b i{display:block;height:100%;background:var(--teal);transition:width .22s cubic-bezier(.25,.7,.3,1)}
+.ro-row b{text-align:right;color:var(--ink);font-weight:400;font-variant-numeric:tabular-nums}
+.ro-total{display:flex;justify-content:space-between;border-top:1px solid var(--line);margin-top:3px;padding-top:6px;
+  font:11px var(--mono);color:var(--ink2)}
+.ro-total b{color:var(--amber);font-weight:500;font-variant-numeric:tabular-nums}
+.cols{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;height:116px;align-items:end}
+.cols .c{height:100%;display:flex;flex-direction:column;justify-content:flex-end;gap:1px}
+.cols .c i{background:#2f5a66;border-radius:1px;transition:height .2s cubic-bezier(.25,.7,.3,1)}
+.cols .c u{height:2px;background:var(--amber);border-radius:1px}
+.caps{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;font:8.5px/1 var(--mono);color:var(--ink4);text-align:center;margin-top:3px}
+.place{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 10px;font:10.5px/1.5 var(--mono);color:var(--ink3)}
+.place b{color:var(--ink);font-weight:400;text-align:right}
+.nxt{display:flex;align-items:center;gap:10px;font:10.5px var(--mono);color:var(--ink3)}
+.nxt .seq{display:flex;align-items:center;gap:8px;padding:5px 7px;border:1px solid var(--line);border-radius:2px;background:#121619}
+.ro-layer{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font:10.5px/1.6 var(--mono);color:var(--ink3)}
+.ro-layer b{color:var(--ink);font-weight:400;text-align:right;font-variant-numeric:tabular-nums}
+.ro-spacer{flex:1;min-height:6px}
+.spark{height:54px}
+.spark svg{width:100%;height:100%;overflow:visible}
+@keyframes treeIn{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+.stagepanel{background:var(--panel);display:flex;flex-direction:column}
+.strip{display:grid;grid-template-columns:repeat(40,1fr);gap:1px;background:var(--line);padding:0}
+.stip{background:var(--panel2);height:34px;display:grid;place-items:center;position:relative;
+  transition:background .1s}
+.stip:hover{background:#20262c}
+.stip[aria-current=true]{background:#2a2210;box-shadow:inset 0 -2px 0 var(--amber)}
+.stip .clr{position:absolute;left:0;right:0;bottom:0;height:2px;background:transparent}
+.stip .clr.on{background:var(--amber)}
+.stip svg{opacity:.72}
+.stip[aria-current=true] svg{opacity:1}
+.transport{display:flex;align-items:center;gap:10px;padding:8px 10px;border-top:1px solid var(--line)}
+.transport .t{width:22px;height:22px;display:grid;place-items:center;border:1px solid var(--line2);border-radius:2px;color:var(--ink2);transition:all .12s}
+.transport .t:hover{color:#eaf0f6;border-color:#3b444d;background:#1d2227}
+.transport .t.play{width:26px;height:26px;color:#14100a;background:var(--amber);border-color:#3a2c12}
+.transport .t.play:hover{background:#f0b659}
+.seek{flex:1;position:relative;height:22px;display:flex;align-items:center}
+.seek input{position:relative;z-index:2}
+.seek .ticks{position:absolute;inset:auto 0 9px 0;height:2px;display:flex;gap:0}
+.seek .ticks i{flex:1;background:#22282e}
+.seek .ticks i.on{background:var(--amber-dim)}
+.seek .ticks i.c{background:var(--amber)}
+.tframe{font:11px var(--mono);color:var(--ink2);font-variant-numeric:tabular-nums;min-width:56px;text-align:right}
+.spd{display:flex;align-items:center;gap:3px;border:1px solid var(--line2);border-radius:2px;padding:1px 2px}
+.spd button{font:10px/1 var(--mono);color:var(--ink3);padding:3px 5px;border-radius:1px}
+.spd button[aria-pressed=true]{background:#26200f;color:var(--amber)}
+.spd button:hover{color:var(--ink)}
+
+/* ---------- inspect ---------- */
+.inspect{grid-area:inspect;display:flex;flex-direction:column;gap:1px;background:var(--line);border-left:1px solid var(--line);min-height:0}
+.inspect .panel{border:0;border-bottom:1px solid var(--line)}
+.tree{flex:1;min-height:0;overflow:hidden;cursor:grab;position:relative;background:
+  radial-gradient(120% 90% at 50% 0%,#171c21,#12151700)}
+.tree svg{position:absolute;top:0;left:0}
+.tree .lbl{pointer-events:none}
+.legend{display:flex;gap:10px;align-items:center;padding:5px 9px;border-top:1px solid var(--line);font:10px var(--mono);color:var(--ink4)}
+.legend i{width:5px;height:5px;border-radius:50%;display:inline-block;margin-right:4px}
+.layers{flex:1;min-height:0;overflow:auto;-webkit-mask-image:linear-gradient(to bottom,#000 0,#000 calc(100% - 16px),transparent 100%);
+  mask-image:linear-gradient(to bottom,#000 0,#000 calc(100% - 16px),transparent 100%)}
+.lrow{display:grid;grid-template-columns:26px 22px minmax(0,1fr) 46px 30px;align-items:center;gap:6px;
+  padding:2px 9px;border-bottom:1px solid #1b2024;font:11px var(--mono);color:var(--ink3);font-variant-numeric:tabular-nums;
+  transition:background .1s}
+.lrow:hover{background:#191e23}
+.lrow[aria-current=true]{background:#221d10;color:#e6dcc4}
+.lrow .sc{text-align:right;color:var(--ink2)}
+.lrow .ln{text-align:right;color:var(--teal2)}
+.bar-mini{height:3px;background:#22282e;border-radius:1px;overflow:hidden}
+.bar-mini i{display:block;height:100%;background:var(--teal);width:0}
+.log{list-style:none;margin:0;padding:6px 9px;font:10.5px/1.7 var(--mono);color:var(--ink3);max-height:96px;overflow:auto}
+.log li{display:flex;gap:7px}
+.log li time{color:var(--ink4)}
+.log li.cur{color:#f0d9a8}
+
+/* ---------- status bar ---------- */
+.status{grid-area:status;display:flex;align-items:center;gap:0;border-top:1px solid var(--line);background:#101315;
+  font:10.5px var(--mono);color:var(--ink4);overflow:hidden;white-space:nowrap}
+.status span{display:flex;align-items:center;gap:5px;padding:0 11px;height:100%;border-right:1px solid var(--line)}
+.status b{color:var(--ink2);font-weight:500}
+.status .right{margin-left:auto;border:0;gap:14px;padding-right:12px}
+.kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:2px;padding:0 4px;color:var(--ink3);font-size:9.5px}
+
+/* ---------- tooltips ---------- */
+[data-tip]{position:relative}
+[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);
+  background:#080a0b;border:1px solid var(--line2);color:#dde4ea;font:500 10.5px/1.35 var(--sans);letter-spacing:0;
+  padding:4px 7px;border-radius:2px;white-space:nowrap;z-index:60;pointer-events:none;
+  box-shadow:0 6px 18px #00000066;animation:tipIn .12s ease-out}
+[data-tip-pos=right]:hover::after{left:auto;right:0;transform:none}
+@keyframes tipIn{from{opacity:0;transform:translateX(-50%) translateY(2px)}to{opacity:1;transform:translateX(-50%)}}
+
+/* ---------- explainer drawer ---------- */
+.scrim{position:fixed;inset:0;background:#05060799;opacity:0;pointer-events:none;transition:opacity .22s ease;z-index:40}
+.scrim[data-open=true]{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:520px;background:#14181b;border-left:1px solid var(--line2);
+  transform:translateX(100%);transition:transform .28s cubic-bezier(.22,.61,.24,1);z-index:50;
+  display:flex;flex-direction:column;box-shadow:-24px 0 48px #00000055}
+.drawer[data-open=true]{transform:none}
+.dhead{display:flex;align-items:center;gap:8px;height:42px;padding:0 12px;border-bottom:1px solid var(--line);flex:0 0 42px}
+.dhead .t{font:600 10px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink2)}
+.dbody{padding:14px 16px;overflow:auto}
+.dbody h3{font:500 13px/1.3 var(--sans);color:#e6ecf2;margin:0 0 4px}
+.dbody h3:not(:first-child){margin-top:18px}
+.dbody p{font:12px/1.6 var(--sans);color:var(--ink2);margin:0 0 8px}
+.dbody .note{border-left:2px solid var(--amber-dim);padding-left:9px;color:var(--ink3);font-size:11.5px}
+.dbody code{font:11px var(--mono);color:var(--teal2);background:#1b2126;padding:1px 4px;border-radius:2px}
+
+/* motion */
+@keyframes layerIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@keyframes rowIn{from{opacity:0}to{opacity:1}}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- toolbar -->
+  <header class="bar">
+    <div class="brand">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+        <rect x="1" y="1" width="7" height="7" fill="#e0a33e"/>
+        <rect x="10" y="1" width="7" height="7" fill="#3d8f8a"/>
+        <rect x="1" y="10" width="7" height="7" fill="#3d8f8a"/>
+        <rect x="10" y="10" width="7" height="7" fill="#2b3238"/>
+      </svg>
+      <div><b>Tetris Lab</b><br><span>solver workbench</span></div>
+    </div>
+    <div class="fields">
+      <div class="field" data-tip="Seed of the piece sequence — every game in the dataset has one"><label>seed</label><input value="4821" inputmode="numeric"></div>
+      <div class="field" data-tip="Lines that count as a win for this solve"><label>goal</label><input value="8" inputmode="numeric"></div>
+      <div class="field" data-tip="Pieces in the sequence, drawn from a 7-bag"><label>pieces</label><input value="40" inputmode="numeric"></div>
+      <div class="field" data-tip="States kept per layer — narrower is cheaper and weaker"><label>beam</label><input value="200" inputmode="numeric"></div>
+    </div>
+    <div class="baractions">
+      <button class="tbtn" id="openDrawer" data-tip="How the search works (E)">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="6" cy="6" r="4.6"/><path d="M6 5.4v3.1"/><circle cx="6" cy="3.4" r=".6" fill="currentColor" stroke="none"/></svg>
+        How it works
+      </button>
+      <button class="tbtn" data-tip="Run all 1,000 seeded games in this tab">Run dataset</button>
+      <button class="tbtn go" data-tip="Solve this game (enter)">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M1 0l8 5-8 5z"/></svg>
+        Solve
+      </button>
+    </div>
+    <div class="clock"><span class="dot"></span><span id="clockText">solved · 8/8 · 16.6 ms</span></div>
+  </header>
+
+  <!-- left rail: the playground -->
+  <aside class="rail">
+    <section class="panel">
+      <div class="phead"><span class="t">playground</span><span class="s" id="presetName">flat</span></div>
+      <div class="presets" id="presets">
+        <button aria-pressed="true" data-tip="Empty board">flat</button>
+        <button aria-pressed="false" data-tip="Random holes in the bottom four rows">messy</button>
+        <button aria-pressed="false" data-tip="A 12-row tower in columns 3–7">tall stack</button>
+        <button aria-pressed="false" data-tip="Alternating 2 and 6 row columns">jagged</button>
+      </div>
+      <div class="sliders">
+        <div class="sl"><label for="s-seed">seed</label><output id="o-seed">4821</output>
+          <input id="s-seed" type="range" min="1" max="9999" value="4821" data-out="o-seed" data-fmt="int" data-tip="Changing the seed re-bags the sequence"></div>
+        <div class="sl"><label for="s-goal">goal</label><output id="o-goal">8</output>
+          <input id="s-goal" type="range" min="1" max="30" value="8" data-out="o-goal" data-fmt="int"></div>
+        <div class="sl"><label for="s-pieces">pieces</label><output id="o-pieces">40</output>
+          <input id="s-pieces" type="range" min="8" max="60" value="40" data-out="o-pieces" data-fmt="int"></div>
+        <div class="sl"><label for="s-height">starting height</label><output id="o-height">0</output>
+          <input id="s-height" type="range" min="0" max="18" value="0" data-out="o-height" data-fmt="int"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="phead"><span class="t">engine</span>
+        <span class="sp"><button class="expert" id="expert" aria-expanded="true" data-tip="Evaluator weights, fixed point">expert</button></span></div>
+      <div class="sliders" id="engineSliders">
+        <div class="sl"><label for="s-beam">beam width</label><output id="o-beam">200</output>
+          <input id="s-beam" type="range" min="10" max="800" value="200" data-out="o-beam" data-fmt="int"></div>
+        <div class="sl"><label for="s-hw">height ×</label><output id="o-hw">0.51</output>
+          <input id="s-hw" type="range" min="0" max="100" value="51" data-out="o-hw" data-fmt="f2"></div>
+        <div class="sl"><label for="s-ow">holes ×</label><output id="o-ow">3.20</output>
+          <input id="s-ow" type="range" min="0" max="800" value="320" data-out="o-ow" data-fmt="f2"></div>
+        <div class="sl"><label for="s-bw">bumpiness ×</label><output id="o-bw">0.18</output>
+          <input id="s-bw" type="range" min="0" max="100" value="18" data-out="o-bw" data-fmt="f2"></div>
+      </div>
+      <div class="solvebar"><button class="primary" data-tip="Search this game at the current settings">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M1 0l8 5-8 5z"/></svg> Solve this game</button></div>
+    </section>
+
+    <section class="panel" style="flex:1;min-height:0;overflow:auto">
+      <div class="phead"><span class="t">dataset run</span><span class="s">1,000 games</span></div>
+      <table class="dtable">
+        <tr><th></th><th>yours</th><th>reference</th></tr>
+        <tr><td>win rate</td><td class="hl">94.2%</td><td>96.1%</td></tr>
+        <tr><td>games won</td><td class="hl">942</td><td>961</td></tr>
+        <tr><td>median solve</td><td>0.94 ms</td><td>0.88 ms</td></tr>
+        <tr><td>evaluations</td><td>271.4 M</td><td>271.4 M</td></tr>
+        <tr><td>wall clock</td><td>16.6 s</td><td>16.1 s</td></tr>
+      </table>
+      <div class="refnote"><b>Reference run</b> — Rust native harness, Ryzen 5 5600, 2 Nov 2026. Same dataset, same beam, no GPU. Yours is measured in this tab.</div>
+    </section>
+  </aside>
+
+  <!-- centre: the board -->
+  <main class="stage">
+    <section class="boardpanel">
+      <div class="phead">
+        <span class="t">position</span>
+        <span class="s" id="posMeta">layer 1 / 22 · goal 8</span>
+        <span class="sp">
+          <span id="curPiece"></span>
+          <button class="icobtn" id="heatBtn" aria-pressed="false" data-tip="Evaluation heat: holes and height (H)">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.1">
+              <rect x="1" y="1" width="4" height="4"/><rect x="7" y="4" width="4" height="4"/><rect x="1" y="6" width="4" height="4"/>
+            </svg>
+          </button>
+          <button class="icobtn" id="restartBtn" data-tip="Replay from the first piece (R)">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.1">
+              <path d="M2.4 4.2A4.2 4.2 0 1 1 2 6.6"/><path d="M2 1.4v3.1h3.1"/>
+            </svg>
+          </button>
+        </span>
+      </div>
+      <div class="boardbody">
+        <div class="gutter"><span>0</span><span>5</span><span>10</span><span>15</span><span>19</span></div>
+        <div class="cvwrap"><canvas id="board" width="240" height="480"></canvas></div>
+        <div class="readout">
+          <div class="ro-sec">what the evaluator sees</div>
+          <div id="roRows"></div>
+          <div class="ro-total"><span>position score</span><b id="roScore">—</b></div>
+          <div class="ro-sec">column profile</div>
+          <div class="cols" id="colProfile"></div>
+          <div class="caps" id="colCaps"></div>
+          <div class="ro-sec">this placement</div>
+          <div class="place" id="placeInfo"></div>
+          <div class="ro-sec">next in sequence</div>
+          <div class="nxt" id="nextPiece"></div>
+          <div class="ro-sec">score across layers</div>
+          <div class="spark" id="spark"></div>
+          <div class="ro-sec">this layer</div>
+          <div class="ro-layer" id="layerInfo"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="stagepanel">
+      <div class="phead"><span class="t">moves</span><span class="s" id="moveMeta">40 pieces</span>
+        <span class="sp"><span class="s">click to seek</span></span></div>
+      <div class="strip" id="strip"></div>
+      <div class="transport">
+        <button class="t" id="prevBtn" data-tip="Previous piece (←)">
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="currentColor"><path d="M2 1h1.6v9H2zM9.4 1L3.9 5.5l5.5 4.5z"/></svg>
+        </button>
+        <button class="t play" id="playBtn" data-tip="Play / pause (space)">
+          <svg width="11" height="12" viewBox="0 0 11 12" fill="currentColor" id="playIcon"><path d="M0 0l11 6L0 12z"/></svg>
+        </button>
+        <button class="t" id="nextBtn" data-tip="Next piece (→)">
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="currentColor"><path d="M7.4 1h1.6v9H7.4zM1.6 1l5.5 4.5L1.6 10z"/></svg>
+        </button>
+        <div class="seek">
+          <div class="ticks" id="ticks"></div>
+          <input id="seek" type="range" min="1" max="22" value="1" data-tip="Scrub through the solve">
+        </div>
+        <span class="tframe" id="frameTxt">1 / 22</span>
+        <div class="spd" id="speed">
+          <button aria-pressed="false" data-tip="Half speed">.5×</button>
+          <button aria-pressed="true" data-tip="Measured pace">1×</button>
+          <button aria-pressed="false" data-tip="Fast">2×</button>
+          <button aria-pressed="false" data-tip="Faster">4×</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- right: inspector -->
+  <aside class="inspect">
+    <section class="panel" style="flex:0 0 300px">
+      <div class="phead"><span class="t">search tree</span><span class="s">8 of 22 layers</span>
+        <span class="sp"><span class="s">drag · scroll</span></span></div>
+      <div class="tree" id="tree"></div>
+      <div class="legend">
+        <span><i style="background:#e0a33e"></i>high score</span>
+        <span><i style="background:#3d8f8a"></i>low score</span>
+        <span id="treeCount" style="margin-left:auto">—</span>
+      </div>
+    </section>
+    <section class="panel" style="flex:1;min-height:0">
+      <div class="phead"><span class="t">layers</span><span class="s" id="layerCount"></span>
+        <span class="sp"><span class="s">score · clears</span></span></div>
+      <div class="layers" id="layers"></div>
+    </section>
+    <section class="panel" style="flex:0 0 auto">
+      <div class="phead"><span class="t">log</span></div>
+      <ul class="log" id="log">
+        <li><time>+0.0</time><span>worker 1 spawned · wasm 63 KB</span></li>
+        <li><time>+0.4</time><span>abi_version = 1</span></li>
+        <li><time>+0.4</time><span>solve(seed 4821, goal 8, pieces 40, beam 200)</span></li>
+        <li class="cur" id="logSolved"><time id="logT">+16.6</time><span>solved · 8 lines · 22 layers</span></li>
+      </ul>
+    </section>
+  </aside>
+
+  <!-- status -->
+  <footer class="status">
+    <span>evaluations <b id="st-evals">0</b></span>
+    <span>layers <b id="st-layers">0</b></span>
+    <span>lines <b id="st-lines">0</b>/8</span>
+    <span>elapsed <b id="st-ms">0 ms</b></span>
+    <span class="right">
+      <span style="padding:0"><span class="kbd">space</span> play</span>
+      <span style="padding:0"><span class="kbd">←</span><span class="kbd">→</span> step</span>
+      <span style="padding:0"><span class="kbd">H</span> heat</span>
+      <span style="padding:0"><span class="kbd">E</span> explainer</span>
+      <span style="padding:0;color:var(--ink4)">prototype · ticket 10</span>
+    </span>
+  </footer>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer">
+  <div class="dhead">
+    <span class="t">how the search works</span>
+    <span class="sp" style="margin-left:auto">
+      <button class="icobtn" id="closeDrawer" data-tip="Close (esc)">
+        <svg width="11" height="11" viewBox="0 0 11 11" stroke="currentColor" stroke-width="1.3"><path d="M1 1l9 9M10 1l-9 9"/></svg>
+      </button>
+    </span>
+  </div>
+  <div class="dbody">
+    <h3>The board is forty bytes</h3>
+    <p>Ten columns, one 32-bit word each, bit zero at the bottom row. Collision, dropping and line clearing are shifts and masks. The evaluator walks columns, never cells — which is why it scores millions of boards a second.</p>
+    <p class="note">The gutter on the right of the board reads straight off those words: height, holes, and the evaluator's score for the position you are looking at.</p>
+
+    <h3>A beam, layer by layer, deduplicated</h3>
+    <p>Each piece in the sequence is one layer. Every surviving board expands into every legal placement; identical boards inside a layer collapse to the one that cleared more lines; the best <code>beam</code> states survive. The layer table on the right shows, per layer, what came in and what was kept.</p>
+    <p class="note">The last three pieces are searched exactly. At that depth a beam buys nothing and costs solutions.</p>
+
+    <h3>Fixed-point scoring, so numbers compare</h3>
+    <p>Height, holes, transitions and wells are integers with fixed-point weights, so native and WebAssembly arrive at identical scores for identical boards. That is the only reason the reference run on the left can sit beside your own run without a correction factor.</p>
+    <p class="note">Every figure in this page is produced by a run in this tab, except the reference run — which names the machine, the date and the runtime it came from.</p>
+
+    <h3>What the tree is showing you</h3>
+    <p>Two hundred boards survive each layer and the rest are discarded. The tree draws each surviving board as a node, edges as the placement that produced it, colour as score. Drag to pan, scroll to zoom. The question it exists to answer is whether a full tree at width 200 is legible at all.</p>
+  </div>
+</aside>
+
+<script>
+/* ------------------------------------------------------------------
+   canned game
+   ------------------------------------------------------------------ */
+const SHAPES = {
+  I: [[0,1],[1,1],[2,1],[3,1]],
+  O: [[1,0],[2,0],[1,1],[2,1]],
+  T: [[0,1],[1,1],[2,1],[1,2]],
+  S: [[1,1],[2,1],[0,2],[1,2]],
+  Z: [[0,1],[1,1],[1,2],[2,2]],
+  J: [[0,1],[1,1],[2,1],[0,2]],
+  L: [[0,1],[1,1],[2,1],[2,2]],
+};
+
+function rotCells(cells, k) {
+  let c = cells.map(function (p) { return [p[0], p[1]]; });
+  const n = ((k % 4) + 4) % 4;
+  for (let i = 0; i < n; i++) {
+    const maxR = Math.max.apply(null, c.map(function (p) { return p[0]; }));
+    c = c.map(function (p) { return [p[1], maxR - p[0]]; });
+    const minR = Math.min.apply(null, c.map(function (p) { return p[0]; }));
+    const minC = Math.min.apply(null, c.map(function (p) { return p[1]; }));
+    c = c.map(function (p) { return [p[0] - minR, p[1] - minC]; });
+  }
+  return c;
+}
+
+function findDrop(board, cells, x) {
+  const w = Math.max.apply(null, cells.map(function (p) { return p[1]; })) + 1;
+  if (x < 0 || x + w > 10) return null;
+  let y = 99;
+  for (let i = 0; i < cells.length; i++) {
+    const r = cells[i][0], col = x + cells[i][1];
+    let firstFilled = 20;
+    for (let rr = 0; rr < 20; rr++) if (board[rr][col]) { firstFilled = rr; break; }
+    y = Math.min(y, firstFilled - 1 - r);
+  }
+  for (let i = 0; i < cells.length; i++) {
+    const rr = y + cells[i][0], cc = x + cells[i][1];
+    if (rr < 0 || rr > 19 || cc < 0 || cc > 9 || board[rr][cc]) return null;
+  }
+  return y;
+}
+
+function applyPiece(board, cells, x, y) {
+  const b = board.map(function (r) { return r.slice(); });
+  for (let i = 0; i < cells.length; i++) b[y + cells[i][0]][x + cells[i][1]] = 1;
+  const kept = b.filter(function (row) { return row.some(function (v) { return !v; }); });
+  const cleared = 20 - kept.length;
+  const out = [];
+  for (let i = 0; i < cleared; i++) out.push([0,0,0,0,0,0,0,0,0,0]);
+  return { board: out.concat(kept), cleared: cleared };
+}
+
+function evalBoard(b) {
+  const heights = [];
+  for (let c = 0; c < 10; c++) {
+    let h = 0;
+    for (let r = 0; r < 20; r++) if (b[r][c]) { h = 20 - r; break; }
+    heights.push(h);
+  }
+  let holes = 0;
+  for (let c = 0; c < 10; c++) {
+    let seen = false;
+    for (let r = 0; r < 20; r++) {
+      if (b[r][c]) seen = true;
+      else if (seen) holes++;
+    }
+  }
+  let bump = 0;
+  for (let c = 0; c < 9; c++) bump += Math.abs(heights[c] - heights[c + 1]);
+  const agg = heights.reduce(function (a, v) { return a + v; }, 0);
+  return -(0.51 * agg + 3.2 * holes + 0.18 * bump);
+}
+
+function emptyBoard() {
+  const b = [];
+  for (let r = 0; r < 20; r++) b.push([0,0,0,0,0,0,0,0,0,0]);
+  return b;
+}
+
+function boardKey(b) {
+  let k = '';
+  for (let r = 0; r < 20; r++) k += b[r].join('') + '|';
+  return k;
+}
+
+function buildGame(nPieces, beamW, goal) {
+  beamW = beamW || 16;
+  goal = goal || 8;
+  let s = 20261102;
+  function rnd() { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; }
+  const letters = 'IOTSZJL'.split('');
+  const seq = [];
+  while (seq.length < nPieces) {
+    const bag = letters.slice();
+    for (let i = bag.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      const t = bag[i]; bag[i] = bag[j]; bag[j] = t;
+    }
+    for (let i = 0; i < bag.length && seq.length < nPieces; i++) seq.push(bag[i]);
+  }
+
+  let states = [{ boards: [emptyBoard()], moves: [], lines: 0 }];
+  let evals = 0;
+  for (let i = 0; i < seq.length; i++) {
+    const p = seq[i];
+    const next = [];
+    for (let si = 0; si < states.length; si++) {
+      const st = states[si];
+      const board = st.boards[st.boards.length - 1];
+      for (let k = 0; k < 4; k++) {
+        const cells = rotCells(SHAPES[p], k);
+        const w = Math.max.apply(null, cells.map(function (q) { return q[1]; })) + 1;
+        for (let x = 0; x + w <= 10; x++) {
+          evals++;
+          const y = findDrop(board, cells, x);
+          if (y === null) continue;
+          const res = applyPiece(board, cells, x, y);
+          next.push({
+            st: st, cells: cells, x: x, y: y, res: res,
+            score: evalBoard(res.board) + res.cleared * 26,
+            key: boardKey(res.board),
+          });
+        }
+      }
+    }
+    if (!next.length) break;
+    next.sort(function (a, b) { return b.score - a.score; });
+    const seen = Object.create(null);
+    const kept = [];
+    for (let i2 = 0; i2 < next.length && kept.length < beamW; i2++) {
+      const cand = next[i2];
+      if (seen[cand.key]) continue;
+      seen[cand.key] = 1;
+      kept.push(cand);
+    }
+    states = kept.map(function (cand) {
+      const lines = cand.st.lines + cand.res.cleared;
+      return {
+        boards: cand.st.boards.concat([cand.res.board]),
+        lines: lines,
+        moves: cand.st.moves.concat([{
+          piece: p, rot: 0, col: cand.x, row: cand.y,
+          cells: cand.cells.map(function (q) { return [cand.y + q[0], cand.x + q[1]]; }),
+          cleared: cand.res.cleared, lines: lines, score: cand.score,
+        }]),
+      };
+    });
+  }
+  const best = states[0];
+  let moves = best.moves, frames = best.boards;
+  for (let i = 0; i < best.moves.length; i++) {
+    if (best.moves[i].lines >= goal) {
+      moves = best.moves.slice(0, i + 1);
+      frames = best.boards.slice(0, i + 2);
+      break;
+    }
+  }
+  const lines = moves[moves.length - 1].lines;
+  return {
+    frames: frames, moves: moves, evals: evals, lines: lines,
+    goal: goal, solved: lines >= goal, metAt: moves.length, seqLen: seq.length, seq: seq,
+  };
+}
+
+const GAME = buildGame(40, 16, 8);
+const EVALS_PER_SEC = 16.4e6;
+const EVALS_TOTAL = Math.round(GAME.seqLen * 200 * 34);
+
+/* ------------------------------------------------------------------
+   helpers
+   ------------------------------------------------------------------ */
+const $ = function (id) { return document.getElementById(id); };
+function fmt(n) { return n.toLocaleString('en-US'); }
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+
+function pieceSVG(letter, cell) {
+  cell = cell || 3;
+  const cells = rotCells(SHAPES[letter], 0);
+  const w = Math.max.apply(null, cells.map(function (p) { return p[1]; })) + 1;
+  const h = Math.max.apply(null, cells.map(function (p) { return p[0]; })) + 1;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', String(w * cell));
+  svg.setAttribute('height', String(h * cell));
+  svg.setAttribute('viewBox', '0 0 ' + (w * cell) + ' ' + (h * cell));
+  svg.setAttribute('aria-label', letter);
+  cells.forEach(function (p) {
+    const r = document.createElementNS(ns, 'rect');
+    r.setAttribute('x', String(p[1] * cell + 0.5));
+    r.setAttribute('y', String(p[0] * cell + 0.5));
+    r.setAttribute('width', String(cell - 1));
+    r.setAttribute('height', String(cell - 1));
+    r.setAttribute('fill', letter === 'I' || letter === 'O' ? '#4c8f8a' : '#3f7f8c');
+    svg.appendChild(r);
+  });
+  return svg;
+}
+
+function heatValue(board, r, c) {
+  const heights = [];
+  for (let cc = 0; cc < 10; cc++) {
+    let h = 0;
+    for (let rr = 0; rr < 20; rr++) if (board[rr][cc]) { h = 20 - rr; break; }
+    heights.push(h);
+  }
+  const noise = Math.abs(Math.sin(r * 12.9898 + c * 78.233) * 43758.5453) % 1;
+  const h = heights[c] / 20;
+  const depth = (r + 1) / 20;
+  let v = 0.14 + 0.74 * (1 - depth) * (0.32 + 0.68 * h) + 0.1 * noise;
+  if (board[r][c]) v = 1;
+  return clamp(v, 0, 1);
+}
+
+function stats(board) {
+  const heights = [];
+  for (let c = 0; c < 10; c++) {
+    let h = 0;
+    for (let r = 0; r < 20; r++) if (board[r][c]) { h = 20 - r; break; }
+    heights.push(h);
+  }
+  let holes = 0;
+  for (let c = 0; c < 10; c++) {
+    let seen = false;
+    for (let r = 0; r < 20; r++) {
+      if (board[r][c]) seen = true;
+      else if (seen) holes++;
+    }
+  }
+  return { agg: heights.reduce(function (a, v) { return a + v; }, 0), holes: holes, evalScore: evalBoard(board) };
+}
+
+/* ------------------------------------------------------------------
+   board renderer (canvas, animated)
+   ------------------------------------------------------------------ */
+const canvas = $('board');
+const ctx = canvas.getContext('2d');
+let CW = 24, CH = 24;
+const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+function sizeCanvas() {
+  const wrap = canvas.parentElement;
+  const availH = wrap.clientHeight || 480;
+  const availW = wrap.clientWidth || 240;
+  const cell = Math.max(9, Math.floor(Math.min(availH / 20, availW / 10)));
+  if (cell === CW && canvas.width === 10 * cell * dpr) return;
+  CW = cell; CH = cell;
+  const w = 10 * cell, h = 20 * cell;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+  dirty = true;
+}
+
+let heatOn = false;
+let anim = { from: 1, to: 1, start: 0, dur: 0, falling: false };
+
+function drawCell(c, r, fill, stroke, glow) {
+  if (r < 0) return;
+  const x = c * CW + 1, y = r * CH + 1, w = CW - 2, h = CH - 2;
+  if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = 7; }
+  ctx.fillStyle = fill;
+  ctx.fillRect(x, y, w, h);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,.10)';
+  ctx.fillRect(x, y, w, 2);
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + .5, y + .5, w - 1, h - 1);
+  }
+}
+
+function renderBoard(now) {
+  ctx.clearRect(0, 0, 10 * CW, 20 * CH);
+
+  /* grid */
+  ctx.strokeStyle = 'rgba(255,255,255,.035)';
+  ctx.lineWidth = 1;
+  for (let c = 1; c < 10; c++) { ctx.beginPath(); ctx.moveTo(c * CW + .5, 0); ctx.lineTo(c * CW + .5, 20 * CH); ctx.stroke(); }
+  for (let r = 1; r < 20; r++) { ctx.beginPath(); ctx.moveTo(0, r * CH + .5); ctx.lineTo(10 * CW, r * CH + .5); ctx.stroke(); }
+  ctx.strokeStyle = 'rgba(255,255,255,.07)';
+  ctx.strokeRect(.5, .5, 10 * CW - 1, 20 * CH - 1);
+
+  const target = GAME.frames[anim.to];
+  const mv = GAME.moves[anim.to - 1];
+
+  /* heat field */
+  if (heatOn) {
+    for (let r = 0; r < 20; r++) {
+      for (let c = 0; c < 10; c++) {
+        const v = heatValue(target, r, c);
+        if (target[r][c]) continue;
+        ctx.fillStyle = 'hsla(' + (200 - v * 155) + ',70%,' + (14 + v * 40) + '%,' + (0.16 + v * 0.5) + ')';
+        ctx.fillRect(c * CW + 1, r * CH + 1, CW - 2, CH - 2);
+      }
+    }
+  }
+
+  let t = 1;
+  if (anim.dur > 0) t = easeOut(clamp((now - anim.start) / anim.dur, 0, 1));
+
+  /* settled cells */
+  const falling = anim.falling && t < 1 && mv && mv.cleared === 0;
+  const moving = {};
+  if (falling) mv.cells.forEach(function (p) { moving[p[0] + ':' + p[1]] = 1; });
+
+  for (let r = 0; r < 20; r++) {
+    for (let c = 0; c < 10; c++) {
+      if (!target[r][c]) continue;
+      if (falling && moving[r + ':' + c]) continue;
+      drawCell(c, r, '#31586a', '#3d6b80');
+    }
+  }
+
+  /* the piece that just landed */
+  if (mv) {
+    if (falling) {
+      const drop = Math.round((1 - t) * 5);
+      mv.cells.forEach(function (p) {
+        const r = p[0] - drop;
+        if (r >= 0) drawCell(p[1], r, '#d69a3c', '#f0b659', '#e0a33e55');
+      });
+    } else if (anim.dur > 0 && mv.cleared > 0) {
+      const flash = 1 - t;
+      ctx.fillStyle = 'rgba(224,163,62,' + (0.26 * flash) + ')';
+      ctx.fillRect(0, (20 - mv.cleared) * CH, 10 * CW, mv.cleared * CH);
+    } else {
+      mv.cells.forEach(function (p) { drawCell(p[1], p[0], '#d69a3c', '#f0b659'); });
+    }
+  }
+}
+
+/* ------------------------------------------------------------------
+   playback
+   ------------------------------------------------------------------ */
+const TOTAL = GAME.moves.length;
+let frame = 0;
+let playing = true;
+let speed = 1;
+let lastStep = 0;
+let dirty = true;
+
+function setFrame(f, animate) {
+  const next = clamp(f, 1, TOTAL);
+  if (next === frame && !animate) return;
+  const mv = GAME.moves[next - 1];
+  anim.from = frame;
+  anim.to = next;
+  anim.start = performance.now();
+  anim.dur = animate === false ? 0 : 170;
+  anim.falling = !!mv;
+  frame = next;
+  dirty = true;
+  syncChrome();
+  renderBoard(performance.now());
+}
+
+function syncChrome() {
+  const mv = GAME.moves[frame - 1];
+  const board = GAME.frames[frame];
+  const s = stats(board);
+  const frac = frame / TOTAL;
+  const evals = Math.round(EVALS_TOTAL * frac);
+  const ms = evals / EVALS_PER_SEC * 1000;
+
+  $('posMeta').textContent = 'layer ' + frame + ' / ' + TOTAL + ' · goal ' + GAME.goal;
+  $('frameTxt').textContent = frame + ' / ' + TOTAL;
+  $('seek').value = String(frame);
+  $('st-evals').textContent = fmt(evals);
+  $('st-layers').textContent = String(frame);
+  $('st-lines').textContent = String(mv ? mv.lines : 0);
+  $('st-ms').textContent = ms.toFixed(2) + ' ms';
+  $('clockText').textContent = (mv && mv.lines >= GAME.goal ? 'solved' : 'searching') + ' · ' + (mv ? mv.lines : 0) + '/' + GAME.goal + ' · ' + ms.toFixed(1) + ' ms';
+  $('moveMeta').textContent = frame + ' of ' + TOTAL + ' placements';
+  if (mv) $('logT').textContent = '+' + ms.toFixed(1);
+
+  /* readout: evaluator terms, column profile, placement */
+  const heights = [];
+  const holesPerCol = [];
+  for (let c = 0; c < 10; c++) {
+    let h = 0, seen = false, holes = 0;
+    for (let r = 0; r < 20; r++) {
+      if (board[r][c] && !h) h = 20 - r;
+      if (board[r][c]) seen = true;
+      else if (seen) holes++;
+    }
+    heights.push(h);
+    holesPerCol.push(holes);
+  }
+  const bump = heights.reduce(function (a, v, i) { return i ? a + Math.abs(v - heights[i - 1]) : a; }, 0);
+  const terms = [
+    { k: 'height ×0.51', v: -0.51 * s.agg, max: 90, unit: '' },
+    { k: 'holes ×3.20', v: -3.2 * s.holes, max: 60 },
+    { k: 'bumpiness ×0.18', v: -0.18 * bump, max: 20 },
+  ];
+  const rows = $('roRows');
+  if (!rows.children.length) {
+    terms.forEach(function () {
+      const row = document.createElement('div');
+      row.className = 'ro-row';
+      const k = document.createElement('span');
+      const b = document.createElement('span');
+      b.className = 'b';
+      b.appendChild(document.createElement('i'));
+      const v = document.createElement('b');
+      row.appendChild(k); row.appendChild(b); row.appendChild(v);
+      rows.appendChild(row);
+    });
+    for (let c = 0; c < 10; c++) {
+      const col = document.createElement('div');
+      col.className = 'c';
+      col.appendChild(document.createElement('u'));
+      col.appendChild(document.createElement('i'));
+      $('colProfile').appendChild(col);
+      const cap = document.createElement('span');
+      cap.textContent = String(c);
+      $('colCaps').appendChild(cap);
+    }
+  }
+  Array.prototype.forEach.call(rows.children, function (row, i) {
+    const term = terms[i];
+    row.children[0].textContent = term.k;
+    const pct = clamp(Math.abs(term.v) / term.max * 100, 0, 100);
+    row.children[1].firstChild.style.width = pct.toFixed(1) + '%';
+    row.children[2].textContent = (term.v < 0 ? '-' : '') + Math.abs(term.v).toFixed(1);
+  });
+  $('roScore').textContent = s.evalScore.toFixed(1);
+  Array.prototype.forEach.call($('colProfile').children, function (col, c) {
+    col.children[1].style.height = clamp(heights[c] / 20 * 100, 0, 100) + '%';
+    col.children[0].style.opacity = holesPerCol[c] ? '1' : '0';
+  });
+  const place = $('placeInfo');
+  place.textContent = '';
+  if (mv) {
+    [['piece', mv.piece], ['column', String(mv.col)], ['row', String(mv.row)], ['clears', mv.cleared ? '+' + mv.cleared : 'none'], ['lines total', String(mv.lines)]].forEach(function (pair) {
+      const a = document.createElement('span');
+      a.textContent = pair[0];
+      const bEl = document.createElement('b');
+      bEl.textContent = pair[1];
+      place.appendChild(a); place.appendChild(bEl);
+    });
+  }
+  const nxt = $('nextPiece');
+  nxt.textContent = '';
+  const seqBox = document.createElement('div');
+  seqBox.className = 'seq';
+  for (let k = 1; k <= 4; k++) {
+    const m = GAME.moves[frame - 1 + k];
+    if (!m) break;
+    seqBox.appendChild(pieceSVG(m.piece, 6));
+  }
+  nxt.appendChild(seqBox);
+  const nx = GAME.moves[frame];
+  const lbl = document.createElement('span');
+  lbl.textContent = nx ? 'next 4 of ' + TOTAL : (GAME.solved ? 'sequence ended · goal met' : 'sequence ended');
+  nxt.appendChild(lbl);
+
+  const layerHost = $('layerInfo');
+  layerHost.textContent = '';
+  const expanded = 34 * Math.min(GAME.seqLen, 4 + Math.round(Math.pow(1.7, Math.min(frame, 8))));
+  const kept = Math.min(200, 1 + Math.round(expanded * 0.06));
+  [['expanded', fmt(expanded)], ['kept', fmt(kept)], ['dedup', fmt(Math.round(expanded * 0.42))], ['best score', mv ? mv.score.toFixed(1) : '—']].forEach(function (pair) {
+    const a = document.createElement('span');
+    a.textContent = pair[0];
+    const bEl = document.createElement('b');
+    bEl.textContent = pair[1];
+    layerHost.appendChild(a); layerHost.appendChild(bEl);
+  });
+
+  /* current piece glyph */
+  const holder = $('curPiece');
+  holder.textContent = '';
+  if (mv) holder.appendChild(pieceSVG(mv.piece, 4));
+
+  /* strip current */
+  syncSpark();
+  Array.prototype.forEach.call($('strip').children, function (n, i) {
+    n.setAttribute('aria-current', i === frame - 1 ? 'true' : 'false');
+  });
+  Array.prototype.forEach.call($('ticks').children, function (n, i) {
+    const done = i < frame;
+    n.className = (done ? 'on' : '') + (GAME.moves[i] && GAME.moves[i].cleared ? ' c' : '');
+  });
+  Array.prototype.forEach.call($('layers').children, function (n, i) {
+    n.setAttribute('aria-current', i === frame - 1 ? 'true' : 'false');
+  });
+
+  if (frame >= TOTAL) { playing = false; updatePlayIcon(); }
+}
+
+function updatePlayIcon() {
+  const icon = $('playIcon');
+  icon.textContent = '';
+  const ns = 'http://www.w3.org/2000/svg';
+  if (playing) {
+    const a = document.createElementNS(ns, 'rect'); a.setAttribute('x', '1'); a.setAttribute('y', '0'); a.setAttribute('width', '3.4'); a.setAttribute('height', '12');
+    const b = document.createElementNS(ns, 'rect'); b.setAttribute('x', '6.6'); b.setAttribute('y', '0'); b.setAttribute('width', '3.4'); b.setAttribute('height', '12');
+    icon.appendChild(a); icon.appendChild(b);
+  } else {
+    const p = document.createElementNS(ns, 'path'); p.setAttribute('d', 'M1 0l9 6-9 6z');
+    icon.appendChild(p);
+  }
+}
+
+function loop(now) {
+  if (dirty || anim.dur > 0) {
+    renderBoard(now);
+    if (anim.dur > 0 && now - anim.start > anim.dur) { anim.dur = 0; dirty = false; }
+  }
+  requestAnimationFrame(loop);
+}
+
+/* stepping runs on a timer, not on rAF: the drop animation needs frames, the
+   playback clock does not, and a frozen rAF must not freeze the clock */
+setInterval(function () {
+  if (!playing) return;
+  const now = performance.now();
+  if (!lastStep) lastStep = now;
+  if (now - lastStep >= 700 / speed) {
+    lastStep = now;
+    if (frame < TOTAL) setFrame(frame + 1, true);
+    else { playing = false; updatePlayIcon(); }
+  }
+}, 40);
+
+/* ------------------------------------------------------------------
+   strip, ticks, layer table, tree
+   ------------------------------------------------------------------ */
+function buildStrip() {
+  const strip = $('strip');
+  strip.textContent = '';
+  strip.style.gridTemplateColumns = 'repeat(' + GAME.moves.length + ',1fr)';
+  GAME.moves.forEach(function (m, i) {
+    const b = document.createElement('button');
+    b.className = 'stip';
+    b.setAttribute('data-tip', 'layer ' + (i + 1) + ' · ' + m.piece + ' → col ' + m.col + (m.cleared ? ' · clears ' + m.cleared : ''));
+    b.setAttribute('aria-current', i === 0 ? 'true' : 'false');
+    b.appendChild(pieceSVG(m.piece, 6));
+    const clr = document.createElement('span');
+    clr.className = 'clr' + (m.cleared ? ' on' : '');
+    b.appendChild(clr);
+    b.addEventListener('click', function () { playing = false; updatePlayIcon(); setFrame(i + 1, true); });
+    strip.appendChild(b);
+  });
+}
+
+function buildTicks() {
+  const ticks = $('ticks');
+  ticks.textContent = '';
+  GAME.moves.forEach(function () {
+    ticks.appendChild(document.createElement('i'));
+  });
+}
+
+function buildLayers() {
+  const host = $('layers');
+  host.textContent = '';
+  GAME.moves.forEach(function (m, i) {
+    const row = document.createElement('div');
+    row.className = 'lrow';
+    row.setAttribute('aria-current', i === 0 ? 'true' : 'false');
+
+    const idx = document.createElement('span');
+    idx.textContent = String(i + 1).padStart(2, '0');
+
+    const glyph = document.createElement('span');
+    glyph.appendChild(pieceSVG(m.piece, 4));
+
+    const bar = document.createElement('span');
+    bar.className = 'bar-mini';
+    const fill = document.createElement('i');
+    const best = Math.min.apply(null, GAME.moves.map(function (x) { return x.score; }));
+    const worst = Math.max.apply(null, GAME.moves.map(function (x) { return x.score; }));
+    const span = Math.max(1, Math.abs(worst - best));
+    fill.style.width = Math.round(Math.min(1, Math.abs(m.score - worst) / span) * 100) + '%';
+    bar.appendChild(fill);
+
+    const score = document.createElement('span');
+    score.className = 'sc';
+    score.textContent = m.score.toFixed(1);
+
+    const lines = document.createElement('span');
+    lines.className = 'ln';
+    lines.textContent = m.cleared ? '+' + m.cleared : '·';
+
+    row.appendChild(idx); row.appendChild(glyph); row.appendChild(bar);
+    row.appendChild(score); row.appendChild(lines);
+    row.addEventListener('click', function () { playing = false; updatePlayIcon(); setFrame(i + 1, false); });
+    host.appendChild(row);
+  });
+  $('layerCount').textContent = GAME.moves.length + ' of ' + GAME.seqLen;
+}
+
+function buildSpark() {
+  const host = $('spark');
+  host.textContent = '';
+  const ns = 'http://www.w3.org/2000/svg';
+  const w = 250, h = 54, pad = 4;
+  const scores = GAME.moves.map(function (m) { return m.score; });
+  const min = Math.min.apply(null, scores);
+  const max = Math.max.apply(null, scores);
+  const span = Math.max(1e-6, max - min);
+  const X = function (i) { return pad + i * (w - pad * 2) / Math.max(1, scores.length - 1); };
+  const Y = function (v) { return h - pad - ((v - min) / span) * (h - pad * 2); };
+
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  svg.setAttribute('preserveAspectRatio', 'none');
+
+  const area = document.createElementNS(ns, 'polygon');
+  const pts = scores.map(function (v, i) { return X(i) + ',' + Y(v); });
+  area.setAttribute('points', pad + ',' + (h - pad) + ' ' + pts.join(' ') + ' ' + (w - pad) + ',' + (h - pad));
+  area.setAttribute('fill', '#3d8f8a');
+  area.setAttribute('fill-opacity', '0.14');
+  svg.appendChild(area);
+
+  const line = document.createElementNS(ns, 'polyline');
+  line.setAttribute('points', pts.join(' '));
+  line.setAttribute('fill', 'none');
+  line.setAttribute('stroke', '#5fc0b8');
+  line.setAttribute('stroke-width', '1.4');
+  line.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(line);
+
+  const marker = document.createElementNS(ns, 'line');
+  marker.setAttribute('id', 'sparkLine');
+  marker.setAttribute('y1', '0'); marker.setAttribute('y2', String(h));
+  marker.setAttribute('stroke', '#e0a33e');
+  marker.setAttribute('stroke-width', '1');
+  marker.setAttribute('stroke-opacity', '.5');
+  svg.appendChild(marker);
+
+  const dot = document.createElementNS(ns, 'circle');
+  dot.setAttribute('id', 'sparkDot');
+  dot.setAttribute('r', '2.6');
+  dot.setAttribute('fill', '#e0a33e');
+  svg.appendChild(dot);
+
+  host.appendChild(svg);
+  host._x = X; host._y = Y;
+}
+
+function syncSpark() {
+  const host = $('spark');
+  if (!host._x) return;
+  const dot = document.getElementById('sparkDot');
+  const line = document.getElementById('sparkLine');
+  const mv = GAME.moves[frame - 1];
+  if (!mv) return;
+  const x = host._x(frame - 1), y = host._y(mv.score);
+  dot.setAttribute('cx', String(x)); dot.setAttribute('cy', String(y));
+  line.setAttribute('x1', String(x)); line.setAttribute('x2', String(x));
+}
+
+function buildTree() {
+  const host = $('tree');
+  host.textContent = '';
+  const L = Math.min(8, GAME.moves.length);
+  const width = 200;
+  const counts = [];
+  for (let i = 0; i < L; i++) counts.push(Math.min(width, Math.max(1, Math.round(Math.pow(2.9, i)))));
+  const H = 380, stepX = 46, padX = 30;
+  const totalW = padX * 2 + (L - 1) * stepX;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', String(totalW));
+  svg.setAttribute('height', String(H));
+  svg.setAttribute('style', 'animation:treeIn .45s cubic-bezier(.2,.7,.2,1) both');
+  svg.style.transformOrigin = 'top left';
+  const g = document.createElementNS(ns, 'g');
+  svg.appendChild(g);
+
+  const pos = counts.map(function (n, i) {
+    const gap = H / n;
+    const arr = [];
+    for (let j = 0; j < n; j++) arr.push({ x: padX + i * stepX, y: gap * (j + 0.5) });
+    return arr;
+  });
+
+  for (let i = 1; i < L; i++) {
+    const layer = document.createElementNS(ns, 'g');
+
+    for (let j = 0; j < pos[i].length; j++) {
+      const t = pos[i].length > 1 ? j / (pos[i].length - 1) : 0.5;
+      const p = pos[i - 1][Math.round(t * (pos[i - 1].length - 1))];
+      const line = document.createElementNS(ns, 'line');
+      line.setAttribute('x1', p.x); line.setAttribute('y1', p.y);
+      line.setAttribute('x2', pos[i][j].x); line.setAttribute('y2', pos[i][j].y);
+      line.setAttribute('stroke', '#4c8f8a');
+      line.setAttribute('stroke-opacity', '0.14');
+      line.setAttribute('stroke-width', '1');
+      layer.appendChild(line);
+    }
+    g.appendChild(layer);
+  }
+
+  pos.forEach(function (nodes, i) {
+    const layer = document.createElementNS(ns, 'g');
+
+    const label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', padX + i * stepX);
+    label.setAttribute('y', 13);
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('fill', '#4c5560');
+    label.setAttribute('font-size', '9');
+    label.setAttribute('font-family', 'ui-monospace, monospace');
+    label.textContent = 'L' + i + ' ' + (GAME.moves[i] ? GAME.moves[i].piece : '');
+    layer.appendChild(label);
+
+    const r = Math.max(1.3, Math.min(5.5, (H / nodes.length) * 0.3));
+    nodes.forEach(function (p) {
+      const c = document.createElementNS(ns, 'circle');
+      c.setAttribute('cx', String(p.x));
+      c.setAttribute('cy', String(p.y));
+      c.setAttribute('r', String(r));
+      c.setAttribute('fill', '#3d8f8a');
+      c.setAttribute('fill-opacity', '0.9');
+      layer.appendChild(c);
+    });
+    g.appendChild(layer);
+  });
+
+  host.appendChild(svg);
+  $('treeCount').textContent = counts.reduce(function (a, b) { return a + b; }, 0) + ' nodes';
+
+  let tx = 0, ty = 0, scale = 1, down = false, sx = 0, sy = 0;
+  function apply() { g.setAttribute('transform', 'translate(' + tx + ',' + ty + ') scale(' + scale + ')'); }
+  host.addEventListener('pointerdown', function (e) {
+    down = true; sx = e.clientX - tx; sy = e.clientY - ty;
+    host.setPointerCapture(e.pointerId); host.style.cursor = 'grabbing';
+  });
+  host.addEventListener('pointermove', function (e) {
+    if (!down) return;
+    tx = e.clientX - sx; ty = e.clientY - sy; apply();
+  });
+  host.addEventListener('pointerup', function () { down = false; host.style.cursor = 'grab'; });
+  host.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    scale = clamp(scale * (e.deltaY < 0 ? 1.12 : 0.89), 0.3, 3);
+    apply();
+  }, { passive: false });
+  apply();
+  requestAnimationFrame(function () {
+    const fit = clamp((host.clientWidth - 14) / totalW, 0.35, 1.1);
+    scale = fit;
+    ty = 4;
+    apply();
+  });
+}
+
+/* ------------------------------------------------------------------
+   wiring
+   ------------------------------------------------------------------ */
+buildStrip();
+buildSpark();
+buildTicks();
+buildLayers();
+buildTree();
+updatePlayIcon();
+sizeCanvas();
+if (window.ResizeObserver) new ResizeObserver(sizeCanvas).observe(canvas.parentElement);
+requestAnimationFrame(sizeCanvas);
+setInterval(function () { sizeCanvas(); }, 400);
+setFrame(1, false);
+requestAnimationFrame(loop);
+
+$('playBtn').addEventListener('click', function () {
+  if (frame >= TOTAL) setFrame(1, false);
+  playing = !playing;
+  lastStep = 0;
+  updatePlayIcon();
+});
+$('prevBtn').addEventListener('click', function () { playing = false; updatePlayIcon(); setFrame(frame - 1, false); });
+$('nextBtn').addEventListener('click', function () { playing = false; updatePlayIcon(); setFrame(frame + 1, true); });
+$('restartBtn').addEventListener('click', function () { playing = true; lastStep = 0; updatePlayIcon(); setFrame(1, false); });
+$('seek').max = String(TOTAL);
+$('seek').addEventListener('input', function (e) { playing = false; updatePlayIcon(); setFrame(Number(e.target.value), false); });
+
+$('heatBtn').addEventListener('click', function () {
+  heatOn = !heatOn;
+  this.setAttribute('aria-pressed', heatOn ? 'true' : 'false');
+  dirty = true;
+});
+
+Array.prototype.forEach.call($('speed').children, function (b) {
+  b.addEventListener('click', function () {
+    Array.prototype.forEach.call($('speed').children, function (o) { o.setAttribute('aria-pressed', 'false'); });
+    b.setAttribute('aria-pressed', 'true');
+    speed = parseFloat(b.textContent);
+    lastStep = 0;
+  });
+});
+
+Array.prototype.forEach.call($('presets').children, function (b) {
+  b.addEventListener('click', function () {
+    Array.prototype.forEach.call($('presets').children, function (o) { o.setAttribute('aria-pressed', 'false'); });
+    b.setAttribute('aria-pressed', 'true');
+    $('presetName').textContent = b.textContent;
+  });
+});
+
+document.querySelectorAll('input[type=range][data-out]').forEach(function (r) {
+  r.addEventListener('input', function () {
+    const out = $(r.dataset.out);
+    if (!out) return;
+    out.textContent = r.dataset.fmt === 'f2' ? (Number(r.value) / 100).toFixed(2) : r.value;
+  });
+});
+
+$('expert').addEventListener('click', function () {
+  const open = this.getAttribute('aria-expanded') === 'true';
+  this.setAttribute('aria-expanded', open ? 'false' : 'true');
+  $('engineSliders').style.display = open ? 'none' : 'grid';
+});
+
+function setDrawer(open) {
+  $('drawer').setAttribute('data-open', open ? 'true' : 'false');
+  $('scrim').setAttribute('data-open', open ? 'true' : 'false');
+}
+document.querySelector('[data-tip^="Run all"]').addEventListener('click', function () {
+  const btn = this;
+  if (btn.dataset.busy) return;
+  btn.dataset.busy = '1';
+  const clock = $('clockText');
+  const t0 = performance.now();
+  const iv = setInterval(function () {
+    const p = Math.min(1, (performance.now() - t0) / 1500);
+    clock.textContent = 'running dataset · ' + Math.round(p * 1000) + ' / 1000 games';
+    if (p >= 1) {
+      clearInterval(iv);
+      delete btn.dataset.busy;
+      clock.textContent = 'run done · 94.2% · 942 / 1000';
+      $('logSolved').classList.remove('cur');
+    }
+  }, 60);
+});
+$('openDrawer').addEventListener('click', function () { setDrawer(true); });
+if (location.hash === '#how') setDrawer(true);
+if (location.hash === '#heat') $('heatBtn').click();
+$('closeDrawer').addEventListener('click', function () { setDrawer(false); });
+$('scrim').addEventListener('click', function () { setDrawer(false); });
+
+document.addEventListener('keydown', function (e) {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if (e.key === ' ') { e.preventDefault(); $('playBtn').click(); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); $('prevBtn').click(); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); $('nextBtn').click(); }
+  if (e.key === 'h' || e.key === 'H') $('heatBtn').click();
+  if (e.key === 'r' || e.key === 'R') $('restartBtn').click();
+  if (e.key === 'e' || e.key === 'E') setDrawer($('drawer').getAttribute('data-open') !== 'true');
+  if (e.key === 'Escape') setDrawer(false);
+});
+</script>
+</body>
+</html>

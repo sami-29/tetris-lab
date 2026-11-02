@@ -1,0 +1,22 @@
+# Headers for the ticket 09 host probe. Cloudflare Workers Static Assets applies
+# these to static responses only; anything a Worker script answers ignores them,
+# which is one reason the lab stays static-only.
+
+# wasm MIME, pinned explicitly. Wrangler infers it from the extension already;
+# the line is here so the fixture fails loudly if inference ever regresses.
+/*.wasm
+  Content-Type: application/wasm
+
+# Fingerprinted build assets cache forever. Only this rule sets Cache-Control:
+# same-name headers from matching rules are comma-joined, so a second
+# Cache-Control on the /*.wasm rule would corrupt the value on /assets/*.wasm.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Cross-origin isolation is NOT needed in v1 (ticket 05: one instance per worker,
+# no SharedArrayBuffer). Kept commented as the one-line opt-in if a threaded
+# build is ever wanted; verify with: curl -sSI <url> | grep -i cross-origin
+/*
+#  Cross-Origin-Opener-Policy: same-origin
+#  Cross-Origin-Embedder-Policy: require-corp
+  X-Content-Type-Options: nosniff

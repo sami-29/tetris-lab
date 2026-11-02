@@ -1,0 +1,7 @@
+[toolchain]
+# This box has MinGW g++ but no MSVC linker, so the default MSVC host toolchain
+# cannot link a native binary here. Pinning the GNU host toolchain (plus the wasm
+# target) makes plain `cargo build` / `cargo test` work in this directory, not
+# just prototype/build.sh. See prototype/README.md.
+channel = "stable-x86_64-pc-windows-gnu"
+targets = ["wasm32-unknown-unknown"]
