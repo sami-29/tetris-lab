@@ -10,6 +10,8 @@
 //!   Board and a Sequence out (§5.5–5.8).
 //! * [`search::solve`] — a Board, its Sequence, a Goal and a Beam width in; won
 //!   or lost, Lines cleared, a count of Evaluations and the Move list out (§5.3).
+//! * [`search::solve_traced`] — the same result, and the survive-set of each
+//!   Layer into a [`Trace`] (§4.4): §2.3's band, one record per state.
 //!
 //! Everything else is the vocabulary those two need.
 
@@ -27,5 +29,5 @@ pub use evaluator::{
 };
 pub use generator::{generate_game, DomainError, Game, Sequence};
 pub use pieces::{Piece, Rotation};
-pub use search::{solve, Move, SolveConfig, SolveResult, Status};
-pub use trace::{Trace, TraceRecord};
+pub use search::{solve, solve_traced, Move, SolveConfig, SolveResult, Status};
+pub use trace::{Trace, TraceRecord, PARENT_NONE, PARENT_UNRECORDED};

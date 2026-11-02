@@ -44,6 +44,8 @@ import {
 import type { FromWorker, GameMessage, GameInput, ToWorker } from "./core/protocol.ts";
 import { fieldFrom, emptyField, type Field } from "./ui/field.ts";
 import { BoardView } from "./ui/board.ts";
+import { BandView } from "./ui/band-canvas.ts";
+import { buildBand, countLines, decodeTrace, type BandModel } from "./ui/band-model.ts";
 import { Playback, type PlaybackStatus } from "./ui/playback.ts";
 import { Playground } from "./ui/playground.ts";
 import { letterOf } from "./ui/pieces.ts";
@@ -86,14 +88,21 @@ const sheet = must<HTMLElement>("#sheet");
 const sheetList = must<HTMLElement>("#sheet-list");
 const keysButton = must<HTMLButtonElement>("#keys-button");
 const playgroundRoot = must<HTMLElement>("#playground");
+const bandCanvas = must<HTMLCanvasElement>("#band");
+const bandLabel = must<HTMLElement>("#band-label");
+const bandCaption = must<HTMLElement>("#band-caption");
+const bandCounts = must<HTMLElement>("#band-counts");
 
 const view = new BoardView(canvas);
+const bandView = new BandView(bandCanvas);
 const lines = { status: statusLine, outcome: outcomeLine, progress: progressLine };
 
 let worker: Worker | null = null;
 let playback: Playback | null = null;
 /** The game last shown, for the readouts that outlive a frame. */
 let shown: GameMessage | null = null;
+/** The band's last model, so a resize redraws it instead of blanking it. */
+let bandModel: BandModel | null = null;
 let startTimer = 0;
 let nextRequestId = 1;
 let pending = 0;
@@ -155,7 +164,10 @@ function requestGame(input: GameInput): void {
   inFlight = true;
   pending = nextRequestId;
   nextRequestId += 1;
-  const message: ToWorker = { type: "solve", requestId: pending, ...input };
+  // §2.3: the interactive solve is traced, at the band the build ships. The band
+  // bounds the records and never the search, so this changes no figure — including
+  // when the Playground widens the beam past it.
+  const message: ToWorker = { type: "solve", requestId: pending, band: DEFAULT_BEAM, ...input };
   say(lines.status, `${describeGame(input)} — solving…`);
   say(lines.outcome, "");
   worker.postMessage(message);
@@ -371,6 +383,7 @@ function show(message: GameMessage): void {
   shownBoard = fieldFrom(message.board);
   view.resize();
   view.draw(shownBoard);
+  showBand(message);
 
   if (message.moves.length === 0) {
     showLoss(message);
@@ -405,6 +418,39 @@ function show(message: GameMessage): void {
     startTimer = 0;
     playback?.play();
   }, 400);
+}
+
+/**
+ * The score band: one row per Layer with its states placed by score, and the
+ * winning lineage through them (§2.3).
+ *
+ * Everything drawn here comes out of the engine's trace, decoded by
+ * `ui/trace.ts` — the page never re-runs a solve, never scores a Board and never
+ * counts candidates. The per-layer list is the trace's own record counts, because
+ * §4.4 carries no "expanded" count and inventing one would print a number no
+ * engine produced.
+ */
+function showBand(message: GameMessage): void {
+  if (!message.trace || message.trace.length === 0) return;
+  const trace = decodeTrace(message.trace, message.band ?? DEFAULT_BEAM);
+  const model = buildBand(trace, { sequence: message.sequence, shippedBeam: DEFAULT_BEAM });
+  bandModel = model;
+  bandView.resize();
+  bandView.draw(model);
+  say(bandLabel, model.label);
+  say(
+    bandCaption,
+    model.clipped > 0
+      ? `${model.caption} · ${model.clipped} lineage points have a parent the band did not keep`
+      : model.caption,
+  );
+  const items = countLines(model).map((text, layer) => {
+    const item = document.createElement("li");
+    item.textContent = text;
+    if (model.lineage.some((point) => point.layer === layer)) item.dataset.lineage = "true";
+    return item;
+  });
+  bandCounts.replaceChildren(...items);
 }
 
 /* ---- controls ---------------------------------------------------------- */
@@ -565,6 +611,8 @@ keysButton.addEventListener("click", () => setSheet(sheet.dataset.open !== "true
 
 globalThis.addEventListener("resize", () => {
   view.resize();
+  bandView.resize();
+  bandView.draw(bandModel);
   if (playback) {
     playback.draw();
     painted = { k: -1, total: painted.total };
