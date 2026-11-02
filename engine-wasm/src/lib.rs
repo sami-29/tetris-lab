@@ -1,4 +1,4 @@
-//! The ABI: four raw exports and nothing else (§4).
+//! The ABI: §4's exports and nothing else.
 //!
 //! Hand-written `#[no_mangle] pub extern "C"` functions, no glue generator, no
 //! `wasm-bindgen`: Cargo emits these into the export section directly.
@@ -8,19 +8,22 @@
 //! release profile turns any of those into a trap that costs a worker. A bug is
 //! allowed to abort; the worker respawns and logs it.
 //!
-//! `solve_traced` and `solve_batch` are the other two of §4's six exports and
-//! arrive in later tickets **at this same `abi_version`**. The loader therefore
-//! checks the version and must not probe for them.
+//! `solve_batch` is the last of §4's six exports and arrives in a later ticket **at
+//! this same `abi_version`**. The loader honours the version and must not probe for
+//! it.
 
 use engine::generator::{generate_game, DomainError};
-use engine::search::{solve as engine_solve, SolveConfig, Status};
+use engine::search::{
+    solve as engine_solve, solve_traced as engine_solve_traced, SolveConfig, Status,
+};
+use engine::trace::Trace;
 use engine::{shipped, Board, SolveResult};
 
 pub mod buffers;
 
 use buffers::{
-    forget_sequence, read_board, read_sequence, sequence_len, write_board, write_moves,
-    write_sequence,
+    forget_sequence, read_board, read_sequence, remember_trace_region, sequence_len,
+    trace_record_capacity, trace_region, write_board, write_moves, write_sequence, write_trace,
 };
 
 /// §4's `abi_version`: `gen_game` landing is what made it 2.
@@ -55,7 +58,13 @@ pub extern "C" fn alloc(len: u32) -> u32 {
     if ptr.is_null() {
         return 0; // out of memory is the caller's problem, not a trap
     }
-    ptr as usize as u32
+    let offset = ptr as usize as u32;
+    // §4.4 has `solve_traced` write into "the trace buffer allocated through
+    // `alloc`" and §4's signatures carry no pointer, so the region is the *first*
+    // allocation this instance makes: the loader allocates the trace once at boot
+    // and before anything else (`buffers::remember_trace_region`).
+    remember_trace_region(offset, size as u32);
+    offset
 }
 
 /// §4 export 3: generate a game into the board and sequence buffers.
@@ -85,12 +94,32 @@ pub extern "C" fn gen_game(seed: u32, pieces: u32, height_cap: u32) -> i32 {
 /// §4 export 4: solve the Board and Sequence currently in the buffers.
 ///
 /// Returns §4.2's packed `i64` and writes the Move list into the moves buffer.
-/// No trace: that is `solve_traced`, ticket 05.
+/// No trace: that is `solve_traced`.
 #[no_mangle]
 pub extern "C" fn solve(goal: u32, beam_width: u32) -> i64 {
+    solve_and_pack(goal, beam_width, None)
+}
+
+/// §4 export 5: as `solve`, and §4.4's trace into the `alloc`'d trace region.
+///
+/// `band` bounds the records and never the search, so the packed result is
+/// bit-identical to `solve`'s for the same `(goal, beam_width)` — that equality is
+/// asserted natively (`engine/tests/trace.rs`) and through this export
+/// (`web/test/solve-traced.test.mjs`). At most `band` records are kept per Layer,
+/// and the count word at word 0 is the record count, written last, so a trap in
+/// the middle of a trace cannot present a half-written one as complete.
+#[no_mangle]
+pub extern "C" fn solve_traced(goal: u32, beam_width: u32, band: u32) -> i64 {
+    solve_and_pack(goal, beam_width, Some(band))
+}
+
+fn solve_and_pack(goal: u32, beam_width: u32, band: Option<u32>) -> i64 {
     let Some(sequence) = read_sequence(sequence_len()) else {
         // Status 4: no game in the buffers, or a sequence byte that is not a
-        // piece. Both mean the loader used the ABI out of order.
+        // piece. Both mean the loader used the ABI out of order — and an empty
+        // trace, because the previous solve's records must not be read as this
+        // one's.
+        write_empty_trace();
         return SolveResult {
             status: Status::IllegalAbiState,
             won: false,
@@ -103,12 +132,29 @@ pub extern "C" fn solve(goal: u32, beam_width: u32) -> i64 {
     };
 
     let board: Board = read_board();
-    let result = engine_solve(
-        &board,
-        sequence.as_slice(),
-        &SolveConfig::new(goal, beam_width),
-        shipped(),
-    );
+    let cfg = SolveConfig::new(goal, beam_width);
+    let result = match band {
+        None => engine_solve(&board, sequence.as_slice(), &cfg, shipped()),
+        Some(band) => {
+            let (ptr, capacity) = trace_region();
+            // The engine is handed the region's own record ceiling, so it stops at
+            // a whole Layer instead of writing past the buffer it was given. This
+            // is what makes "a trace can never overrun" structural rather than a
+            // bound on a multiplication.
+            let mut trace = Trace::with_capacity(trace_record_capacity(capacity));
+            let result = engine_solve_traced(
+                &board,
+                sequence.as_slice(),
+                &cfg,
+                shipped(),
+                band,
+                &mut trace,
+            );
+            let words = trace.words();
+            write_trace(ptr, &words, capacity);
+            result
+        }
+    };
     let written = write_moves(&result.moves);
 
     // The status precedence is observable: the ABI-state check runs first, so a
@@ -121,4 +167,13 @@ pub extern "C" fn solve(goal: u32, beam_width: u32) -> i64 {
         packed |= ((written as i64) & 0x1ff) << 49;
     }
     packed
+}
+
+/// Word 0 of a region nobody is writing records into.
+fn write_empty_trace() {
+    let (ptr, capacity) = trace_region();
+    if ptr == 0 || capacity < 4 {
+        return;
+    }
+    write_trace(ptr, &[0], 4);
 }

@@ -134,3 +134,67 @@ pub fn write_moves(moves: &[Move]) -> u32 {
     }
     count as u32
 }
+
+// ── the trace region (§4.4) ────────────────────────────────────────────────
+//
+// §4.4 says the trace is written into "the trace buffer allocated through
+// `alloc`", and §4's export signature carries no pointer — so the region is the
+// **first** allocation this instance makes. That is a convention, not a
+// transcription of the spec, and it is the only one that survives the other
+// variable-size buffers §4 grows later: the loader allocates the trace once at
+// boot (`loader.ts`'s one `alloc`), before anything else, so "first" is stable
+// and testable, while "last" would silently become the batch summary when
+// `solve_batch` lands.
+//
+// Unlike the §4.1 buffers these writes are **plain**, not volatile: an `alloc`'d
+// region is above the data base (0x100000 on this toolchain), not inside the
+// shadow stack where offset 0x00 lives, so the null-pointer reasoning that makes
+// `write_board` volatile does not apply here.
+
+/// Remember `ptr`/`bytes` if the instance has not recorded a region yet.
+pub fn remember_trace_region(ptr: u32, bytes: u32) {
+    if bytes > 0 && TRACE_BYTES.load(Ordering::Relaxed) == 0 {
+        TRACE_PTR.store(ptr, Ordering::Relaxed);
+        TRACE_BYTES.store(bytes, Ordering::Relaxed);
+    }
+}
+
+/// The trace region, as `(byte offset, capacity)`. `(0, 0)` means "never
+/// allocated": a `solve_traced` then solves and records nothing.
+pub fn trace_region() -> (u32, u32) {
+    (
+        TRACE_PTR.load(Ordering::Relaxed),
+        TRACE_BYTES.load(Ordering::Relaxed),
+    )
+}
+
+static TRACE_PTR: AtomicU32 = AtomicU32::new(0);
+static TRACE_BYTES: AtomicU32 = AtomicU32::new(0);
+
+/// `(capacity - 4) / 20`: how many §4.4 records fit in a region of `bytes`.
+#[inline]
+pub fn trace_record_capacity(bytes: u32) -> usize {
+    if bytes < 4 {
+        0
+    } else {
+        ((bytes - 4) / 20) as usize
+    }
+}
+
+/// Write §4.4's words — a count, then five `i32` per record — into the region.
+/// Returns the bytes written, which never exceeds the capacity the loader
+/// reserved, because the engine is handed that capacity as the trace's ceiling.
+pub fn write_trace(ptr: u32, words: &[i32], capacity: u32) -> u32 {
+    if ptr == 0 || words.is_empty() {
+        return 0;
+    }
+    let max_words = (capacity / 4) as usize;
+    let count = words.len().min(max_words);
+    let base = ptr as usize as *mut i32;
+    for (index, word) in words.iter().enumerate().take(count) {
+        // SAFETY: the region came from `alloc` in this module and `count` words
+        // fit inside the capacity the caller reserved.
+        unsafe { core::ptr::write_volatile(base.add(index), *word) };
+    }
+    (count * 4) as u32
+}
