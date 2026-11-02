@@ -55,13 +55,17 @@ struct Case {
 
 impl Case {
     fn solve(&self, label: &str) -> (i64, Vec<u32>) {
+        self.solve_with(table(label))
+    }
+
+    fn solve_with(&self, evaluator: &dyn Evaluator) -> (i64, Vec<u32>) {
         let game = generate_game(self.seed, self.pieces, self.cap)
             .unwrap_or_else(|error| panic!("case {self:?} is out of domain: {error:?}"));
         let result = solve(
             &game.board,
             game.sequence.as_slice(),
             &SolveConfig::new(self.goal, self.beam),
-            table(label),
+            evaluator,
         );
         (
             result.packed(),
@@ -216,6 +220,36 @@ fn the_parity_set_can_tell_the_two_weight_tables_apart() {
         differs >= 2,
         "only {differs} of the parity cases distinguish E0 from E1 — the set has stopped observing scores"
     );
+}
+
+/// How sharp the comparison is, measured: one Q16 unit is 1/65536 of a weight, the
+/// finest step a committed table can take. Two of E1's eight weights already move
+/// the play at that step (measured: `wells` −1 changed 4 of 5 cases, `eroded_cells`
+/// −1 changed 3), so a Move list that matches across the two builds is not merely
+/// agreeing about legality — a porting bug cannot hide in a score.
+#[test]
+fn the_parity_set_resolves_a_one_unit_weight_change() {
+    let cases = cases();
+    for (feature, minimum) in [("wells", 3usize), ("eroded_cells", 2)] {
+        let mut weights = E1_PUBLISHED.as_array();
+        let index = engine::evaluator::DtWeights::FEATURES
+            .iter()
+            .position(|name| *name == feature)
+            .expect("a committed feature name");
+        weights[index] -= 1;
+        let nudged = DellacherieThiery(engine::evaluator::DtWeights::from_array(weights));
+        let mut changed = 0;
+        for case in &cases {
+            if case.solve_with(&nudged) != case.solve("e1") {
+                changed += 1;
+            }
+        }
+        assert!(
+            changed >= minimum,
+            "`{feature}` moved by 1/65536 changed only {changed} of {} cases",
+            cases.len()
+        );
+    }
 }
 
 /// Writes the committed golden. Run it only when a change is *meant* to move
