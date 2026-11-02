@@ -1,0 +1,37 @@
+# The Seed set the Tail search is held to. Every line is one game:
+#
+#   goal  pieces  cap  beam_width  seed
+#
+# The Tail switched on must not change what the Tail switched off reaches for any
+# line here: a game that is won stays won, clears the same Lines, and costs no
+# more Evaluations. This is ticket 04's "Tail search never changes a result the
+# beam already reaches", which §9.2 gate 5 then guards on every push.
+#
+# Two Dataset configurations, at the width ticket 01 measured against. The set is
+# deliberately small: it runs in the debug profile where the suite lives, and the
+# Tail fires on roughly one game in a thousand, so a wide set adds minutes and no
+# coverage. The seed that *does* fire (453) has its own test.
+
+# goal 8 / 40 pieces / cap 7 — the default Dataset configuration.
+8 40 7 25 0
+8 40 7 25 1
+8 40 7 25 2
+8 40 7 25 3
+8 40 7 25 4
+8 40 7 25 5
+8 40 7 25 6
+8 40 7 25 7
+8 40 7 25 8
+8 40 7 25 9
+8 40 7 25 10
+8 40 7 25 11
+8 40 7 25 12
+8 40 7 25 13
+8 40 7 25 14
+8 40 7 25 15
+
+# goal 12 / 100 pieces / cap 7 — the harder Dataset configuration.
+12 100 7 25 0
+12 100 7 25 1
+12 100 7 25 2
+12 100 7 25 3
