@@ -15,9 +15,15 @@
 //!   compared bit for bit, the fingerprint computed twice, the cap, the pairing.
 //! * [`show`] — one game as an ASCII board (the spec's `--pretty`, kept off the
 //!   exporter so no flag can produce a non-canonical `games.txt`).
+//! * [`gate`] — the six Gates of §9.2, one assertion vocabulary and one exit-code
+//!   convention, run by `bench gate <1..6|all>` on every push.
+//! * [`replay`] — gate 3's independent simulator: a Move list replayed on a second
+//!   implementation, which is what makes "it replays" a check.
 
 pub mod dataset;
 pub mod export;
 pub mod fingerprint;
+pub mod gate;
+pub mod replay;
 pub mod show;
 pub mod verify;

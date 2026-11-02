@@ -82,7 +82,11 @@ fn flip_one_bit(path: &Path, seed: u32, column: usize) -> (String, String) {
         }
         out.push('\n');
     }
-    assert!(!before.is_empty(), "seed {seed} is not in {}", path.display());
+    assert!(
+        !before.is_empty(),
+        "seed {seed} is not in {}",
+        path.display()
+    );
     fs::write(path, out).unwrap();
     (before, after)
 }
@@ -152,7 +156,13 @@ fn gate_1_names_the_game_that_moved_bit_for_bit() {
     let paths = scratch_dataset("gate1");
     let (before, after) = flip_one_bit(&games_file(&paths, &dataset::GOAL8), 512, 3);
 
-    let report = gate::run(1, &Options { paths, exe: options().exe });
+    let report = gate::run(
+        1,
+        &Options {
+            paths,
+            exe: options().exe,
+        },
+    );
     let rendered = report.render();
 
     assert_eq!(report.exit_code(), 1, "{rendered}");
@@ -166,7 +176,10 @@ fn gate_1_names_the_game_that_moved_bit_for_bit() {
     assert!(rendered.contains(&after), "{rendered}");
     // Both digests are printed even when exactly one game moved.
     assert!(rendered.contains("4bf1a17b1685a774"), "{rendered}");
-    assert!(rendered.contains("games that differ: 1 of 2000"), "{rendered}");
+    assert!(
+        rendered.contains("games that differ: 1 of 2000"),
+        "{rendered}"
+    );
     // And the failure names itself: a pasted log line says which gate broke.
     assert!(rendered.contains("gate 1 ·"), "{rendered}");
     // The other configuration is untouched and still passes.
@@ -204,10 +217,18 @@ fn gate_2_passes_on_the_committed_dataset() {
 fn gate_2_names_a_manifest_field_that_disagrees() {
     let paths = scratch_dataset("gate2-field");
     let path = manifest_file(&paths, &dataset::GOAL8);
-    let text = fs::read_to_string(&path).unwrap().replace("\"goal\": 8", "\"goal\": 9");
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("\"goal\": 8", "\"goal\": 9");
     fs::write(&path, text).unwrap();
 
-    let report = gate::run(2, &Options { paths, exe: options().exe });
+    let report = gate::run(
+        2,
+        &Options {
+            paths,
+            exe: options().exe,
+        },
+    );
     let rendered = report.render();
     assert_eq!(report.exit_code(), 1, "{rendered}");
     assert!(rendered.contains("manifest field goal"), "{rendered}");
@@ -215,15 +236,45 @@ fn gate_2_names_a_manifest_field_that_disagrees() {
 }
 
 #[test]
-fn gate_2_names_a_seed_that_is_missing() {
-    let paths = scratch_dataset("gate2-seed");
-    drop_a_game_line(&games_file(&paths, &dataset::GOAL8), 500);
+fn gate_2_names_seed_coverage_that_disagrees_with_the_manifest() {
+    // Dropping the last game leaves a file that still parses (0-1998, ascending)
+    // but no longer covers the seeds the manifest declares.
+    let paths = scratch_dataset("gate2-coverage");
+    drop_a_game_line(&games_file(&paths, &dataset::GOAL8), 1999);
 
-    let report = gate::run(2, &Options { paths, exe: options().exe });
+    let report = gate::run(
+        2,
+        &Options {
+            paths,
+            exe: options().exe,
+        },
+    );
     let rendered = report.render();
     assert_eq!(report.exit_code(), 1, "{rendered}");
-    assert!(rendered.contains("500"), "{rendered}");
     assert!(rendered.contains("seed coverage"), "{rendered}");
+    assert!(rendered.contains("1999 games, expected 2000"), "{rendered}");
+    assert!(rendered.contains("last seed is 1999"), "{rendered}");
+}
+
+#[test]
+fn gate_2_surfaces_a_file_it_cannot_parse() {
+    // A gap in the middle is refused by the parser, and gate 2 must report that
+    // refusal as a named assertion rather than panic or pass.
+    let paths = scratch_dataset("gate2-parse");
+    drop_a_game_line(&games_file(&paths, &dataset::GOAL8), 500);
+
+    let report = gate::run(
+        2,
+        &Options {
+            paths,
+            exe: options().exe,
+        },
+    );
+    let rendered = report.render();
+    assert_eq!(report.exit_code(), 1, "{rendered}");
+    assert!(rendered.contains("does not parse"), "{rendered}");
+    assert!(rendered.contains("line 502"), "{rendered}");
+    assert!(rendered.contains("501"), "{rendered}");
 }
 
 // --------------------------------------------------- gate 3, replay validity
@@ -280,7 +331,9 @@ fn gate_3_reports_a_move_list_that_does_not_replay() {
     assert!(message.contains("move 1"), "{message}");
 
     let mut too_many = result.moves.clone();
-    too_many.extend_from_slice(&result.moves);
+    while too_many.len() <= cfg.pieces as usize {
+        too_many.extend_from_slice(&result.moves);
+    }
     let message = replay::replay(&game.board, sequence, &too_many)
         .unwrap_err()
         .to_string();
@@ -301,7 +354,11 @@ fn gate_4_compares_native_against_the_real_artifact() {
         // A bare checkout: the honest answer is "cannot run", never a pass.
         let report = gate::run(4, &options);
         assert_eq!(report.exit_code(), 2, "{}", report.render());
-        assert!(report.render().contains("cannot run"), "{}", report.render());
+        assert!(
+            report.render().contains("cannot run"),
+            "{}",
+            report.render()
+        );
         return;
     }
     let report = gate::run(4, &options);
@@ -320,7 +377,13 @@ fn gate_4_compares_native_against_the_real_artifact() {
 fn gate_4_cannot_run_without_the_artifact() {
     let mut paths = Paths::resolve();
     paths.wasm = paths.data.join("no-such-engine.wasm");
-    let report = gate::run(4, &Options { paths, exe: options().exe });
+    let report = gate::run(
+        4,
+        &Options {
+            paths,
+            exe: options().exe,
+        },
+    );
     let rendered = report.render();
     assert_eq!(report.exit_code(), 2, "{rendered}");
     assert!(!report.passed(), "{rendered}");
@@ -361,9 +424,19 @@ fn gate_6_reports_every_budget_it_measured() {
     let gzip = check(&report, "page gzip");
     assert_eq!(gzip.state, State::Pass, "{rendered}");
     assert!(rendered.contains("warn"), "{rendered}");
-    assert!(rendered.contains("150"), "{rendered}");
+    assert!(
+        rendered.contains(&gate::WASM_FAIL_BYTES.to_string()),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(&gate::PAGE_FAIL_BYTES.to_string()),
+        "{rendered}"
+    );
     // A warn never blocks: the 100 KiB line is reported, the exit code is 0.
-    assert!(rendered.contains("102400") || rendered.contains("100 KiB"), "{rendered}");
+    assert!(
+        rendered.contains("102400") || rendered.contains("100 KiB"),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -379,9 +452,15 @@ fn gate_6_fails_over_the_fail_line_and_names_the_budget() {
     let mut bytes = fs::read(&paths.wasm).unwrap();
     bytes.resize(gate::WASM_FAIL_BYTES as usize + 1, 0);
     fs::write(&big, &bytes).unwrap();
-    paths.wasm = big;
+    paths.wasm = big.clone();
 
-    let report = gate::run(6, &Options { paths, exe: options().exe });
+    let report = gate::run(
+        6,
+        &Options {
+            paths,
+            exe: options().exe,
+        },
+    );
     let rendered = report.render();
     let _ = fs::remove_file(&big);
     assert_eq!(report.exit_code(), 1, "{rendered}");
@@ -398,7 +477,13 @@ fn gate_6_skips_the_golden_half_while_it_is_absent() {
     let mut paths = Paths::resolve();
     // Point at a measurements directory that certainly has no golden file.
     paths.measurements = std::env::temp_dir().join("tetris-lab-03-no-measurements");
-    let report = gate::run(6, &Options { paths, exe: options().exe });
+    let report = gate::run(
+        6,
+        &Options {
+            paths,
+            exe: options().exe,
+        },
+    );
     let rendered = report.render();
     let golden = check(&report, "golden evaluations");
     assert_eq!(golden.state, State::Skip, "{rendered}");
@@ -419,7 +504,13 @@ fn gate_6_refuses_to_pass_once_a_golden_exists() {
     fs::write(dir.join(gate::GOLDEN_FILE), "{}\n").unwrap();
     paths.measurements = dir.clone();
 
-    let report = gate::run(6, &Options { paths, exe: options().exe });
+    let report = gate::run(
+        6,
+        &Options {
+            paths,
+            exe: options().exe,
+        },
+    );
     let rendered = report.render();
     let golden = check(&report, "golden evaluations");
     assert_eq!(golden.state, State::Fail, "{rendered}");
@@ -465,5 +556,10 @@ fn gate_all_runs_all_six_in_order() {
         assert_eq!(report.gate, index as u8 + 1);
     }
     let worst = gate::worst_exit_code(&reports);
-    assert_eq!(worst, 0, "{}", reports.iter().map(Report::render).collect::<String>());
+    assert_eq!(
+        worst,
+        0,
+        "{}",
+        reports.iter().map(Report::render).collect::<String>()
+    );
 }
