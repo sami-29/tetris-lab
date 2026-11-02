@@ -12,10 +12,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use bench::width::{
-    self, Artifact, Bed, BedCost, CapBound, CostRow, DefaultBasis, DefaultSource, MsSource, Options,
-    Paired, Point, QualityAxis, QualityRow, Tally, WIDTHS,
+    self, Artifact, Bed, BedCost, CapBound, CostRow, DefaultBasis, DefaultSource, MsSource,
+    Options, Paired, Point, QualityAxis, QualityRow, Tally, WIDTHS,
 };
 
 const DEFAULT_BED: &str = "goal8-p40-cap7";
@@ -51,17 +52,27 @@ fn scratch(tag: &str) -> PathBuf {
     dir
 }
 
-/// The smallest honest run: two doubling points, one trial of eight seeds, eight
+/// The smallest honest run: two doubling points, one trial of sixteen seeds, eight
 /// quality games, native milliseconds. Milliseconds are the substrate the cap is
 /// *not* named on (it is named on wasm), but every rule above them is the same,
 /// which is what this run is testing.
+///
+/// Sixteen seeds, not eight: the nearest-rank p90 of eight samples *is* the
+/// maximum, so one scheduler hiccup on a shared box would decide the cap and this
+/// test would report a build failure that is not one.
+///
+/// Which width the cap lands on is not asserted anywhere below, deliberately: a
+/// `cargo test` build is unoptimised and solves ~20× slower than the release build
+/// the curve is measured in, so in debug the harder bed at width 50 already misses
+/// the 200 ms budget and the cap is the narrowest point. The shape of the artifact
+/// and the rules above the clock are the same either way, and those are the tests.
 fn quick(out: &Path) -> Options {
     Options {
         data: bench::dataset::root(),
         out: out.to_path_buf(),
         widths: vec![25, 50],
         trials: 1,
-        trial_seeds: 8,
+        trial_seeds: 16,
         quality_games: 8,
         ms_source: MsSource::Native,
         engine_commit: "test0sha".to_string(),
@@ -73,10 +84,22 @@ fn quick(out: &Path) -> Options {
     }
 }
 
+/// One measured run at a time. Four tests in this binary each time real solves, and
+/// `cargo test` runs them in parallel: without this lock they charge each other's
+/// scheduling to the p90 they are measuring.
+static MEASURE: Mutex<()> = Mutex::new(());
+
+fn run_locked(options: &Options) -> Artifact {
+    let _guard = MEASURE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    width::run(options).unwrap_or_else(|error| panic!("run: {error}"))
+}
+
 fn measure_quick(tag: &str) -> Artifact {
     let dir = scratch(tag);
     let opts = quick(&dir.join("width-curve.json"));
-    width::run(&opts).unwrap_or_else(|error| panic!("run: {error}"))
+    run_locked(&opts)
 }
 
 fn committed_path() -> PathBuf {
@@ -175,8 +198,14 @@ fn a_width_ahead_of_the_cap_is_never_behind_it() {
 
 #[test]
 fn the_shortfall_leg_is_exact_integer_arithmetic() {
-    assert_eq!(width::shortfall_wins(tal(990, 1_000), tal(1_000, 1_000)), 10);
-    assert_eq!(width::shortfall_wins(tal(1_000, 1_000), tal(990, 1_000)), -10);
+    assert_eq!(
+        width::shortfall_wins(tal(990, 1_000), tal(1_000, 1_000)),
+        10
+    );
+    assert_eq!(
+        width::shortfall_wins(tal(1_000, 1_000), tal(990, 1_000)),
+        -10
+    );
     assert!(width::shortfall_within_one_point(
         tal(990, 1_000),
         tal(1_000, 1_000)
@@ -231,7 +260,11 @@ fn the_harder_configuration_can_be_the_one_that_binds() {
 
 #[test]
 fn a_curve_that_never_fails_ends_at_the_last_measured_width() {
-    let rows = [cost(25, 3.0, 5.0), cost(50, 6.0, 9.0), cost(100, 12.0, 20.0)];
+    let rows = [
+        cost(25, 3.0, 5.0),
+        cost(50, 6.0, 9.0),
+        cost(100, 12.0, 20.0),
+    ];
     assert_eq!(
         width::width_cap(&rows),
         Ok((100, CapBound::Schedule)),
@@ -271,7 +304,11 @@ fn the_default_is_the_narrowest_width_that_ties_the_cap() {
 
 #[test]
 fn the_default_may_equal_the_cap() {
-    let rows = [row(25, 900, 100, 0), row(50, 950, 50, 0), row(400, 1_000, 0, 0)];
+    let rows = [
+        row(25, 900, 100, 0),
+        row(50, 950, 50, 0),
+        row(400, 1_000, 0, 0),
+    ];
     assert_eq!(
         width::default_beam(&rows),
         (400, DefaultSource::SelfTie),
@@ -393,7 +430,9 @@ fn the_quality_fingerprint_tracks_wins_and_ignores_milliseconds() {
 #[test]
 fn a_measured_curve_names_both_numbers_and_records_every_point() {
     let artifact = measure_quick("names-both");
-    artifact.validate().unwrap_or_else(|error| panic!("{error}"));
+    artifact
+        .validate()
+        .unwrap_or_else(|error| panic!("{error}"));
 
     assert!(WIDTHS.contains(&artifact.default_beam));
     assert!(WIDTHS.contains(&artifact.width_cap));
@@ -418,8 +457,8 @@ fn a_measured_curve_names_both_numbers_and_records_every_point() {
         for bed in &point.cost {
             assert!(bed.ms_p90 > 0.0);
             assert!(bed.matches.wins <= bed.matches.games);
-            // One trial of eight seeds, as `quick` asked for.
-            assert_eq!(bed.matches.games, 8);
+            // One trial of sixteen seeds, as `quick` asked for.
+            assert_eq!(bed.matches.games, 16);
             assert_eq!(bed.trials_ms_p90.len(), 1);
         }
     }
@@ -454,7 +493,7 @@ fn a_measured_curve_names_both_numbers_and_records_every_point() {
 fn the_artifact_is_written_by_the_bench_and_not_hand_edited() {
     let dir = scratch("written");
     let path = dir.join("width-curve.json");
-    let artifact = width::run(&quick(&path)).unwrap_or_else(|error| panic!("run: {error}"));
+    let artifact = run_locked(&quick(&path));
     let text = fs::read_to_string(&path).unwrap();
 
     assert!(text.ends_with("}\n"), "pretty-printed, newline at EOF");
@@ -473,6 +512,71 @@ fn the_artifact_is_written_by_the_bench_and_not_hand_edited() {
     // The two budgets, as numbers, on the record.
     assert!(text.contains("\"default_ms\": 200"));
     assert!(text.contains("\"harder_ms\": 1000"));
+    // The curve's own honesty about its coverage, and the stop rule's verdict.
+    assert!(
+        text.contains("\"complete\": true"),
+        "nothing was missing here"
+    );
+    assert!(text.contains("\"missing_widths\": []"));
+    assert!(text.contains("\"incomplete_reason\": \"\""));
+    assert!(text.contains("\"quality_stop_rule_fired_at\""));
+}
+
+#[test]
+fn a_curve_that_did_not_measure_every_point_says_which_ones_and_why() {
+    // The default width list is the pre-registered nine; the cost sweep stops at
+    // the first failure, so the wider points are unmeasured by rule, not by
+    // accident. That is `complete: false` with a reason — not a curve that claims
+    // to have measured 6,400.
+    let mut artifact = measure_quick("coverage");
+    artifact.complete = false;
+    artifact.missing_widths = vec![3_200, 6_400];
+    assert!(
+        artifact.validate().is_err(),
+        "a partial curve must say why the widths are missing"
+    );
+    artifact.incomplete_reason =
+        "the cost sweep stopped at width 1600 (the pre-registered stop rule)".to_string();
+    assert_eq!(artifact.validate(), Ok(()));
+
+    // And the other direction: a complete curve cannot carry either field.
+    artifact.complete = true;
+    assert!(
+        artifact.validate().is_err(),
+        "a complete curve measured every doubling point, so nothing can be missing"
+    );
+    artifact.missing_widths.clear();
+    assert!(
+        artifact.validate().is_err(),
+        "a complete curve has nothing to explain"
+    );
+    artifact.incomplete_reason.clear();
+    assert_eq!(artifact.validate(), Ok(()));
+}
+
+#[test]
+fn validate_refuses_a_curve_whose_quality_axis_is_still_pending() {
+    // The in-flight copy a run rewrites mid-measurement is not a result: it must
+    // not be mistakable for one.
+    let mut artifact = measure_quick("pending");
+    artifact.quality_axis = QualityAxis::Pending;
+    assert!(artifact.validate().is_err());
+}
+
+#[test]
+fn validate_refuses_a_width_below_the_cap_with_no_wins_recorded() {
+    let mut artifact = measure_quick("no-quality-row");
+    // §9.5's tie is judged against the cap, so the cap's own row is a row: a curve
+    // that names a default from wins it did not record is not evidence.
+    let cap = artifact.width_cap;
+    let point = artifact
+        .points
+        .iter_mut()
+        .find(|point| point.width == cap)
+        .unwrap_or_else(|| panic!("the cap {cap} is a measured point"));
+    assert!(point.quality.is_some(), "the cap carries its wins");
+    point.quality = None;
+    assert!(artifact.validate().is_err());
 }
 
 #[test]
@@ -484,6 +588,23 @@ fn a_saturated_pilot_is_recorded_as_having_no_quality_resolution() {
     assert_eq!(artifact.quality_axis, QualityAxis::NoResolution);
     assert_eq!(artifact.default_beam_basis, DefaultBasis::Cost);
     assert_eq!(artifact.default_beam, 25);
+    // And the one line a reader reads first says it plainly, with the counts that
+    // justify the fallback.
+    assert!(
+        artifact.reason.contains("quality axis could not separate"),
+        "reason: {}",
+        artifact.reason
+    );
+    assert!(
+        artifact.reason.contains("named on cost"),
+        "{}",
+        artifact.reason
+    );
+    assert!(
+        artifact.reason.contains("goal16-p160-cap7 wins 8/8"),
+        "{}",
+        artifact.reason
+    );
 }
 
 #[test]

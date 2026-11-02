@@ -15,9 +15,12 @@
 //!   compared bit for bit, the fingerprint computed twice, the cap, the pairing.
 //! * [`show`] — one game as an ASCII board (the spec's `--pretty`, kept off the
 //!   exporter so no flag can produce a non-canonical `games.txt`).
+//! * [`width`] — §9.5's width curve: the two numbers the page hangs on, measured
+//!   once and written to `data/measurements/width-curve.json`.
 
 pub mod dataset;
 pub mod export;
 pub mod fingerprint;
 pub mod show;
 pub mod verify;
+pub mod width;
