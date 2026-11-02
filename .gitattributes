@@ -1,0 +1,4 @@
+# The Dataset's bytes are the committed artifact: pin them so `core.autocrlf`
+# cannot hand a contributor CRLF in the worktree and a byte comparison stays
+# meaningful. The fingerprint itself is semantic (§6.1) and does not care.
+data/dataset/** -text
