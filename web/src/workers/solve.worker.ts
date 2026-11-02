@@ -99,7 +99,14 @@ scope.onmessage = async (event: MessageEvent<ToWorker>): Promise<void> => {
     const sequence = loaded.sequence(message.pieces);
 
     const started = performance.now();
-    const outcome = loaded.solve(message.goal, message.beamWidth);
+    // §2.3: the interactive solve is traced, the batch path is not. The band is
+    // the request's, and the packed result is identical either way.
+    const traced = typeof message.band === "number";
+    const outcome = traced
+      ? loaded.solveTraced(message.goal, message.beamWidth, message.band as number)
+      : loaded.solve(message.goal, message.beamWidth);
+    // Copy the trace out before the next call can overwrite the region.
+    const trace = traced ? loaded.traceWords() : undefined;
     const elapsedMs = performance.now() - started;
 
     if (outcome.status !== 0) {
@@ -128,6 +135,8 @@ scope.onmessage = async (event: MessageEvent<ToWorker>): Promise<void> => {
       outcome,
       moves,
       elapsedMs,
+      trace,
+      band: traced ? message.band : undefined,
     });
   } catch (error) {
     drop();

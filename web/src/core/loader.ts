@@ -20,6 +20,8 @@
 //   0x140 moves     200 × u32 (piece_index << 16) | (rotation << 8) | column
 //   0x460 end of the ABI region; nothing may map below this
 
+import { DEFAULT_BEAM } from "../config/width.ts";
+
 /** §4 row 1. Checked at boot; a mismatch is fatal. */
 export const ABI_VERSION = 2;
 
@@ -32,13 +34,27 @@ export const MOVES_MAX = 200;
 export const ABI_END = 0x460;
 
 /**
- * Reserved once at boot for the buffers §4 grows into later: the trace
- * (`band × pieces × 20` bytes, ticket 05) and a batch summary. Ticket 01 does not
- * allocate them — the sizing decision belongs to the ticket that reads them — so
- * the reservation is deliberately small; what matters now is that the app has
- * exactly one `alloc` and one place that knows the offsets.
+ * §2.3's traced band, and the only width this module needs: `DEFAULT_BEAM`, read
+ * at build time from the committed width curve. The band never exceeds the beam
+ * the page asks for, so a visitor who *widens* the beam still gets a legal trace —
+ * the top `DEFAULT_BEAM` states of each Layer, with the parents it did not keep
+ * named `-2` rather than left dangling.
  */
-export const BOOT_SCRATCH_BYTES = 64 * 1024;
+export const TRACE_BAND = DEFAULT_BEAM;
+
+/**
+ * §4.4's trace region: `band × pieces × 20` bytes, allocated **once at boot**
+ * through `alloc` and never freed. `band` is `DEFAULT_BEAM` (§2.3: the band *is*
+ * the beam) and `pieces` is the ABI's maximum (§5.8), so one region serves every
+ * game the page can ask for. At the measured `DEFAULT_BEAM` of 25 that is 100,000
+ * bytes, not the 12.8 MB the pre-measurement notes budgeted for.
+ *
+ * The region is also §4.4's *first* allocation, which is how `solve_traced` finds
+ * it without a pointer argument (`engine-wasm/src/buffers.rs`), so nothing may be
+ * allocated before it.
+ */
+export const TRACE_MAX_PIECES = 200;
+export const TRACE_BYTES = TRACE_BAND * TRACE_MAX_PIECES * 20;
 
 /** The artifact speaks a different ABI than this page: fatal, always. */
 export class AbiMismatchError extends Error {
@@ -68,8 +84,10 @@ export interface SolveOutcome {
 
 export interface Engine {
   readonly abiVersion: number;
-  /** The boot `alloc` offset. Kept so a later ticket can reuse the reservation. */
+  /** The boot `alloc` offset: §4.4's trace region. */
   readonly scratchOffset: number;
+  /** The bytes the trace region can hold (`TRACE_BYTES`). */
+  readonly traceBytes: number;
   /** §4 `gen_game`. 0 on success, otherwise a typed status code. */
   genGame(seed: number, pieces: number, heightCap: number): number;
   /** The Board at 0x00 as ten column words. A fresh view every call. */
@@ -78,6 +96,17 @@ export interface Engine {
   sequence(count: number): string;
   /** §4 `solve`. Never throws for an expected failure; the status carries it. */
   solve(goal: number, beamWidth: number): SolveOutcome;
+  /**
+   * §4 `solve_traced`: `solve`, and §4.4's trace into the boot region. The packed
+   * result is bit-identical to `solve`'s, asserted in `web/test/solve-traced.test.mjs`.
+   */
+  solveTraced(goal: number, beamWidth: number, band: number): SolveOutcome;
+  /**
+   * §4.4's trace words, copied out: `[n, ...5·n i32]`. A fresh copy every call,
+   * because the region is overwritten by the next `solve_traced` and a view over
+   * it may detach on a memory growth.
+   */
+  traceWords(): Int32Array;
   /** The Move words at 0x140, `count` of them. A fresh view every call. */
   moves(count: number): Uint32Array;
   /** §4 `alloc`: a byte offset, never freed. Exposed for the growth test. */
@@ -103,6 +132,7 @@ interface Exports {
   alloc(len: number): number;
   gen_game(seed: number, pieces: number, heightCap: number): number;
   solve(goal: number, beamWidth: number): bigint;
+  solve_traced(goal: number, beamWidth: number, band: number): bigint;
 }
 
 /**
@@ -121,7 +151,7 @@ export function unpackResult(raw: bigint | number): SolveOutcome {
 }
 
 const HANDSHAKE_EXPORTS = ["memory", "abi_version"] as const;
-const ABI_EXPORTS = ["alloc", "gen_game", "solve"] as const;
+const ABI_EXPORTS = ["alloc", "gen_game", "solve", "solve_traced"] as const;
 
 /**
  * Instantiate a module and hand back the loader's engine.
@@ -159,7 +189,7 @@ function boot(instance: WebAssembly.Instance): Engine {
   }
 
   const allocBytes = (len: number): number => exports.alloc!(len);
-  const scratchOffset = allocBytes(BOOT_SCRATCH_BYTES);
+  const scratchOffset = allocBytes(TRACE_BYTES);
 
   // Every accessor rebuilds its view: memory may have grown since the last call,
   // and a view taken across a growth has a byteLength of 0.
@@ -172,6 +202,7 @@ function boot(instance: WebAssembly.Instance): Engine {
   return {
     abiVersion,
     scratchOffset,
+    traceBytes: TRACE_BYTES,
 
     genGame(seed, pieces, heightCap) {
       return exports.gen_game!(seed, pieces, heightCap);
@@ -188,6 +219,25 @@ function boot(instance: WebAssembly.Instance): Engine {
 
     solve(goal, beamWidth) {
       return unpackResult(exports.solve!(goal, beamWidth));
+    },
+
+    solveTraced(goal, beamWidth, band) {
+      return unpackResult(exports.solve_traced!(goal, beamWidth, band));
+    },
+
+    traceWords() {
+      // A fresh view, read after the call and copied out: `memory.buffer` is
+      // replaced on growth, and the region is overwritten by the next traced
+      // solve (§4.1's "never cache a TypedArray across a call").
+      const base = scratchOffset >>> 2;
+      const memoryWords = new Int32Array(memory().buffer);
+      const count = memoryWords[base];
+      if (count < 0 || 4 + 20 * count > TRACE_BYTES) {
+        // A count the region cannot hold means the trace is not this instance's:
+        // report an empty trace rather than read past the allocation.
+        return new Int32Array(1);
+      }
+      return memoryWords.slice(base, base + 1 + 5 * count);
     },
 
     moves(count) {

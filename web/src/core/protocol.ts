@@ -27,6 +27,12 @@ export interface SolveRequest extends GameInput {
   type: "solve";
   /** Echoed back so a stale answer can be dropped by the page. */
   requestId: number;
+  /**
+   * §2.3's band: ask for `solve_traced` at this many records per Layer. Absent
+   * means a plain `solve` (the Run path needs no trace), which is why it is
+   * optional rather than a second message type.
+   */
+  band?: number;
 }
 
 export type ToWorker = BootRequest | SolveRequest;
@@ -53,6 +59,13 @@ export interface GameMessage {
   moves: Uint32Array;
   /** The `solve` call's wall clock, for the status line. */
   elapsedMs: number;
+  /**
+   * §4.4's trace words, `[n, ...5·n i32]`, when the request asked for a band. A
+   * copy, taken in the worker before anything else can overwrite the region.
+   */
+  trace?: Int32Array;
+  /** The band the trace was recorded at, echoed for the labels. */
+  band?: number;
 }
 
 /** A failure worth showing: a status code, a trap, or a mismatched ABI. */
