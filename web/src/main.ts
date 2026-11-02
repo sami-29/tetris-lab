@@ -1,29 +1,36 @@
-// The page: boot the worker, ask for the default game, draw the starting Board,
-// then play the engine's Move list back piece by piece.
+// The page: boot the worker, ask for the default game, and make the Solve
+// something a visitor can watch properly.
 //
-// Ticket 01 stops here on purpose. There are no controls — the seed, the goal, the
-// piece count, the height cap and the Beam width are the defaults of §2.2 — and no
-// visual system; both arrive in later tickets (13 and 14). What this file has to be
-// is *correct*: every figure it prints came out of wasm, and the board it draws is
-// the board the engine solved.
+// Ticket 01 stopped at "it plays back". This file is ticket 10's half: a
+// continuous speed control, a move strip that is a seek bar, pause / resume /
+// restart from the keyboard and from a control, and a keyboard map a visitor can
+// find. It owns no animation of its own — `ui/playback.ts` draws every frame from
+// `(k, into)`, `ui/clock.ts` owns the playhead and `ui/timeline.ts` owns the boards
+// — so this file is the wiring: one listener per input, one repaint per change.
+//
+// There is still no visual system here. Ticket 14 replaces this shell; what it must
+// find intact is the behaviour and `PALETTE` (the canvas's whole colour system).
 
 import engineWasmUrl from "../pkg/engine.wasm?url";
 
 import type { FromWorker, GameMessage, GameInput, ToWorker } from "./core/protocol.ts";
 import { fieldFrom } from "./ui/field.ts";
 import { BoardView } from "./ui/board.ts";
-import { Playback } from "./ui/playback.ts";
+import { Playback, type PlaybackStatus } from "./ui/playback.ts";
 import { letterOf } from "./ui/pieces.ts";
+import { MPS_DEFAULT, MPS_MAX, MPS_MIN, mpsToSlider, msPerMove, sliderToMps } from "./ui/phases.ts";
+import { KEY_MAP, SPEED_STOP, resolveKey, type Action } from "./ui/keys.ts";
+import { moveToX, stripMode, xToMove } from "./ui/seek.ts";
 
 /**
- * §2.2's defaults. `DEFAULT_BEAM` is read at build time from the committed
- * width-curve artifact, which does not exist until the measurement ticket lands;
- * 25 is the width this ticket's own tests solve at and the value the page ships
- * with until then.
+ * §4's handshake number, echoed in the status line. The loader checks it.
  */
-/** §4's handshake number, echoed in the status line. The loader checks it. */
 const ABI = 2;
 
+/**
+ * §2.2's defaults. `beamWidth` is 25 until the measured width curve lands, which is
+ * the value every test in `web/test/` solves at.
+ */
 const DEFAULTS: GameInput = {
   seed: 0,
   goal: 8,
@@ -32,23 +39,43 @@ const DEFAULTS: GameInput = {
   beamWidth: 25,
 };
 
-const canvas = document.querySelector<HTMLCanvasElement>("#board");
-const statusLine = document.querySelector<HTMLElement>("#status");
-const outcomeLine = document.querySelector<HTMLElement>("#outcome");
-const progressLine = document.querySelector<HTMLElement>("#progress");
-
-if (!canvas || !statusLine || !outcomeLine || !progressLine) {
-  throw new Error("index.html is missing #board, #status, #outcome or #progress");
+/** Every element the page needs, or a loud failure at boot. */
+function must<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (!element) throw new Error(`index.html is missing ${selector}`);
+  return element;
 }
 
+const canvas = must<HTMLCanvasElement>("#board");
+const statusLine = must<HTMLElement>("#status");
+const outcomeLine = must<HTMLElement>("#outcome");
+const progressLine = must<HTMLElement>("#progress");
+const playButton = must<HTMLButtonElement>("#play");
+const restartButton = must<HTMLButtonElement>("#restart");
+const speedSlider = must<HTMLInputElement>("#speed");
+const speedReadout = must<HTMLOutputElement>("#speed-readout");
+const strip = must<HTMLElement>("#strip");
+const caret = must<HTMLElement>("#caret");
+const sheet = must<HTMLElement>("#sheet");
+const sheetList = must<HTMLElement>("#sheet-list");
+const keysButton = must<HTMLButtonElement>("#keys-button");
+
 const view = new BoardView(canvas);
-const status = { line: statusLine, outcome: outcomeLine, progress: progressLine };
+const lines = { status: statusLine, outcome: outcomeLine, progress: progressLine };
 
 let worker: Worker | null = null;
 let playback: Playback | null = null;
+let game: GameMessage | null = null;
 let startTimer = 0;
 let nextRequestId = 1;
 let pending = 0;
+/** What the strip must repaint, so a 200-Move strip is not rewritten 60 times a second. */
+let painted = { k: -1, total: -1 };
+/** The speed survives a new Solve: it is the visitor's setting, not the game's. */
+let speed = MPS_DEFAULT;
+/** Set while a pointer drag on the strip is in progress, so we resume afterwards. */
+let dragging = false;
+let resumeAfterDrag = false;
 
 function say(element: HTMLElement, text: string, tone: "plain" | "error" = "plain"): void {
   element.textContent = text;
@@ -66,7 +93,7 @@ function spawn(): void {
   });
   worker.onmessage = (event: MessageEvent<FromWorker>) => receive(event.data);
   worker.onerror = (event: ErrorEvent) => {
-    say(status.line, `worker error: ${event.message || "unknown"}`, "error");
+    say(lines.status, `worker error: ${event.message || "unknown"}`, "error");
   };
   const boot: ToWorker = { type: "boot", wasmUrl: engineWasmUrl };
   worker.postMessage(boot);
@@ -77,15 +104,18 @@ function requestGame(input: GameInput): void {
   pending = nextRequestId;
   nextRequestId += 1;
   const message: ToWorker = { type: "solve", requestId: pending, ...input };
-  say(status.line, `${describe(input)} — solving…`);
-  say(status.outcome, "");
+  say(lines.status, `${describe(input)} — solving…`);
+  say(lines.outcome, "");
   worker.postMessage(message);
 }
 
 function receive(message: FromWorker): void {
   switch (message.type) {
     case "ready": {
-      say(status.line, `wasm ready · abi ${message.abiVersion} · scratch at 0x${message.scratchOffset.toString(16)}`);
+      say(
+        lines.status,
+        `wasm ready · abi ${message.abiVersion} · scratch at 0x${message.scratchOffset.toString(16)}`,
+      );
       requestGame(DEFAULTS);
       return;
     }
@@ -97,8 +127,8 @@ function receive(message: FromWorker): void {
     case "error": {
       if (message.requestId !== 0 && message.requestId !== pending) return;
       const fatal = message.code === "abi-mismatch";
-      say(status.line, `${fatal ? "fatal" : "error"}: ${message.message}`, "error");
-      say(status.outcome, "", "error");
+      say(lines.status, `${fatal ? "fatal" : "error"}: ${message.message}`, "error");
+      say(lines.outcome, "", "error");
       // A trap costs the instance, so a fresh worker replaces it. A mismatch does
       // not: retrying a stale artifact forever would be worse than saying so.
       if (!fatal) {
@@ -110,48 +140,264 @@ function receive(message: FromWorker): void {
   }
 }
 
-function show(game: GameMessage): void {
-  const { input, outcome } = game;
+/** Where a Move is in words, so no figure on the page is unlabelled. */
+function describePosition(state: PlaybackStatus): string {
+  const total = state.total;
+  const k = Math.min(state.played, total);
+  const pieceIndex = game && k < total ? (game.moves[k] >>> 16) & 0xff : null;
+  const piece = pieceIndex === null ? "" : ` · next ${letterOf(pieceIndex)}`;
+  const goal = game ? ` of ${game.input.goal}` : "";
+  const pace = `${state.speed.toFixed(2)} moves/s · ${(msPerMove(state.speed) / 1000).toFixed(2)} s per move`;
+  return `Move ${k} of ${total}${piece} · ${state.lines}${goal} lines cleared · ${pace} · ${state.playing ? "playing" : "paused"}`;
+}
 
-  say(status.line, `${describe(input)} · wasm abi ${ABI} · ${game.sequence.length} pieces in the Sequence`);
+function paintStrip(k: number, total: number): void {
+  if (painted.total !== total) {
+    strip.innerHTML = "";
+    const mode = stripMode(total);
+    for (let index = 0; index < total; index += 1) {
+      const cell = document.createElement("i");
+      const word = game?.moves[index];
+      const clears = word === undefined ? false : Boolean(clearedMoveFlag[index]);
+      if (clears) cell.dataset.clears = "true";
+      cell.title =
+        word === undefined
+          ? `Move ${index + 1}`
+          : `Move ${index + 1} · ${letterOf((word >>> 16) & 0xff)}${clears ? " · clears rows" : ""}`;
+      if (mode === "tick") cell.dataset.tick = "true";
+      strip.append(cell);
+    }
+    strip.dataset.mode = mode;
+    strip.setAttribute("aria-valuemax", String(total));
+    painted = { k: -1, total };
+  }
+  strip.setAttribute("aria-valuenow", String(k));
+  strip.setAttribute("aria-valuetext", `Move ${k} of ${total}`);
+  // Repaint one index, not the whole strip: at 60 Hz a 200-Move strip would
+  // otherwise be 12,000 DOM writes a second.
+  if (painted.k === k) return;
+  const cells = strip.children;
+  for (let index = 0; index < cells.length; index += 1) {
+    const cell = cells[index];
+    const played = index < k;
+    if (cell.getAttribute("data-played") !== String(played)) {
+      cell.setAttribute("data-played", String(played));
+    }
+    const current = index === k - 1;
+    if (cell.getAttribute("data-current") !== String(current)) {
+      cell.setAttribute("data-current", String(current));
+    }
+  }
+  const width = strip.clientWidth;
+  caret.style.left = `${moveToX(k, width, total) - 1}px`;
+  painted.k = k;
+}
 
-  const verdict = outcome.won ? "won" : "lost";
+/** Which Moves clear rows, computed once per game from the replay. */
+let clearedMoveFlag: boolean[] = [];
+
+function show(message: GameMessage): void {
+  const { input, outcome } = message;
+  game = message;
+
   say(
-    status.outcome,
-    `${verdict} · ${outcome.lines} of ${input.goal} lines cleared · ${outcome.evaluations} evaluations · ${outcome.moveCount} moves · ${game.elapsedMs.toFixed(1)} ms`,
+    lines.status,
+    `${describe(input)} · wasm abi ${ABI} · ${message.sequence.length} pieces in the Sequence`,
+  );
+  say(
+    lines.outcome,
+    `${outcome.won ? "won" : "lost"} · ${outcome.lines} of ${input.goal} lines cleared · ${outcome.evaluations} evaluations · ${outcome.moveCount} moves · ${message.elapsedMs.toFixed(1)} ms`,
   );
 
   if (playback) playback.stop();
-  say(status.progress, `move 1 of ${outcome.moveCount} · 0 of ${outcome.lines} lines replayed`);
   view.resize();
-  view.draw(fieldFrom(game.board));
+  view.draw(fieldFrom(message.board));
 
-  playback = new Playback(view, game, {
+  playback = new Playback(view, message, {
+    speed,
     onStatus(state) {
-      const next = game.moves[state.played];
-      const piece = next === undefined ? null : letterOf((next >>> 16) & 0xff);
-      const move = state.played + 1 > state.total ? state.total : state.played + 1;
-      say(
-        status.progress,
-        `move ${move} of ${state.total}${piece ? ` · ${piece}` : ""} · ${state.lines} of ${outcome.lines} lines replayed`,
-      );
+      say(lines.progress, describePosition(state));
+      paintStrip(Math.min(state.played, state.total), state.total);
+      playButton.textContent = state.atEnd ? "replay" : state.playing ? "pause" : "play";
+      playButton.setAttribute("aria-pressed", String(state.playing));
+      playButton.setAttribute("aria-label", state.atEnd ? "Replay from the start" : state.playing ? "Pause" : "Play");
     },
   });
+
+  clearedMoveFlag = playback.timeline.steps.map((step) => step.cleared.length > 0);
+  painted = { k: -1, total: -1 };
+  paintStrip(0, playback.timeline.steps.length);
 
   // Show the starting position before anything moves: the solve is about a real
   // board, and a visitor should see it.
   if (startTimer !== 0) clearTimeout(startTimer);
   startTimer = globalThis.setTimeout(() => {
     startTimer = 0;
-    playback?.start();
+    playback?.play();
   }, 400);
 }
 
-globalThis.addEventListener("resize", () => {
-  view.resize();
-  if (!playback) view.draw(fieldFrom(new Uint32Array(10)));
+/* ---- controls ---------------------------------------------------------- */
+
+function currentK(): number {
+  return playback ? playback.k : 0;
+}
+
+function scrubTo(k: number): void {
+  if (!playback) return;
+  playback.seek(k);
+}
+
+function setSpeed(next: number): void {
+  speed = next;
+  if (playback) playback.setSpeed(speed);
+  speedSlider.value = String(mpsToSlider(speed));
+  const label = `${speed.toFixed(2)} moves/s · ${(msPerMove(speed) / 1000).toFixed(2)} s per move`;
+  speedReadout.textContent = label;
+  speedSlider.setAttribute("aria-valuetext", label);
+}
+
+function run(action: Action): void {
+  if (!playback) return;
+  switch (action.type) {
+    case "toggle":
+      playback.toggle();
+      return;
+    case "nudge":
+      scrubTo(currentK() + action.delta);
+      return;
+    case "edge":
+      scrubTo(action.to === "start" ? 0 : playback.timeline.steps.length);
+      return;
+    case "speed": {
+      // One key press is one stop on the log scale, so the keys land on the same
+      // lattice the slider does.
+      const stop = Math.log(SPEED_STOP) / Math.log(MPS_MAX / MPS_MIN);
+      setSpeed(sliderToMps(Math.min(1, Math.max(0, mpsToSlider(speed) + action.direction * stop))));
+      return;
+    }
+    case "restart":
+      playback.restart();
+      return;
+    case "keys":
+      setSheet(sheet.dataset.open !== "true");
+      return;
+    case "close":
+      setSheet(false);
+      return;
+  }
+}
+
+/**
+ * Show or hide the keyboard map.
+ *
+ * Focus moves to the sheet (so Escape and the map's own keys are the page's, not a
+ * focused button's) and back to the strip on close (so Space is play/pause again
+ * rather than "click the button that was last pressed").
+ */
+function setSheet(open: boolean): void {
+  sheet.dataset.open = String(open);
+  if (open) sheet.focus();
+  else strip.focus();
+}
+
+/* ---- the move strip is the seek bar ------------------------------------ */
+
+strip.addEventListener("pointerdown", (event) => {
+  if (!playback) return;
+  event.preventDefault();
+  strip.focus();
+  strip.setPointerCapture(event.pointerId);
+  dragging = true;
+  resumeAfterDrag = playback.playing;
+  const rect = strip.getBoundingClientRect();
+  scrubTo(xToMove(event.clientX - rect.left, rect.width, playback.timeline.steps.length));
 });
 
+strip.addEventListener("pointermove", (event) => {
+  if (!dragging || !playback) return;
+  const rect = strip.getBoundingClientRect();
+  scrubTo(xToMove(event.clientX - rect.left, rect.width, playback.timeline.steps.length));
+});
+
+const endDrag = (event: PointerEvent): void => {
+  if (!dragging || !playback) return;
+  dragging = false;
+  if (strip.hasPointerCapture(event.pointerId)) strip.releasePointerCapture(event.pointerId);
+  // Playing from a scrubbed position continues from that Move's own board: the
+  // clock resumes at `k`, and step `k + 1` starts from `reconstruct(k)`.
+  if (resumeAfterDrag) playback.play();
+  resumeAfterDrag = false;
+};
+
+strip.addEventListener("pointerup", endDrag);
+strip.addEventListener("pointercancel", endDrag);
+
+/* ---- the transport ---------------------------------------------------- */
+
+playButton.addEventListener("click", () => {
+  playback?.toggle();
+});
+
+restartButton.addEventListener("click", () => {
+  playback?.restart();
+});
+
+speedSlider.addEventListener("input", () => {
+  setSpeed(sliderToMps(Number(speedSlider.value)));
+});
+
+/* ---- the keyboard ----------------------------------------------------- */
+
+globalThis.addEventListener("keydown", (event) => {
+  const action = resolveKey(event);
+  if (!action) return;
+  // Every key in the map is one the browser would otherwise use (scrolling,
+  // find-as-you-type, the focused control's own keys), so take it deliberately.
+  event.preventDefault();
+  run(action);
+});
+
+// A hidden tab's animation frames are unpredictable, so pause instead of trusting
+// them: the clock's stall guard covers the rest (`STALL_MS`).
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && playback?.playing) playback.pause();
+});
+
+/* ---- the keyboard map, in words -------------------------------------- */
+
+for (const { keys: chord, does } of KEY_MAP) {
+  const term = document.createElement("dt");
+  for (const key of chord.split(" ")) {
+    const chip = document.createElement("span");
+    chip.className = "kbd";
+    chip.textContent = key;
+    term.append(" ", chip);
+  }
+  const detail = document.createElement("dd");
+  detail.textContent = does;
+  sheetList.append(term, detail);
+}
+sheet.addEventListener("click", (event) => {
+  if (event.target === sheet) setSheet(false);
+});
+keysButton.addEventListener("click", () => setSheet(sheet.dataset.open !== "true"));
+
+/* ---- first paint ------------------------------------------------------ */
+
+globalThis.addEventListener("resize", () => {
+  view.resize();
+  if (playback) {
+    playback.draw();
+    painted = { k: -1, total: painted.total };
+    paintStrip(currentK(), painted.total);
+  } else {
+    view.draw(fieldFrom(new Uint32Array(10)));
+  }
+});
+
+setSpeed(speed);
+sheet.dataset.open = "false";
 view.resize();
 view.draw(fieldFrom(new Uint32Array(10)));
 spawn();

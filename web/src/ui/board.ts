@@ -17,17 +17,51 @@ export interface Overlay {
   piece?: ReadonlyArray<{ col: number; row: number }>;
   /** Cells of where it will land, drawn as an outline. */
   ghost?: ReadonlyArray<{ col: number; row: number }>;
-  /** Board rows that are full right now, flashed before they collapse. */
+  /**
+   * The settled cells of a clear in progress, at their interpolated rows. A clear
+   * moves cells, so a renderer that carries them here is drawing the collapse; the
+   * board underneath is empty while it does.
+   */
+  cells?: ReadonlyArray<{ col: number; row: number }>;
+  /**
+   * The cleared rows, contracting away: `squeeze` is the fraction of a cell height
+   * the band still occupies, anchored at the band's top edge so the gap opens
+   * downward. A band is never a translucent flash over the finished board.
+   */
+  bands?: ReadonlyArray<{ row: number; squeeze: number }>;
+  /** The piece has just touched down: draw it with a bright contact edge. */
+  impact?: boolean;
+  /** Board rows that are full right now. Kept for a caller that wants a plain flash. */
   clearRows?: readonly number[];
 }
 
-const BACKGROUND = "#0b0f14";
-const GRID = "#1a2430";
-const SETTLED = "#7f9dc0";
-const SETTLED_EDGE = "#a8c2e0";
-const IN_FLIGHT = "#e8f0ff";
-const GHOST = "#3a4d63";
-const CLEAR = "#d7e4f5";
+/**
+ * The palette, in one place.
+ *
+ * Ticket 14 replaces this shell and its chrome; when it does, this object is the
+ * whole colour system the board draws from, so the change is one file and not a
+ * search for hex literals.
+ */
+export const PALETTE = {
+  background: "#0b0f14",
+  grid: "#1a2430",
+  settled: "#7f9dc0",
+  settledEdge: "#a8c2e0",
+  /** The piece in flight. */
+  inFlight: "#e8f0ff",
+  ghost: "#3a4d63",
+  /** A cleared row's band, contracting. */
+  clear: "#d7e4f5",
+  /** The contact edge of a piece that has just landed. */
+  impact: "#ffffff",
+} as const;
+
+const { background: BACKGROUND, grid: GRID } = PALETTE;
+const SETTLED = PALETTE.settled;
+const SETTLED_EDGE = PALETTE.settledEdge;
+const IN_FLIGHT = PALETTE.inFlight;
+const GHOST = PALETTE.ghost;
+const CLEAR = PALETTE.clear;
 
 export class BoardView {
   private readonly canvas: HTMLCanvasElement;
@@ -108,6 +142,23 @@ export class BoardView {
       ctx.globalAlpha = 1;
     }
 
+    // The settled cells of a collapse: the same cell rects as the stack, at rows
+    // that may be fractional, so the segments visibly fall rather than jump.
+    for (const { col, row } of overlay.cells ?? []) {
+      this.cellRect(col, row, SETTLED, SETTLED_EDGE);
+    }
+
+    // The cleared bands, contracting from their top edge: draw them after the
+    // moving cells so a cell never shows through a gap it has already passed.
+    for (const band of overlay.bands ?? []) {
+      const height = Math.max(0, Math.min(1, band.squeeze)) * cell;
+      if (height <= 0.5) continue;
+      ctx.fillStyle = CLEAR;
+      ctx.globalAlpha = Math.min(1, 0.35 + band.squeeze);
+      ctx.fillRect(this.originX, this.originY + band.row * cell, cell * W, height);
+      ctx.globalAlpha = 1;
+    }
+
     for (const { col, row } of overlay.ghost ?? []) {
       ctx.strokeStyle = GHOST;
       ctx.lineWidth = 1;
@@ -115,7 +166,16 @@ export class BoardView {
     }
 
     for (const { col, row } of overlay.piece ?? []) {
-      this.cellRect(col, row, IN_FLIGHT, "#ffffff");
+      this.cellRect(col, row, IN_FLIGHT, overlay.impact ? PALETTE.impact : "#ffffff");
+    }
+
+    // A landed piece leaves a contact edge under its lowest cells for a beat: the
+    // difference between "it arrived" and "it appeared at the bottom".
+    if (overlay.impact && (overlay.piece?.length ?? 0) > 0) {
+      ctx.fillStyle = PALETTE.impact;
+      for (const { col, row } of overlay.piece!) {
+        ctx.fillRect(this.originX + col * cell + 1, this.originY + (row + 1) * cell - 2, cell - 2, 2);
+      }
     }
 
     // The well's edge last, so nothing painted over it.

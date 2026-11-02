@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Headless acceptance for the page: open it in a real browser, watch a real wasm
-// instance solve a real game, and check the board actually plays back.
+// instance solve a real game, drive the controls the way a visitor does, and read
+// the pixels back.
 //
 //   node scripts/browser-check.mjs                 # serves dist/ itself
 //   node scripts/browser-check.mjs --url https://… # against a live URL
@@ -8,9 +9,14 @@
 //
 // No dependencies: a static file server, then the Chrome DevTools Protocol over
 // Node's built-in WebSocket (the shape `host-probe/browser-check.mjs` established).
-// It asserts what a test can honestly assert about a canvas — that the page solved,
-// that playback advances, that the drawn stack changes as pieces land and rows
-// collapse — and writes a screenshot for the judgment a test cannot make.
+//
+// What it checks, and why it is here rather than in `node --test`: everything below
+// needs a real page. That the Solve arrives; that a **gesture** on the move strip
+// lands on a Move and the board drawn is the engine's board at that Move; that the
+// arrow keys, Space, Home/End, R, `?` and Escape do what the map says; that the
+// speed control is continuous; that frames between two boards are drawn at all — so
+// a drop and a collapse are motion, not a painted end state. Then it writes
+// screenshots, which is the part no assertion owns.
 //
 // Exit code 0 means every assertion passed; 1 means one named check failed.
 
@@ -57,36 +63,35 @@ const CHROME_CANDIDATES = [
 const checks = [];
 
 /**
- * What the page should end up showing, computed here from the artifact: generate
- * the same default game, solve it, and play the Move list out on the field module.
- * The page never sees this; it is the yardstick the drawn pixels are held against.
+ * The yardstick, computed here from the artifact and never from the page: generate
+ * the same default game, solve it, build the replay timeline, and read the settled
+ * mask after *every* Move. A seek to Move k must draw `masks[k]`, and a collapse in
+ * progress must draw something that is in no mask at all.
  */
-async function expectedFinalMask() {
+function maskOf(field) {
+  let mask = "";
+  for (let row = 0; row < 20; row += 1) {
+    for (let col = 0; col < 10; col += 1) mask += field[col] & (1 << (19 - row)) ? "1" : "0";
+  }
+  return mask;
+}
+
+async function expectedBoards() {
   const { pathToFileURL } = await import("node:url");
   const load = (path) => import(pathToFileURL(path).href);
   const { loadEngineFromBytes } = await load(resolve(WEB, "src", "core", "loader.ts"));
-  const { fieldFrom, place, restShift, clearFullRows } = await load(resolve(WEB, "src", "ui", "field.ts"));
-  const { rotationOf } = await load(resolve(WEB, "src", "ui", "pieces.ts"));
+  const { buildTimeline, reconstruct } = await load(resolve(WEB, "src", "ui", "timeline.ts"));
 
-  const bytes = new Uint8Array(readFileSync(ARTIFACT));
-  const engine = await loadEngineFromBytes(bytes);
+  const engine = await loadEngineFromBytes(new Uint8Array(readFileSync(ARTIFACT)));
   engine.genGame(0, 40, 7);
-  const field = fieldFrom(engine.board());
+  const board = Uint32Array.from(engine.board());
   const outcome = engine.solve(8, 25);
-  const moves = engine.moves(outcome.moveCount);
-  for (const word of moves) {
-    const shape = rotationOf((word >>> 16) & 0xff, (word >>> 8) & 0xff);
-    const shift = restShift(field, shape, word & 0xff);
-    place(field, shape, word & 0xff, shift);
-    clearFullRows(field);
-  }
-  let mask = "";
-  for (let row = 0; row < 20; row += 1) {
-    for (let col = 0; col < 10; col += 1) {
-      mask += field[col] & (1 << (19 - row)) ? "1" : "0";
-    }
-  }
-  return { mask, outcome };
+  const moves = Uint32Array.from(engine.moves(outcome.moveCount));
+  const timeline = buildTimeline(board, [...moves]);
+  const masks = [];
+  for (let k = 0; k <= timeline.steps.length; k += 1) masks.push(maskOf(reconstruct(timeline, k)));
+  const clearing = timeline.steps.filter((step) => step.cleared.length > 0).map((step) => step.k);
+  return { outcome, timeline, masks, clearing, total: timeline.steps.length };
 }
 function check(name, ok, detail = "") {
   checks.push({ name, ok, detail });
@@ -147,6 +152,59 @@ function connect(url) {
   return { ws, ready, send };
 }
 
+/**
+ * Every picture the board draws over `windowMs`, sampled once per animation frame
+ * from *inside* the page. A CDP round trip per sample costs ~100 ms at this pace,
+ * which is a third of a step, and skipped the clear as often as it caught it; in
+ * the page, nothing the renderer paints can fall between two samples.
+ *
+ * A picture is the settled mask followed by the in-flight mask (see READ): at rest
+ * the second half is all zeroes, and every frame that is not all zeroes there is a
+ * piece in the air or a band contracting.
+ */
+const FRAME_WINDOW = (windowMs) => `new Promise((resolve) => {
+  const canvas = document.getElementById("board");
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const cell = Number(canvas.dataset.cell || 0) * dpr;
+  const ox = Number(canvas.dataset.originX || 0) * dpr;
+  const oy = Number(canvas.dataset.originY || 0) * dpr;
+  const frames = [];
+  const t0 = performance.now();
+  const sample = () => {
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let settled = "";
+    let flight = "";
+    for (let row = 0; row < 20; row += 1) {
+      for (let col = 0; col < 10; col += 1) {
+        const x = Math.round(ox + (col + 0.5) * cell);
+        const y = Math.round(oy + (row + 0.5) * cell);
+        const i = (y * canvas.width + x) * 4;
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const isSettled = r > 100 && r < 150 && g > 135 && g < 180 && b > 170 && b < 215;
+        settled += isSettled ? "1" : "0";
+        flight += !isSettled && r > 195 && g > 205 && b > 228 ? "1" : "0";
+      }
+    }
+    const picture = settled + flight;
+    const last = frames[frames.length - 1];
+    if (!last || last.picture !== picture) {
+      frames.push({
+        at: Math.round(performance.now() - t0),
+        seek: Number(document.getElementById("strip")?.getAttribute("aria-valuenow") ?? -1),
+        picture: picture,
+        settled: settled,
+        flight: flight,
+      });
+    }
+    if (performance.now() - t0 < ${windowMs}) requestAnimationFrame(sample);
+    else resolve(frames);
+  };
+  requestAnimationFrame(sample);
+})`;
+
 /** What the page says about itself, read from the DOM it rendered. */
 const READ = `(() => {
   const text = (id) => document.getElementById(id)?.textContent ?? "";
@@ -169,10 +227,14 @@ const READ = `(() => {
       }
     }
   }
-  // Read the 10×20 settled mask back out of the pixels, cell centre by cell
-  // centre. The settled fill is #7f9dc0; the piece in flight is brighter, the ghost
-  // outline darker, so the window below picks out settled cells only.
+  // Read the 10×20 board back out of the pixels, cell centre by cell centre, as
+  // *two* masks: the settled cells (#7f9dc0) and the cells drawn in the brighter
+  // in-flight fill (#e8f0ff, and the #d7e4f5 clear band). A cell cannot be both,
+  // so mask + flight is one picture and mask alone is only the settled half.
+  // Two masks rather than one colour window: a drop must not be able to read as a
+  // finished board, and it would if the in-flight fill were simply ignored.
   let mask = "";
+  let flight = "";
   const dpr = window.devicePixelRatio || 1;
   const cell = Number(canvas?.dataset.cell ?? 0) * dpr;
   const ox = Number(canvas?.dataset.originX ?? 0) * dpr;
@@ -185,17 +247,40 @@ const READ = `(() => {
         const y = Math.round(oy + (row + 0.5) * cell);
         const i = (y * canvas.width + x) * 4;
         const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
-        mask += r > 100 && r < 150 && g > 135 && g < 180 && b > 170 && b < 215 ? "1" : "0";
+        const settled = r > 100 && r < 150 && g > 135 && g < 180 && b > 170 && b < 215;
+        mask += settled ? "1" : "0";
+        flight += !settled && r > 195 && g > 205 && b > 228 ? "1" : "0";
       }
     }
   }
+  const strip = document.getElementById("strip");
+  const play = document.getElementById("play");
+  const sheet = document.getElementById("sheet");
   return {
     status: text("status"),
     outcome: text("outcome"),
     progress: text("progress"),
     tone: document.getElementById("status")?.dataset.tone ?? "",
     mask,
+    flight,
     canvas: { width: canvas?.width ?? 0, height: canvas?.height ?? 0, ...drawn },
+    // The controls, as a visitor sees them.
+    seek: Number(strip?.getAttribute("aria-valuenow") ?? -1),
+    seekMax: Number(strip?.getAttribute("aria-valuemax") ?? -1),
+    seekText: strip?.getAttribute("aria-valuetext") ?? "",
+    playText: (play?.textContent ?? "").trim(),
+    pressed: play?.getAttribute("aria-pressed") ?? "",
+    speed: text("speed-readout"),
+    sheetOpen: sheet?.dataset.open === "true",
+    sheetRows: document.querySelectorAll("#sheet dt").length,
+    stripCells: document.querySelectorAll("#strip i").length,
+    untitled: [...document.querySelectorAll("button, input, [role=slider]")]
+      .filter((el) => !el.getAttribute("title"))
+      .map((el) => el.id || el.tagName),
+    stripRect: (() => {
+      const rect = strip?.getBoundingClientRect();
+      return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null;
+    })(),
   };
 })()`;
 
@@ -268,6 +353,16 @@ try {
     return result.result?.value ?? null;
   };
 
+  /** Every distinct picture drawn over `windowMs`, one sample per animation frame. */
+  const readFrames = async (windowMs) => {
+    const result = await cdp.send(
+      "Runtime.evaluate",
+      { expression: FRAME_WINDOW(windowMs), awaitPromise: true, returnByValue: true },
+      sessionId,
+    );
+    return result.result?.value ?? [];
+  };
+
   // The solve arrives in the worker; wait for the page to name an outcome.
   let solved = null;
   for (let i = 0; i < 160 && !solved; i += 1) {
@@ -294,63 +389,224 @@ try {
     return file;
   };
 
-  // Playback: the progress line must advance, and the drawn stack must change as
-  // pieces land and rows collapse. A sample is taken every 300 ms, and the middle
-  // one is written out so a human can see a drop in flight.
+  const expected = await expectedBoards();
+  const shots = [await shoot("start")];
+  console.log(`  total    ${expected.total} Moves, clearing at ${expected.clearing.join(", ")}`);
+
+  const key = async (keyName, code, vk) => {
+    await cdp.send(
+      "Input.dispatchKeyEvent",
+      { type: "rawKeyDown", key: keyName, code, windowsVirtualKeyCode: vk },
+      sessionId,
+    );
+    await cdp.send(
+      "Input.dispatchKeyEvent",
+      { type: "keyUp", key: keyName, code, windowsVirtualKeyCode: vk },
+      sessionId,
+    );
+    await sleep(120);
+  };
+
+  /** Click the move strip at `fraction` of its width: one gesture to any Move. */
+  const clickStrip = async (fraction) => {
+    const state = await read();
+    const rect = state.stripRect;
+    const x = Math.round(rect.x + rect.width * fraction);
+    const y = Math.round(rect.y + rect.height / 2);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }, sessionId);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }, sessionId);
+    await sleep(150);
+    return read();
+  };
+
+  const setSpeedSlider = async (position) => {
+    await cdp.send(
+      "Runtime.evaluate",
+      {
+        expression: `(() => { const s = document.getElementById("speed"); s.value = "${position}"; s.dispatchEvent(new Event("input", { bubbles: true })); return s.value; })()`,
+        returnByValue: true,
+      },
+      sessionId,
+    );
+    await sleep(150);
+    return read();
+  };
+
+  const diff = (a, b) => [...(a ?? "")].filter((bit, index) => bit !== b?.[index]).length;
+
+  // ---- the page solved, and its chrome is discoverable -------------------------
+  check("the Move strip is one cell per Move, and addresses every one", solved.seekMax === expected.total && solved.stripCells === expected.total, `${solved.stripCells} cells, max ${solved.seekMax}, ${expected.total} Moves`);
+  check("every control carries a tooltip", solved.untitled.length === 0, solved.untitled.join(", ") || "all titled");
+  check("the keyboard map is on the page", solved.sheetRows >= 7, `${solved.sheetRows} rows behind ?`);
+  check("the speed is labelled in words", /moves\/s/.test(solved.speed) && /s per move/.test(solved.speed), solved.speed);
+
+  // ---- playback advances, and the picture changes -----------------------------
   const first = solved;
   const drawn = new Set([first.canvas.cells]);
   let advanced = false;
-  let middle = { progress: "", canvas: first.canvas };
-  const shots = [await shoot("start")];
   for (let i = 0; i < 24; i += 1) {
-    await sleep(300);
+    await sleep(250);
     const state = await read();
     if (!state) continue;
     drawn.add(state.canvas.cells);
-    if (state.progress !== first.progress && state.progress.length > 0) advanced = true;
-    if (i === 8) {
-      middle = state;
-      shots.push(await shoot("mid"));
-    }
+    if (state.seek > first.seek) advanced = true;
   }
-  shots.push(await shoot("end"));
-  console.log(`  mid-point ${middle.progress}`);
+  check("the Move list plays back", advanced, `Move ${first.seek} → ${(await read()).seek}`);
+  check("the board is drawn", first.canvas.cells > 0, `${first.canvas.cells} lit pixels`);
+  check("the stack changes as pieces land", drawn.size >= 3, `${drawn.size} distinct fills seen`);
 
-  // Playback holds the finished board for a beat before it starts over, so the
-  // settled mask can be read back and compared with the engine's own Move list.
-  let finalMask = null;
-  for (let i = 0; i < 40 && finalMask === null; i += 1) {
-    const state = await read();
-    const played = /move (\d+) of (\d+)/.exec(state?.progress ?? "");
-    if (played && played[1] === played[2] && state.canvas.cells > 0) finalMask = state.mask;
-    else await sleep(200);
-  }
-  const expected = await expectedFinalMask();
-  if (finalMask === null) {
-    check("the page draws the settled board", false, "playback never reported its last move");
-  } else {
-    const wrong = [...expected.mask].filter((bit, i) => bit !== finalMask[i]).length;
+  // ---- pause, resume, restart, and the map that does it -----------------------
+  await key(" ", "Space", 32);
+  const paused = await read();
+  check("Space pauses", /paused/.test(paused.progress) && paused.playText === "play", paused.progress.slice(0, 60));
+  const pausedAt = paused.seek;
+  await sleep(400);
+  check("a paused playback does not advance", (await read()).seek === pausedAt, `still Move ${pausedAt}`);
+
+  await key(" ", "Space", 32);
+  check("Space resumes", /playing/.test((await read()).progress));
+
+  // Stepping is asserted from a *still* clock. Reading the position and pressing
+  // the arrow is two round trips (~200 ms), and at 1.43 moves/s a running clock can
+  // cross a step boundary in between — which it did, one run in three, reporting
+  // "Move 12" where "Move 11" was meant. Paused, only the key moves the position,
+  // so the assertion is about the key and not about when the read landed.
+  await key(" ", "Space", 32); // pause: the arrows are measured from a frozen position
+  const beforeStep = await read();
+  console.log(`  arrows   stepping from Move ${beforeStep.seek}, ${/paused/.test(beforeStep.progress) ? "paused" : "STILL PLAYING"}`);
+  await key("ArrowRight", "ArrowRight", 39);
+  const stepped = await read();
+  check("→ steps one Move forward (and pauses)", stepped.seek === Math.min(expected.total, beforeStep.seek + 1) && /paused/.test(stepped.progress), `Move ${beforeStep.seek} → ${stepped.seek}`);
+  await key("ArrowLeft", "ArrowLeft", 37);
+  const wentBack = await read();
+  check("← steps one Move back", wentBack.seek === Math.min(expected.total, beforeStep.seek) && /paused/.test(wentBack.progress), `Move ${stepped.seek} → ${wentBack.seek}`);
+
+  await key("End", "End", 35);
+  const atEnd = await read();
+  check("End reaches the last Move", atEnd.seek === expected.total && atEnd.playText === "replay", `Move ${atEnd.seek} of ${atEnd.seekMax}`);
+  shots.push(await shoot("end"));
+  check(
+    "the last Move draws the engine's Move list played out",
+    diff(atEnd.mask, expected.masks[expected.total]) === 0,
+    `${diff(atEnd.mask, expected.masks[expected.total])} of 200 cells differ`,
+  );
+
+  await key("Home", "Home", 36);
+  const atStart = await read();
+  check("Home returns to the starting Board", atStart.seek === 0, `Move ${atStart.seek}`);
+  check("move 0 is the Board the engine generated", diff(atStart.mask, expected.masks[0]) === 0);
+
+  await key("r", "KeyR", 82);
+  const restarted = await read();
+  check("R restarts and plays", restarted.seek === 0 && /playing/.test(restarted.progress), restarted.progress.slice(0, 60));
+
+  await key("?", "Slash", 191);
+  check("? opens the keyboard sheet", (await read()).sheetOpen);
+  await key("Escape", "Escape", 27);
+  check("Escape closes it", !(await read()).sheetOpen);
+
+  // ---- the move strip is the seek bar -----------------------------------------
+  await key(" ", "Space", 32); // pause, so the mask holds still while it is read
+  for (const fraction of [0.6, 0.25, 0.95, 0.05, 0.45]) {
+    const state = await clickStrip(fraction);
+    const target = Math.round(fraction * expected.total);
     check(
-      "the settled board on screen is the engine's Move list played out",
-      wrong === 0,
-      wrong === 0 ? "200 cells agree" : `${wrong} of 200 cells differ`,
+      `a gesture at ${Math.round(fraction * 100)}% seeks to Move ${target}`,
+      Math.abs(state.seek - target) <= 1,
+      `Move ${state.seek}`,
+    );
+    check(
+      `Move ${target} is drawn as the engine's board at that Move`,
+      diff(state.mask, expected.masks[state.seek]) === 0,
+      `${diff(state.mask, expected.masks[state.seek])} of 200 cells differ`,
     );
   }
+  const scrubbed = await read();
+  check("a gesture pauses, so the drag is not fighting the clock", /paused/.test(scrubbed.progress));
 
-  check("the Move list plays back", advanced, first.progress);
-  check("playback leaves the starting position", middle.canvas.cells !== first.canvas.cells, middle.progress);
-  check("the board is drawn", first.canvas.cells > 0, `${first.canvas.cells} lit pixels`);
+  // ---- playing from a scrubbed position continues correctly -------------------
+  await key(" ", "Space", 32); // play again from the scrubbed Move
+  await sleep(1200);
+  const resumed = await read();
   check(
-    "the stack changes as pieces land",
-    drawn.size >= 3,
-    `${drawn.size} distinct fills seen`,
+    "playing from a scrub continues forward from that Move",
+    resumed.seek > scrubbed.seek || resumed.seek === expected.total,
+    `Move ${scrubbed.seek} → ${resumed.seek}`,
   );
+  check(
+    "and lands on boards only the engine's Move list has",
+    expected.masks.includes(resumed.mask) || resumed.mask === expected.masks[expected.total],
+    `${diff(resumed.mask, expected.masks[resumed.seek])} of 200 cells differ from Move ${resumed.seek}`,
+  );
+
+  // ---- the speed control is continuous ---------------------------------------
+  await key(" ", "Space", 32); // pause
+  const speeds = [];
+  for (const position of [0.1, 0.5, 0.9]) {
+    const state = await setSpeedSlider(position);
+    speeds.push(state.speed);
+  }
+  console.log(`  speeds   ${speeds.join(" | ")}`);
+  check("the speed control yields more than four values", new Set(speeds).size === 3, speeds.join(" | "));
+  check(
+    "and none of them is a preset multiplier",
+    speeds.every((label) => !/^[0-9.]+×/.test(label)),
+    speeds.join(" | "),
+  );
+
+  await key("=", "Equal", 187);
+  const faster = await read();
+  await key("-", "Minus", 189);
+  const slower = await read();
+  check("= and - move one speed stop", faster.speed !== slower.speed, `${faster.speed} → ${slower.speed}`);
+  shots.push(await shoot("mid"));
+
+  // ---- motion: a drop and a collapse are drawn, not jumped over ---------------
+  //
+  // *Where to look.* The clears are at `expected.clearing` — Move 8 in the default
+  // game — so sampling from Move 0 at this pace never reaches a collapse inside any
+  // sane window, and used to report "40 distinct frames, all end states" for a page
+  // that was animating correctly. The watch therefore starts one Move before the
+  // first clear.
+  //
+  // *How long.* The slider at 0.32 is ~1.27 moves/s (log scale: exp(lerp(ln 0.25,
+  // ln 40, 0.32))), so one step is 788 ms; a step is drop 45 % (355 ms) then clear
+  // 36 % (284 ms) then hold. 2200 ms is 2.8 steps, so the collapse of `firstClear`
+  // — which begins 355 ms after play does — cannot fall outside the window.
+  //
+  // *What counts as motion.* The picture is the settled mask *and* the in-flight
+  // mask: an end state is a settled mask with nothing in the air. A drop is a
+  // picture no end state has, and so is a collapse, without either having to change
+  // the window it is read in.
+  await setSpeedSlider(0.32);
+  const firstClear = expected.clearing[0] ?? Math.min(2, expected.total);
+  await key("Home", "Home", 36);
+  for (let i = 0; i < firstClear - 1; i += 1) await key("ArrowRight", "ArrowRight", 39);
+  const beforeMotion = await read();
+  console.log(`  motion   watching from Move ${beforeMotion.seek} of ${expected.total}; first clear is Move ${firstClear}`);
+  await key(" ", "Space", 32);
+  const frames = await readFrames(2200);
+  const atRest = new Set(expected.masks.map((settled) => settled + "0".repeat(200)));
+  const pictures = new Set(frames.map((frame) => frame.picture));
+  const moving = frames.filter((frame) => !atRest.has(frame.picture));
+  const inAir = moving.filter((frame) => frame.flight.includes("1"));
+  check(
+    "a frame between two boards is drawn: the drop and the collapse are motion",
+    moving.length > 0,
+    moving.length > 0
+      ? `${pictures.size} distinct pictures, ${moving.length} not an end state, ${inAir.length} with a cell in the air, first at ${moving[0].at} ms`
+      : `${pictures.size} distinct pictures, all end states`,
+  );
+  shots.push(await shoot("mid-drop"));
+  check("the strip keeps carrying the position", (await read()).seek >= 0);
+  await key(" ", "Space", 32); // pause for the last screenshot
+  shots.push(await shoot("paused"));
 
   for (const file of shots) console.log(`  screenshot ${file}`);
 
   const failed = checks.filter((entry) => !entry.ok);
   exitCode = failed.length === 0 ? 0 : 1;
-  console.log(exitCode === 0 ? "\nPASS the page solves and plays back" : `\nFAIL ${failed.length} check(s)`);
+  console.log(exitCode === 0 ? "\nPASS the page solves, plays back, and can be driven" : `\nFAIL ${failed.length} check(s)`);
 } catch (error) {
   console.error(`browser check failed: ${error.message}`);
   exitCode = 1;

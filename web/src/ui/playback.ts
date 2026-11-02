@@ -1,29 +1,61 @@
-// Playback: walk the engine's Move list one piece at a time, dropping each one so
-// it lands, and let the rows it completes collapse before the next piece spawns.
+// Playback: what the page draws, frame by frame, from `(k, into)`.
 //
-// The Move words, the Lines and the outcome are the engine's. What playback adds is
-// time: a drop of `fallMs` with an accelerating fall, a beat of rest where the
-// piece touches down, and a flash on the rows about to go. Motion is hand-written
-// on `requestAnimationFrame` — no easing library, no runtime dependency.
+// The Move list, the Lines and the outcome are the engine's; the *picture* is this
+// file's job, and it is a pure function of the timeline and the clock in
+// `clock.ts` — no animation object, no tweening library, no CSS transition that the
+// canvas cannot see. Every frame it asks "which Move, how far into it" and paints
+// that. Which is why pausing keeps the interpolated pose, a scrub simply draws
+// `reconstruct(k)`, and a speed change retimes the same animation instead of
+// restarting it.
 //
-// The clock and the frame source are injectable so this file can be driven from
-// `node --test` with a fake one: `web/test/playback.test.mjs` plays a real game
-// through it and asserts the field it ends on is the field the engine's Move list
-// describes. Without that, "drops that land" would only ever be checked by eye.
+// Two motions carry the ticket:
+//
+//   * **a drop lands.** The piece falls from §5.3's spawn row to the engine's
+//     resting shift with an accelerating fall (`t²`), then touches down with a
+//     contact edge for a beat. It is never stamped at the bottom.
+//   * **a clear collapses.** The cleared rows contract away from their top edge
+//     while every surviving run falls into the gap — each run by its own distance,
+//     because a clear need not be contiguous. A translucent flash draws none of
+//     that, which is why `web/test/playback-animation.test.mjs` asserts the bands
+//     contract and the runs move.
+//
+// The scheduler and the render target are injected so `node --test` can own the
+// clock and read the frames: that is what makes "a drop visibly lands" a checked
+// claim rather than a screenshot.
 
 import type { GameMessage } from "../core/protocol.ts";
-import { H, clearFullRows, fieldFrom, fullRows, restShift, type Field, type Shape } from "./field.ts";
-import { rotationOf } from "./pieces.ts";
+import { H, W, emptyField, type Field } from "./field.ts";
+import { unpackMove, buildTimeline, type Step, type Timeline } from "./timeline.ts";
+import { FRAME_MS, MPS_DEFAULT, clampMps, msPerMove, phases } from "./phases.ts";
+import {
+  initialState,
+  pause as pauseState,
+  position,
+  reanchor,
+  restart as restartState,
+  resume as resumeState,
+  seek as seekState,
+  setSpeed as setSpeedState,
+  toggle as toggleState,
+  type PlayState,
+  type Position,
+} from "./clock.ts";
 import type { Overlay } from "./board.ts";
 
 export interface PlaybackStatus {
-  /** How many moves have been played. */
+  /** Moves played: the index of the step on screen, `0..total`. */
   played: number;
   total: number;
-  /** Lines cleared by the replay so far. */
+  /** Lines cleared by the replay up to here. */
   lines: number;
-  /** The board row (0 = top) the piece in flight would land on. */
+  /** The board row (0 = top) the piece in flight would land on, if any. */
   landingRow: number | null;
+  playing: boolean;
+  atEnd: boolean;
+  /** Moves per second. */
+  speed: number;
+  /** How far into the current Move, `0..1`. */
+  fraction: number;
 }
 
 /** What playback draws on. `BoardView` satisfies this structurally. */
@@ -45,233 +77,277 @@ export const browserScheduler: Scheduler = {
 };
 
 export interface PlaybackOptions {
-  /** Time for one piece to fall from the spawn row to its landing row. */
-  fallMs?: number;
-  /** How long a landed piece rests before it locks. */
-  lockMs?: number;
-  /** How long completed rows stay lit before they collapse. */
-  clearMs?: number;
-  /** How long the finished board is held before playback starts over. */
-  holdMs?: number;
+  /** Moves per second: the continuous control's value. */
+  speed?: number;
   scheduler?: Scheduler;
+  /** A frame time to plan with when the display has not been measured yet. */
+  frameMs?: number;
   onStatus?(status: PlaybackStatus): void;
+  /** Reuse a timeline (the page builds it once per Solve); otherwise one is built. */
+  timeline?: Timeline;
 }
 
-interface Timing {
-  fallMs: number;
-  lockMs: number;
-  clearMs: number;
-  holdMs: number;
-}
-
-/** §4.1.1: `(piece_index << 16) | (rotation << 8) | column`. */
-export function unpackMove(word: number): { piece: number; rotation: number; column: number } {
-  return { piece: (word >>> 16) & 0xff, rotation: (word >>> 8) & 0xff, column: word & 0xff };
+/** The `easeOutCubic` the prototype shipped, hand-written: nothing to import. */
+function easeOutCubic(t: number): number {
+  const p = 1 - Math.min(1, Math.max(0, t));
+  return 1 - p * p * p;
 }
 
 export class Playback {
+  readonly timeline: Timeline;
+
   private readonly view: RenderTarget;
-  private readonly moves: Uint32Array;
-  private readonly initial: Field;
-  private readonly timing: Timing;
   private readonly scheduler: Scheduler;
   private readonly onStatus: (status: PlaybackStatus) => void;
 
-  private field: Field;
-  private lines = 0;
-  private index = 0;
-  private phase: "fall" | "lock" | "clear" | "hold" = "fall";
-  private phaseStart = 0;
-  private shiftFrom = 0;
-  private shiftTo = 0;
-  private shape: Shape | null = null;
-  private column = 0;
-  private flash = 0;
-  private running = false;
+  private state: PlayState;
   private handle = 0;
+  private frameMs: number;
+  private lastFrame: number;
+  private announced = -1;
 
   constructor(view: RenderTarget, game: GameMessage, options: PlaybackOptions = {}) {
     this.view = view;
-    this.moves = game.moves;
-    this.initial = fieldFrom(game.board);
-    this.field = fieldFrom(game.board);
-    this.timing = {
-      fallMs: options.fallMs ?? 150,
-      lockMs: options.lockMs ?? 70,
-      clearMs: options.clearMs ?? 160,
-      holdMs: options.holdMs ?? 2200,
-    };
     this.scheduler = options.scheduler ?? browserScheduler;
     this.onStatus = options.onStatus ?? (() => {});
+    this.timeline = options.timeline ?? buildTimeline(game.board, [...game.moves]);
+    this.state = initialState(clampMps(options.speed ?? MPS_DEFAULT), this.scheduler.now());
+    this.frameMs = options.frameMs ?? FRAME_MS;
+    this.lastFrame = this.state.t;
   }
 
-  /** Start from the beginning, whatever state it was in. */
+  get playing(): boolean {
+    return this.state.playing;
+  }
+
+  get speed(): number {
+    return this.state.mps;
+  }
+
+  /** Which Move is on screen: `0` is the starting Board. */
+  get k(): number {
+    return this.state.k;
+  }
+
+  /** How far into the Move on screen, in milliseconds. */
+  get into(): number {
+    return this.state.into;
+  }
+
+  get atEnd(): boolean {
+    return this.state.k >= this.timeline.steps.length;
+  }
+
+  /** Start from the beginning and play: the page's first paint, and its restart. */
   start(): void {
-    if (this.running) return;
-    this.running = true;
-    this.reset();
-    this.phaseStart = this.scheduler.now();
+    this.restart();
+  }
+
+  play(): void {
+    if (this.atEnd) {
+      this.restart();
+      return;
+    }
+    this.state = resumeState(this.timeline, this.state, this.scheduler.now());
+    this.schedule();
+    this.announce();
+  }
+
+  pause(): void {
+    this.state = pauseState(this.timeline, this.state, this.scheduler.now());
+    this.cancel();
+    this.render(position(this.timeline, this.state, this.scheduler.now()));
+    this.announce();
+  }
+
+  toggle(): void {
+    this.state = toggleState(this.timeline, this.state, this.scheduler.now());
+    if (this.state.playing) {
+      this.schedule();
+      this.announce();
+    } else {
+      this.cancel();
+      this.render(position(this.timeline, this.state, this.scheduler.now()));
+      this.announce();
+    }
+  }
+
+  restart(): void {
+    const now = this.scheduler.now();
+    this.state = restartState(this.timeline, this.state, now);
+    this.lastFrame = now;
+    this.announced = -1;
+    this.render(position(this.timeline, this.state, now));
+    this.schedule();
+    this.announce();
+  }
+
+  /** Stop the clock and leave the picture alone. */
+  stop(): void {
+    this.state = pauseState(this.timeline, this.state, this.scheduler.now());
+    this.cancel();
+  }
+
+  /**
+   * Put the playhead on Move `k` and pause there. The next draw is
+   * `reconstruct(k)`, so the board on screen *is* the engine's board at that Move;
+   * resuming plays Move `k + 1` onto it.
+   */
+  seek(k: number): void {
+    const now = this.scheduler.now();
+    this.state = seekState(this.timeline, this.state, k, now);
+    this.lastFrame = now;
+    this.cancel();
+    this.render(position(this.timeline, this.state, now));
+    this.announce();
+  }
+
+  /** Change speed without moving the piece: the fraction of the Move is preserved. */
+  setSpeed(mps: number): void {
+    const now = this.scheduler.now();
+    this.state = setSpeedState(this.timeline, this.state, mps, now);
+    if (this.state.playing) this.lastFrame = now;
+    this.announce();
+  }
+
+  /** Draw the current position without touching the clock. */
+  draw(): void {
+    this.render(position(this.timeline, this.state, this.scheduler.now()));
+  }
+
+  private schedule(): void {
+    if (this.handle !== 0) return;
     this.handle = this.scheduler.frame(this.tick);
   }
 
-  stop(): void {
-    this.running = false;
+  private cancel(): void {
     if (this.handle !== 0) this.scheduler.cancel(this.handle);
     this.handle = 0;
   }
 
-  private reset(): void {
-    this.field = fieldFrom(this.initial);
-    this.lines = 0;
-    this.index = 0;
-    this.flash = 0;
-    this.shape = null;
-    this.enterFall();
-  }
-
-  /**
-   * Set up the drop of the move at `index`; false when the list is done.
-   *
-   * The resting shift comes from `restShift`, the same rule the engine drops by, so
-   * a piece lands exactly where the engine put it — including when a column has a
-   * hole a piece must not tunnel into.
-   */
-  private enterFall(): boolean {
-    const word = this.moves[this.index];
-    if (word === undefined) return false;
-    const move = unpackMove(word);
-    const shape = rotationOf(move.piece, move.rotation);
-    if (!shape) return false;
-    const landing = restShift(this.field, shape, move.column);
-    if (landing === null) return false;
-
-    this.shape = shape;
-    this.column = move.column;
-    // Spawn at row 0, then fall to the resting shift. `restShift` never returns a
-    // shift above the spawn row, so the drop always travels downward.
-    this.shiftFrom = H - shape.height;
-    this.shiftTo = landing;
-    this.phase = "fall";
-    this.announce();
-    return true;
-  }
-
   private readonly tick = (now: number): void => {
-    if (!this.running) return;
-    const elapsed = now - this.phaseStart;
+    this.handle = 0;
+    // Measure the display, once per frame, so `phases` knows whether a step is
+    // long enough to draw. Smoothed, because one long frame is not a frame rate.
+    const delta = now - this.lastFrame;
+    if (delta > 0 && delta < 250) this.frameMs = this.frameMs * 0.8 + delta * 0.2;
+    this.lastFrame = now;
 
-    switch (this.phase) {
-      case "fall": {
-        const t = Math.min(1, elapsed / this.timing.fallMs);
-        const eased = t * t;
-        const shift = this.shiftFrom + (this.shiftTo - this.shiftFrom) * eased;
-        this.render(shift);
-        if (t >= 1) {
-          this.phase = "lock";
-          this.phaseStart = now;
-        }
-        break;
-      }
+    const at = position(this.timeline, this.state, now);
+    if (at.k !== this.announced) this.announce(at);
+    this.render(at);
+    this.state = reanchor(this.timeline, this.state, now);
 
-      case "lock": {
-        this.render(this.shiftTo);
-        if (elapsed >= this.timing.lockMs) this.commit(now);
-        break;
-      }
-
-      case "clear": {
-        this.render(null);
-        if (elapsed >= this.timing.clearMs) {
-          this.lines += clearFullRows(this.field);
-          this.flash = 0;
-          this.index += 1;
-          if (!this.enterFall()) this.phase = "hold";
-          this.phaseStart = now;
-          this.announce();
-        }
-        break;
-      }
-
-      case "hold": {
-        this.render(null);
-        if (elapsed >= this.timing.holdMs) {
-          this.reset();
-          this.phaseStart = now;
-          this.announce();
-        }
-        break;
-      }
+    if (at.atEnd) {
+      // The Move list is spent: hold the finished board and let the page's play
+      // button become a restart.
+      this.state = { ...this.state, playing: true, k: at.k, into: 0, t: now };
+      return;
     }
-
     this.handle = this.scheduler.frame(this.tick);
   };
 
-  /** The piece has touched down: stamp it, and light the rows it completed. */
-  private commit(now: number): void {
-    const shape = this.shape;
-    if (!shape) {
-      this.phase = "hold";
-      this.phaseStart = now;
-      return;
-    }
-    for (let i = 0; i < shape.width; i += 1) {
-      const col = this.column + i;
-      this.field[col] = (this.field[col] | (shape.cols[i] << this.shiftTo)) >>> 0;
-    }
-    const full = fullRows(this.field);
-    this.phaseStart = now;
-    if (full === 0) {
-      this.index += 1;
-      if (this.enterFall()) {
-        this.phaseStart = now;
-      } else {
-        this.phase = "hold";
-      }
-    } else {
-      this.flash = full;
-      this.phase = "clear";
-    }
-    this.announce();
-  }
-
-  /** Draw the settled field plus the piece in flight at `shift` (null: resting). */
-  private render(shift: number | null): void {
-    const clearRows: number[] = [];
-    for (let bit = 0; bit < H; bit += 1) {
-      if ((this.flash & (1 << bit)) !== 0) clearRows.push(H - 1 - bit);
-    }
-
-    const shape = this.shape;
-    if (!shape || shift === null) {
-      this.view.draw(this.field, { clearRows });
+  /** Paint the position: a drop in flight, a landing, a collapse, or the board. */
+  private render(at: Position): void {
+    const total = this.timeline.steps.length;
+    if (at.k >= total) {
+      this.view.draw(total === 0 ? emptyField() : this.timeline.steps[total - 1].postClear);
       return;
     }
 
-    const cellsOf = (at: number): Array<{ col: number; row: number }> => {
-      const cells: Array<{ col: number; row: number }> = [];
-      for (let i = 0; i < shape.width; i += 1) {
-        for (let offset = 0; offset < shape.height; offset += 1) {
-          if ((shape.cols[i] & (1 << offset)) !== 0) {
-            cells.push({ col: this.column + i, row: H - 1 - (at + offset) });
-          }
-        }
-      }
-      return cells;
-    };
+    const step = this.timeline.steps[at.k];
+    const plan = phases(msPerMove(this.state.mps), step.cleared.length, this.frameMs);
 
-    this.view.draw(this.field, {
-      piece: cellsOf(shift),
-      ghost: cellsOf(this.shiftTo),
-      clearRows,
+    if (plan.mode === "skip" || plan.dropMs <= 0) {
+      // Too fast to animate: the finished position is the honest picture.
+      this.view.draw(step.postClear);
+      return;
+    }
+
+    if (at.into < plan.dropMs) {
+      const t = at.into / plan.dropMs;
+      const offset = step.dropRows * t * t;
+      // The piece is drawn as an overlay, never stamped, until it lands.
+      this.view.draw(step.preBoard, {
+        piece: step.spawnCells.map((cell) => ({ col: cell.col, row: cell.row + offset })),
+        ghost: step.restCells,
+      });
+      return;
+    }
+
+    const since = at.into - plan.dropMs;
+
+    // A landing, not a stamp: the piece touches down with a contact edge for a
+    // beat, whether or not it completed rows. The board is still preBoard here, so
+    // the piece is drawn as an overlay in both frames of the moment it arrives.
+    if (since < Math.min(90, plan.dropMs / 3)) {
+      this.view.draw(step.preBoard, { piece: step.restCells, impact: true });
+      return;
+    }
+
+    if (step.cleared.length === 0) {
+      this.view.draw(step.preClear);
+      return;
+    }
+
+    if (since >= plan.clearMs) {
+      this.view.draw(step.postClear);
+      return;
+    }
+
+    // The clear: the bands contract first, so the gap opens before anything falls
+    // into it, and then each surviving run falls its own distance.
+    const contract = plan.contractMs > 0 ? Math.min(1, since / plan.contractMs) : 1;
+    const squeeze = 1 - 0.88 * easeOutCubic(contract);
+    const fall = plan.fallMs > 0 ? Math.max(0, Math.min(1, (since - plan.contractMs) / plan.fallMs)) : 1;
+    const drop = fall * fall;
+    this.view.draw(emptyField(), {
+      cells: this.survivingCells(step, drop),
+      bands: step.cleared.map((row) => ({ row, squeeze })),
     });
   }
 
-  private announce(): void {
+  /**
+   * The cells of `step.preClear` that survive the clear, at `drop` of the way down.
+   *
+   * Emitted in a stable scan order (column, then bit) so a test can follow one cell
+   * across frames — and so a cell's `row` interpolates from where it was to where
+   * the plan puts it, which is the collapse.
+   */
+  private survivingCells(step: Step, drop: number): Array<{ col: number; row: number }> {
+    const falls = new Map<number, number>();
+    for (const move of step.plan.moves) falls.set(move.from, move.to - move.from);
+    const vanish = new Set(step.cleared);
+    const cells: Array<{ col: number; row: number }> = [];
+    for (let col = 0; col < W; col += 1) {
+      for (let bit = 0; bit < H; bit += 1) {
+        if ((step.preClear[col] & (1 << bit)) === 0) continue;
+        const row = H - 1 - bit;
+        if (vanish.has(row)) continue;
+        cells.push({ col, row: row + (falls.get(row) ?? 0) * drop });
+      }
+    }
+    return cells;
+  }
+
+  private announce(at?: Position): void {
+    const now = at ?? position(this.timeline, this.state, this.scheduler.now());
+    const total = this.timeline.steps.length;
+    const k = Math.min(now.k, total);
+    const step = k > 0 && k <= total ? this.timeline.steps[k - 1] : null;
+    const stepMs = msPerMove(this.state.mps);
+    this.announced = now.k;
     this.onStatus({
-      played: this.index,
-      total: this.moves.length,
-      lines: this.lines,
-      landingRow: this.shape ? H - 1 - this.shiftTo : null,
+      played: k,
+      total,
+      lines: k === 0 ? 0 : (step?.linesAfter ?? 0),
+      landingRow: step ? Math.max(...step.restCells.map((cell) => cell.row)) : null,
+      playing: this.state.playing,
+      atEnd: k >= total,
+      speed: this.state.mps,
+      fraction: k >= total ? 1 : Math.max(0, Math.min(1, now.into / stepMs)),
     });
   }
 }
+
+export { unpackMove };
