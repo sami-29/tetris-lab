@@ -9,11 +9,12 @@
 // That quoted sentence is the *pre-registered* case. What actually happened is in
 // the artifact, and it says something else: the quality axis found no resolution
 // (`quality_axis: "no-resolution"`), so `DEFAULT_BEAM` was named **on cost**
-// (`default_beam_basis: "cost"`), and the sweep ended where the pre-registered
-// doubling list ended (`cap_bound: "schedule"`), not at a time limit. A tooltip
-// that claimed a statistical tie would be a lie in the UI, so the sentence is
-// written from the fields — the page reads them and composes, rather than typing a
-// number or a claim it cannot check.
+// (`default_beam_basis: "cost"`), and the sweep ended at the default
+// configuration's 200 ms budget (`cap_bound: "budget"`) — at width 1,600, which
+// was probed and failed it — not where the doubling list ran out. A tooltip that
+// claimed a statistical tie, or blamed the schedule for ending the climb, would be
+// a lie in the UI, so the sentence is written from the fields — the page reads them
+// and composes, rather than typing a number or a claim it cannot check.
 //
 // The shipped sentence is asserted here against the fields it is derived from, so
 // a re-measured artifact changes the copy and fails nothing; a *hand-written* claim
@@ -62,14 +63,29 @@ test("the shipped line does not claim a quality result the artifact does not hav
 });
 
 test("the line says what ended the sweep, because that is what the field records", () => {
+  // Derived from the artifact, not typed in here. `cap_bound` is the field ticket 06
+  // corrected — the committed file said "schedule" while the sweep had been ended by
+  // the 200 ms budget — so a hand-written "schedule" in this file would fail against
+  // a truthful artifact, which is the same defect wearing a test.
   const shipped = widthTooltip();
-  assert.equal(SHIPPED_WIDTH_STORY.capBound, "schedule");
-  assert.match(shipped, /schedule/i, "cap_bound: schedule is the doubling list running out");
-  assert.doesNotMatch(shipped, /time limit/i, "so it must not blame a timeout");
+  assert.equal(SHIPPED_WIDTH_STORY.capBound, artifact.cap_bound);
 
+  if (SHIPPED_WIDTH_STORY.capBound === "budget") {
+    assert.match(shipped, /budget|time limit/i, "cap_bound: budget is the timeout");
+    assert.doesNotMatch(shipped, /schedule/i, "so it must not blame the doubling list");
+  } else {
+    assert.match(shipped, /schedule/i, "cap_bound: schedule is the doubling list running out");
+    assert.doesNotMatch(shipped, /time limit/i, "so it must not blame a timeout");
+  }
+
+  // Both branches of the copy, whichever one this artifact happens to take.
   const budget = widthTooltip({ ...SHIPPED_WIDTH_STORY, capBound: "budget" });
   assert.match(budget, /budget|time limit/i, "cap_bound: budget is the timeout");
   assert.doesNotMatch(budget, /schedule/i);
+
+  const schedule = widthTooltip({ ...SHIPPED_WIDTH_STORY, capBound: "schedule" });
+  assert.match(schedule, /schedule/i, "cap_bound: schedule is the doubling list running out");
+  assert.doesNotMatch(schedule, /time budget/i);
 });
 
 test("a re-measured default that ties the cap is described as a tie", () => {

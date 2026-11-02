@@ -107,17 +107,62 @@ test("the cap is the largest measured width whose p90 fits both budgets", () => 
   }
   const largest = Math.max(...passing);
   assert.equal(WIDTH_CAP, largest);
-  // And the word "largest" is only true if the curve measured a failing width
-  // above it, or the doubling schedule ran out.
+  // And the word "largest" is only true if the curve has evidence of a width above
+  // it that failed: a measured failing point, or a probed one. `schedule` is the
+  // word for "the pre-registered list ran out with every point passing", and the
+  // tooltip built on it says the curve was still climbing — so it is only reachable
+  // when the whole list was measured.
   const failing = artifact.points.filter(
     (point) => !point.cost.every((bed) => bed.ms_p90 <= BUDGETS[bed.bed]),
   );
+  const probe = artifact.overshoot;
   if (failing.length > 0) {
     assert.equal(artifact.cap_bound, "budget");
     assert.ok(failing[0].width > WIDTH_CAP);
+  } else if (probe) {
+    assert.equal(artifact.cap_bound, "budget");
+    assert.ok(probe.width > WIDTH_CAP, "the probe is above the cap");
   } else {
     assert.equal(artifact.cap_bound, "schedule");
+    assert.equal(artifact.complete, true, "only a fully measured curve can name the schedule");
   }
+});
+
+test("the artifact says which pre-registered widths it did not measure, and why", () => {
+  // §9.5's doubling points, which the curve may stop inside but never re-pick.
+  const PRE_REGISTERED = [25, 50, 100, 200, 400, 800, 1600, 3200, 6400];
+  const measured = artifact.points.map((point) => point.width);
+  const unmeasured = PRE_REGISTERED.filter((width) => !measured.includes(width));
+  assert.deepEqual(
+    artifact.missing_widths,
+    unmeasured,
+    "missing_widths is the pre-registered list minus the measured points",
+  );
+  assert.equal(artifact.complete, unmeasured.length === 0, "complete means every point was measured");
+  assert.equal(
+    artifact.incomplete_reason.trim() === "",
+    artifact.complete,
+    "a partial curve explains itself and a complete one has nothing to explain",
+  );
+  // The word the tooltip hangs on cannot be the schedule unless the list ran out.
+  if (artifact.cap_bound === "schedule") {
+    assert.equal(artifact.complete, true, "a truncated curve was not stopped by the schedule");
+  }
+});
+
+test("a probed width is evidence about the stop rule and never a point", () => {
+  const probe = artifact.overshoot;
+  assert.ok(probe, "the committed curve stops on a budget, so the probe is on the record");
+  assert.equal(probe.probe, true, "the probe says what it is");
+  assert.equal(probe.bed, artifact.statistic.budgets_ms.default_bed, "§9.5's cap criterion");
+  assert.ok(probe.ms_p90 > BUDGETS[probe.bed], `probe p90 ${probe.ms_p90} fails ${BUDGETS[probe.bed]}`);
+  assert.ok(probe.samples > 0, "a p90 without a sample size is not a measurement");
+  assert.equal(typeof probe.substrate, "string");
+  // Not a point: absent from the series, and named in the widths the file says it
+  // did not measure.
+  assert.ok(!artifact.points.some((point) => point.width === probe.width));
+  assert.ok(artifact.missing_widths.includes(probe.width));
+  assert.ok(probe.note.length > 0, "the operator's sentence travels with the number");
 });
 
 function bed_is_complete(point) {

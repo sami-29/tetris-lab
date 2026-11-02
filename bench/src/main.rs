@@ -10,6 +10,9 @@
 //! bench width-curve [--widths <w,w,...>] [--trials <n>] [--seeds-per-trial <n>]
 //!                   [--quality-games <n>] [--ms native|wasm] [--out <file>]
 //!                   [--reason "<one line>"] [--machine "<label>"]
+//!                   [--overshoot <width>=<p90_ms> --overshoot-samples <n>
+//!                    [--overshoot-substrate native|wasm] [--overshoot-note "<one line>"]]
+//! bench width-curve --summarise <artifact> [--overshoot ...] [--out <file>]
 //! ```
 //!
 //! Exit codes: `0` clean, `1` the Dataset drifted or a Gate failed, `2` a usage
@@ -18,7 +21,7 @@
 //! what the tests call too.
 
 use std::io::{IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use bench::dataset::{self, Config};
@@ -37,11 +40,21 @@ usage:
   bench width-curve [--widths <w,w,...>] [--trials <n>] [--seeds-per-trial <n>]
                     [--quality-games <n>] [--ms native|wasm] [--out <file>]
                     [--reason \"<one line>\"] [--machine \"<label>\"]
+                    [--overshoot <width>=<p90_ms> --overshoot-samples <n>
+                     [--overshoot-substrate native|wasm] [--overshoot-note \"<one line>\"]]
+  bench width-curve --summarise <artifact> [--overshoot ...] [--out <file>]
 
 configurations: goal8-p40-cap7, goal12-p100-cap7
 width-curve defaults: every doubling point, 3 trials of 200 seeds, 1,000 quality
 games, wasm milliseconds, written to data/measurements/width-curve.json.
 --data defaults to the repository's data/dataset.
+width-curve --summarise re-derives an artifact's summary fields (cap_bound,
+complete, missing_widths, incomplete_reason) from the points and the probe it
+already records, without re-measuring: it refuses to write if any measured number
+would move, and it writes back to the artifact it was given unless --out is set.
+--overshoot records a width probed outside the curve that failed the default
+configuration's 200 ms p90 budget, which is what makes cap_bound \"budget\". A
+probe is never a point: it has no place in the cost or quality series.
 exit codes: 0 clean, 1 Dataset drift or a failed Gate, 2 usage, I/O, or a Gate
 whose prerequisite is missing.";
 
@@ -57,9 +70,18 @@ struct Args {
     seeds_per_trial: u32,
     quality_games: u32,
     ms: MsSource,
-    out: PathBuf,
+    /// `None` means "wherever this command's output belongs": the measurements
+    /// path for a fresh curve, the artifact being re-derived for `--summarise`.
+    out: Option<PathBuf>,
     reason: Option<String>,
     machine: Option<String>,
+    /// `--summarise`: re-derive an artifact's summary fields instead of measuring.
+    summarise: Option<PathBuf>,
+    /// `--overshoot <width>=<p90_ms>`: a probed width and the p90 it failed on.
+    overshoot: Option<(u32, f64)>,
+    overshoot_samples: Option<u32>,
+    overshoot_substrate: Option<MsSource>,
+    overshoot_note: Option<String>,
 }
 
 impl Args {
@@ -76,9 +98,14 @@ impl Args {
             seeds_per_trial: 200,
             quality_games: 1_000,
             ms: MsSource::Wasm,
-            out: measurements_path(),
+            out: None,
             reason: None,
             machine: None,
+            summarise: None,
+            overshoot: None,
+            overshoot_samples: None,
+            overshoot_substrate: None,
+            overshoot_note: None,
         }
     }
 }
@@ -218,9 +245,46 @@ fn parse(argv: &[String]) -> Result<Args, String> {
                     other => return Err(format!("--ms must be native or wasm, found {other:?}")),
                 };
             }
-            "--out" => args.out = PathBuf::from(take("a file")?),
+            "--out" => args.out = Some(PathBuf::from(take("a file")?)),
             "--reason" => args.reason = Some(take("a one-line reason")?),
             "--machine" => args.machine = Some(take("a machine label")?),
+            "--summarise" => {
+                args.summarise = Some(PathBuf::from(take("a width-curve artifact")?));
+            }
+            "--overshoot" => {
+                let value = take("a probed width and its p90, like 1600=203.46")?;
+                let (width, ms) = value.split_once('=').ok_or_else(|| {
+                    format!("--overshoot wants <width>=<p90_ms>, found {value:?}")
+                })?;
+                let width = width
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| format!("--overshoot: {width:?} is not a width"))?;
+                let ms = ms
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| format!("--overshoot: {ms:?} is not a p90 in ms"))?;
+                args.overshoot = Some((width, ms));
+            }
+            "--overshoot-samples" => {
+                let value = take("a seed count")?;
+                args.overshoot_samples = Some(value.parse().map_err(|_| {
+                    format!("--overshoot-samples must be a number, found {value:?}")
+                })?);
+            }
+            "--overshoot-substrate" => {
+                let value = take("native or wasm")?;
+                args.overshoot_substrate = Some(match value.as_str() {
+                    "native" => MsSource::Native,
+                    "wasm" => MsSource::Wasm,
+                    other => {
+                        return Err(format!(
+                            "--overshoot-substrate must be native or wasm, found {other:?}"
+                        ))
+                    }
+                });
+            }
+            "--overshoot-note" => args.overshoot_note = Some(take("a one-line note")?),
             other => return Err(format!("unknown argument {other:?}")),
         }
         index += 1;
@@ -618,16 +682,115 @@ fn parse_seeds(text: &str) -> Result<Vec<u32>, String> {
         .collect()
 }
 
+/// The probe a run recorded, if any. All-or-nothing, because a probe is evidence:
+/// a width with no sample size is a number nobody can check, and a note with no
+/// probe is prose about nothing.
+fn overshoot(args: &Args) -> Result<Option<width::Overshoot>, String> {
+    let Some((width, ms_p90)) = args.overshoot else {
+        for (given, flag) in [
+            (args.overshoot_samples.is_some(), "--overshoot-samples"),
+            (args.overshoot_substrate.is_some(), "--overshoot-substrate"),
+            (args.overshoot_note.is_some(), "--overshoot-note"),
+        ] {
+            if given {
+                return Err(format!("{flag} needs --overshoot <width>=<p90_ms>"));
+            }
+        }
+        return Ok(None);
+    };
+    let samples = args.overshoot_samples.ok_or_else(|| {
+        "--overshoot needs --overshoot-samples <n>: a p90 without a sample size is not a measurement"
+            .to_string()
+    })?;
+    Ok(Some(width::Overshoot {
+        width,
+        substrate: match args.overshoot_substrate.unwrap_or(MsSource::Native) {
+            MsSource::Native => "native".to_string(),
+            MsSource::Wasm => "wasm".to_string(),
+        },
+        samples,
+        ms_p90,
+        note: args.overshoot_note.clone().unwrap_or_default(),
+    }))
+}
+
+/// `bench width-curve --summarise <artifact>`: re-derive the summary fields of a
+/// curve that is already on disk.
+///
+/// The measured series is the expensive part and the part this command may not
+/// touch, which is why it reparses the artifact, re-derives from what it found, and
+/// writes only if every byte outside the summary block is unchanged. It is the
+/// honest repair for a file whose derived fields were computed from the wrong list.
+fn summarise_curve(path: &Path, out: &Path, probe: Option<width::Overshoot>) -> Result<(), u8> {
+    match width::summarise_file(path, out, probe) {
+        Ok(report) => {
+            println!("summarised {}", path.display());
+            for (label, summary) in [("before", &report.before), ("after ", &report.after)] {
+                println!(
+                    "  {label} width_cap {} (bound {}), complete {}, missing [{}]",
+                    summary.width_cap,
+                    match summary.cap_bound {
+                        width::CapBound::Budget => "budget",
+                        width::CapBound::Schedule => "schedule",
+                    },
+                    summary.complete,
+                    summary
+                        .missing_widths
+                        .iter()
+                        .map(|width| width.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            if !report.after.incomplete_reason.is_empty() {
+                println!("  reason: {}", report.after.incomplete_reason);
+            }
+            println!(
+                "wrote {} ({} measured points, quality fingerprint {} — all unchanged)",
+                out.display(),
+                report.artifact.points.len(),
+                report.artifact.quality_fingerprint
+            );
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            Err(2)
+        }
+    }
+}
+
 /// §9.5: measure the width curve and write the artifact the page reads.
 ///
 /// The numbers are measured, not asserted: `bench width-curve` is the only thing
 /// that writes `data/measurements/width-curve.json`. The command prints every
 /// point as it goes, so a run that is cut short leaves a partial artifact on disk
 /// that says which points it got.
+///
+/// `--summarise` is the one exception, and it is not a measurement: it re-derives
+/// the fields the artifact computes from its own evidence (which widths are
+/// missing, why the sweep stopped) and refuses to write if a measured number would
+/// move.
 fn width_curve(args: &Args) -> Result<(), u8> {
+    let probe = match overshoot(args) {
+        Ok(probe) => probe,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+    };
+
+    if let Some(path) = &args.summarise {
+        // Writing back over the artifact it was given is the point: a copied file
+        // is a different artifact, and the caller can still say `--out`.
+        let out = args.out.clone().unwrap_or_else(|| path.clone());
+        return summarise_curve(path, &out, probe);
+    }
+
+    let out = args.out.clone().unwrap_or_else(measurements_path);
     let options = WidthOptions {
         data: args.data.clone(),
-        out: args.out.clone(),
+        out: out.clone(),
         widths: args.widths.clone(),
         trials: args.trials,
         trial_seeds: args.seeds_per_trial,
@@ -645,6 +808,7 @@ fn width_curve(args: &Args) -> Result<(), u8> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs())
             .unwrap_or(0),
+        overshoot: probe,
     };
 
     println!(
@@ -677,8 +841,23 @@ fn width_curve(args: &Args) -> Result<(), u8> {
             );
             println!(
                 "wrote {} (quality fingerprint {})",
-                options.out.display(),
+                out.display(),
                 artifact.quality_fingerprint
+            );
+            println!(
+                "coverage: complete {}, missing [{}] — {}",
+                artifact.complete,
+                artifact
+                    .missing_widths
+                    .iter()
+                    .map(|width| width.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                if artifact.incomplete_reason.is_empty() {
+                    "every pre-registered doubling point was measured"
+                } else {
+                    &artifact.incomplete_reason
+                }
             );
             Ok(())
         }

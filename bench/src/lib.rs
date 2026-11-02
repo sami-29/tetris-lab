@@ -21,11 +21,14 @@
 //!   implementation, which is what makes "it replays" a check.
 //! * [`width`] — §9.5's width curve: the two numbers the page hangs on, measured
 //!   once and written to `data/measurements/width-curve.json`.
+//! * [`json`] — a reader for the subset of JSON [`width`] writes, so a committed
+//!   artifact can be re-derived in place without re-measuring it.
 
 pub mod dataset;
 pub mod export;
 pub mod fingerprint;
 pub mod gate;
+pub mod json;
 pub mod replay;
 pub mod show;
 pub mod verify;

@@ -269,14 +269,24 @@
   ],
   "default_beam": 25,
   "width_cap": 800,
-  "cap_bound": "schedule",
+  "cap_bound": "budget",
+  "overshoot": {
+    "width": 1600,
+    "bed": "goal8-p40-cap7",
+    "substrate": "native",
+    "samples": 10,
+    "ms_p90": 203.46,
+    "budget_ms": 200,
+    "probe": true,
+    "note": "the wasm substrate this curve's cost series is measured on extrapolates the same way — 111.474 × 2^0.946 ≈ 215 ms — so the cap does not rest on the probe alone"
+  },
   "default_beam_source": "tie",
   "quality_axis": "no-resolution",
   "default_beam_basis": "cost",
   "quality_fingerprint": "fnv1a64:af9f8a8c76b93ad5",
-  "complete": true,
-  "missing_widths": [],
-  "incomplete_reason": "",
+  "complete": false,
+  "missing_widths": [1600, 3200, 6400],
+  "incomplete_reason": "width 1600 was probed outside the curve and failed the default configuration's 200 ms p90 budget at 203.46 ms on native (10 seeds); the wasm substrate this curve's cost series is measured on extrapolates the same way — 111.474 × 2^0.946 ≈ 215 ms — so the cap does not rest on the probe alone; it is recorded as the probe it is and not as a measured point; 3200 and 6400 were not measured because the sweep stops at the first width that fails a budget",
   "provenance": {
     "reason": "initial measurement for ticket 06 (spec 9.5): E1 with shipped Toggles; cost p90 measured on the built wasm through node 24.21's V8, 3 trials x 200 seeds per point; width 1600 was probed separately on a coarse 10-seed native sample and fails the 200 ms budget (p90 203.46 ms), which is what ends the sweep; the 9.1 pilot and the quality series are native, where win counts are exact and the parity gate holds them; reference box busy with other worktree builds; §9.1: goal16-p160-cap7 wins 1000/1000 at width 800 on seeds 1000-1999 (≥99%), so the quality axis could not separate the widths and default_beam 25 is the narrowest measured point — named on cost, not on a quality result",
     "supersedes": null
