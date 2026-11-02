@@ -1,0 +1,6 @@
+[toolchain]
+# §10: the pin, not the word "stable". A moving channel would let a Rust upgrade
+# change the Generator's output, and the Dataset fingerprint is a build gate.
+channel = "1.99.1-x86_64-pc-windows-gnu"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
