@@ -1,8 +1,8 @@
 {
   "fixture": "trace-seed0-goal8-p40-cap7-band25",
   "provenance": {
-    "engineCommit": "uncommitted",
-    "wasmSha256": "f13bde3338cb96ba157c5ab62d0174f9bcb0725e4ea5242192832efe3bcec47b",
+    "engineCommit": "980d1e3",
+    "wasmSha256": "6e3540c55def847800876cf6ddf3310d2aaec80bcf0d9a25268ce706d6073a9b",
     "wasmBytes": 58770,
     "abiVersion": 2,
     "evaluator": "dellacherie-thiery",
