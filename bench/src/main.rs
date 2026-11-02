@@ -5,17 +5,21 @@
 //! bench verify [--config <name|all>] [--data <dir>] [--json]
 //! bench fingerprint [--config <name|all>] [--data <dir>]
 //! bench show [--config <name>] --seed <n> [--data <dir>]
+//! bench gate <1|2|3|4|5|6|all> [--data <dir>] [--no-colour]
+//! bench solve --emit [--config <name|all>] [--seeds <a,b,c>] [--beam <n>] [--data <dir>]
 //! ```
 //!
-//! Exit codes: `0` clean, `1` the Dataset drifted (the gate's failure), `2` a
-//! usage or I/O error. Argument parsing is here and nothing else is: every
-//! subcommand is one call into the library, which is what the tests call too.
+//! Exit codes: `0` clean, `1` the Dataset drifted or a Gate failed, `2` a usage
+//! or I/O error or a Gate whose prerequisite is missing. Argument parsing is here
+//! and nothing else is: every subcommand is one call into the library, which is
+//! what the tests call too.
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use bench::dataset::{self, Config};
+use bench::gate::{self, Options};
 use bench::{export, fingerprint, show, verify};
 
 const USAGE: &str = "\
@@ -24,10 +28,13 @@ usage:
   bench verify      [--config <name|all>] [--data <dir>] [--json]
   bench fingerprint [--config <name|all>] [--data <dir>]
   bench show        [--config <name>] --seed <n> [--data <dir>]
+  bench gate        <1|2|3|4|5|6|all> [--data <dir>] [--no-colour]
+  bench solve       --emit [--config <name|all>] [--seeds <a,b,c|a-b>] [--beam <n>]
 
 configurations: goal8-p40-cap7, goal12-p100-cap7
 --data defaults to the repository's data/dataset.
-exit codes: 0 clean, 1 Dataset drift, 2 usage or I/O error.";
+exit codes: 0 clean, 1 Dataset drift or a failed Gate, 2 usage, I/O, or a Gate
+whose prerequisite is missing.";
 
 struct Args {
     configs: Vec<Config>,
@@ -47,6 +54,15 @@ fn main() -> ExitCode {
     if command == "--help" || command == "-h" || command == "help" {
         println!("{USAGE}");
         return ExitCode::from(0);
+    }
+
+    // The two subcommands with their own flags are dispatched before the Dataset
+    // parser below, so neither can grow the other's argument surface.
+    if command == "gate" {
+        return ExitCode::from(gate_command(&argv[1..]));
+    }
+    if command == "solve" {
+        return ExitCode::from(solve_command(&argv[1..]));
     }
 
     let args = match parse(&argv[1..]) {
@@ -287,4 +303,235 @@ fn show_game(args: &Args) -> Result<(), u8> {
     print!("{}", show::ascii(game));
     let _ = std::io::stdout().flush();
     Ok(())
+}
+
+// ------------------------------------------------------------------ gate
+
+/// `bench gate <1..6|all> [--data <dir>] [--no-colour]`.
+///
+/// One command, one exit code, one block of named assertions per gate. Colour is
+/// for a terminal only (`NO_COLOR` respected), exactly as `host-probe/verify.sh`
+/// guards its own: a log in CI is read as text, not as escape codes.
+fn gate_command(argv: &[String]) -> u8 {
+    let mut selector = "all".to_string();
+    let mut data: Option<PathBuf> = None;
+    let mut colour = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    let mut index = 0;
+    while index < argv.len() {
+        match argv[index].as_str() {
+            "--data" => {
+                index += 1;
+                match argv.get(index) {
+                    Some(value) => data = Some(PathBuf::from(value)),
+                    None => {
+                        eprintln!(
+                            "error: --data needs a directory
+
+{USAGE}"
+                        );
+                        return 2;
+                    }
+                }
+            }
+            "--no-colour" | "--no-color" => colour = false,
+            other if other.starts_with("--") => {
+                eprintln!(
+                    "error: unknown flag {other:?}
+
+{USAGE}"
+                );
+                return 2;
+            }
+            other => selector = other.to_string(),
+        }
+        index += 1;
+    }
+
+    let mut options = Options::resolve();
+    if let Some(data) = data {
+        options.paths.data = data;
+    }
+    let reports = match selector.as_str() {
+        "all" => gate::run_all(&options),
+        "1" | "2" | "3" | "4" | "5" | "6" => {
+            vec![gate::run(
+                selector.parse().expect("selected above"),
+                &options,
+            )]
+        }
+        other => {
+            eprintln!(
+                "error: unknown gate {other:?}; known: 1, 2, 3, 4, 5, 6, all
+
+{USAGE}"
+            );
+            return 2;
+        }
+    };
+
+    let in_ci = std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true");
+    for (position, report) in reports.iter().enumerate() {
+        if position > 0 {
+            println!();
+        }
+        println!("{}", report.render_with(colour));
+        if in_ci {
+            for annotation in report.annotations() {
+                println!("{annotation}");
+            }
+        }
+    }
+    let _ = std::io::stdout().flush();
+    gate::worst_exit_code(&reports)
+}
+
+// ------------------------------------------------------------- solve --emit
+
+/// The hidden half of gate 5: solve the fixed seeds and print one line per
+/// `(configuration, seed)` to stdout, and nothing else.
+///
+/// ```text
+/// goal8-p40-cap7 0 10713641301068153 0109,50105,30008,20100,40105
+/// ```
+///
+/// `<config> <seed> <packed decimal> <Move words, or ->`, the words being
+/// `(piece_index << 16) | (rotation << 8) | column` in lowercase hex. The
+/// comparison unit is
+/// the printed line, not the packed `i64`: the packed value carries the Move
+/// *count* and not the Move order, so a determinism check on it alone could pass
+/// while the returned moves differ.
+///
+/// The child reads nothing from `data/dataset`: it regenerates each game from its
+/// Seed, so a Dataset that happens to be dirty cannot make two processes disagree.
+fn solve_command(argv: &[String]) -> u8 {
+    let mut emit = false;
+    let mut configs: Option<Vec<Config>> = None;
+    let mut seeds: Vec<u32> = vec![0];
+    let mut beam = gate::GATE_BEAM;
+    let mut index = 0;
+    while index < argv.len() {
+        let flag = argv[index].as_str();
+        let mut take = |what: &str| -> Option<String> {
+            index += 1;
+            argv.get(index).cloned().or_else(|| {
+                eprintln!("error: {flag} needs {what}");
+                None
+            })
+        };
+        match flag {
+            "--emit" => emit = true,
+            "--config" => {
+                let Some(value) = take("a configuration name or all") else {
+                    return 2;
+                };
+                if value == "all" {
+                    configs = Some(dataset::CONFIGS.to_vec());
+                } else {
+                    let Some(cfg) = Config::from_name(&value) else {
+                        eprintln!("error: unknown configuration {value:?}");
+                        return 2;
+                    };
+                    configs.get_or_insert_with(Vec::new).push(cfg);
+                }
+            }
+            "--seeds" => {
+                let Some(value) = take("a seed list or range") else {
+                    return 2;
+                };
+                match parse_seeds(&value) {
+                    Ok(parsed) => seeds = parsed,
+                    Err(message) => {
+                        eprintln!("error: {message}");
+                        return 2;
+                    }
+                }
+            }
+            "--beam" => {
+                let Some(value) = take("a width") else {
+                    return 2;
+                };
+                match value.parse() {
+                    Ok(width) => beam = width,
+                    Err(_) => {
+                        eprintln!("error: --beam must be a number, found {value:?}");
+                        return 2;
+                    }
+                }
+            }
+            other => {
+                eprintln!(
+                    "error: unknown argument {other:?}
+
+{USAGE}"
+                );
+                return 2;
+            }
+        }
+        index += 1;
+    }
+    if !emit {
+        eprintln!(
+            "error: solve needs --emit
+
+{USAGE}"
+        );
+        return 2;
+    }
+
+    for cfg in configs.unwrap_or_else(|| dataset::CONFIGS.to_vec()) {
+        for seed in &seeds {
+            let game = match engine::generate_game(*seed, cfg.pieces, cfg.cap) {
+                Ok(game) => game,
+                Err(error) => {
+                    eprintln!("error: seed {seed} is out of the Generator's domain ({error:?})");
+                    return 1;
+                }
+            };
+            let result = engine::solve(
+                &game.board,
+                game.sequence.as_slice(),
+                &engine::SolveConfig::new(cfg.goal, beam),
+                engine::shipped(),
+            );
+            let moves = if result.moves.is_empty() {
+                "-".to_string()
+            } else {
+                result
+                    .moves
+                    .iter()
+                    .map(|mv| format!("{:04x}", mv.packed()))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            println!("{} {} {} {}", cfg.dir, seed, result.packed(), moves);
+        }
+    }
+    let _ = std::io::stdout().flush();
+    0
+}
+
+/// `0,42,512` or `0-99`, because a gate that names a seed list by hand should not
+/// have to spell out a hundred numbers.
+fn parse_seeds(text: &str) -> Result<Vec<u32>, String> {
+    if let Some((first, last)) = text.split_once('-') {
+        let first: u32 = first
+            .trim()
+            .parse()
+            .map_err(|_| format!("--seeds range {text:?} has a first seed that is not a number"))?;
+        let last: u32 = last
+            .trim()
+            .parse()
+            .map_err(|_| format!("--seeds range {text:?} has a last seed that is not a number"))?;
+        if last < first {
+            return Err(format!("--seeds range {text:?} ends before it starts"));
+        }
+        return Ok((first..=last).collect());
+    }
+    text.split(',')
+        .map(|seed| {
+            seed.trim()
+                .parse()
+                .map_err(|_| format!("--seeds entry {seed:?} is not a number"))
+        })
+        .collect()
 }
