@@ -1159,10 +1159,7 @@ fn parse_u64(text: &str) -> Option<u64> {
 }
 
 fn bed_from_name(name: &str) -> Option<width::Bed> {
-    for bed in [width::Bed::GOAL8, width::Bed::GOAL12, width::Bed::GOAL16] {
-        if bed.name() == name {
-            return Some(bed);
-        }
-    }
-    None
+    [width::Bed::GOAL8, width::Bed::GOAL12, width::Bed::GOAL16]
+        .into_iter()
+        .find(|bed| bed.name() == name)
 }

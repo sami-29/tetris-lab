@@ -240,8 +240,7 @@ fn normal_cdf(z: f64) -> f64 {
             + 0.254_829_592)
             * t
             * (-x * x).exp();
-    let cdf = 0.5 * (1.0 + if z >= 0.0 { erf } else { -erf });
-    cdf
+    0.5 * (1.0 + if z >= 0.0 { erf } else { -erf })
 }
 
 /// A paired bootstrap 95 % interval for the mean of `judged − reference`, over
@@ -311,7 +310,7 @@ mod tests {
         assert!(low > 0.99 && low < 1.0, "{low}");
         assert_eq!(high, 1.0);
         let [low, high] = wilson(0, 1_000);
-        assert!(low >= 0.0 && low < 1e-9, "{low}");
+        assert!((0.0..1e-9).contains(&low), "{low}");
         assert!(high > 0.0 && high < 0.01, "{high}");
     }
 
