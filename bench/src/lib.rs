@@ -19,6 +19,8 @@
 //!   convention, run by `bench gate <1..6|all>` on every push.
 //! * [`replay`] — gate 3's independent simulator: a Move list replayed on a second
 //!   implementation, which is what makes "it replays" a check.
+//! * [`width`] — §9.5's width curve: the two numbers the page hangs on, measured
+//!   once and written to `data/measurements/width-curve.json`.
 
 pub mod dataset;
 pub mod export;
@@ -27,3 +29,4 @@ pub mod gate;
 pub mod replay;
 pub mod show;
 pub mod verify;
+pub mod width;

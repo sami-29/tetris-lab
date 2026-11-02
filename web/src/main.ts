@@ -13,6 +13,7 @@
 
 import engineWasmUrl from "../pkg/engine.wasm?url";
 
+import { DEFAULT_BEAM } from "./config/width.ts";
 import type { FromWorker, GameMessage, GameInput, ToWorker } from "./core/protocol.ts";
 import { fieldFrom } from "./ui/field.ts";
 import { BoardView } from "./ui/board.ts";
@@ -28,15 +29,19 @@ import { moveToX, stripMode, xToMove } from "./ui/seek.ts";
 const ABI = 2;
 
 /**
- * §2.2's defaults. `beamWidth` is 25 until the measured width curve lands, which is
- * the value every test in `web/test/` solves at.
+ * §2.2's defaults. `DEFAULT_BEAM` is not written here: it is read at build time
+ * from the committed width-curve artifact (`data/measurements/width-curve.json`,
+ * measured by `bench width-curve` for §9.5), through `./config/width.ts` — the
+ * one module allowed to name it. The toolbar's width field opens at it, the
+ * slider runs to `WIDTH_CAP`, and neither number can drift from the published
+ * table because all three read the same import.
  */
 const DEFAULTS: GameInput = {
   seed: 0,
   goal: 8,
   pieces: 40,
   heightCap: 7,
-  beamWidth: 25,
+  beamWidth: DEFAULT_BEAM,
 };
 
 /** Every element the page needs, or a loud failure at boot. */
