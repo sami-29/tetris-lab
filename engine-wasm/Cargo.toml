@@ -1,0 +1,21 @@
+[package]
+name = "engine-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The §4 ABI and nothing else: four raw exports over the engine's fixed-offset buffers."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+# No doc tests, deliberately. The crate's docs describe raw ABI calls whose
+# examples cannot run natively (offset 0x00 is unmapped outside wasm), and on
+# this box rustdoc's doctest harness for this crate dies at load with
+# STATUS_DLL_INIT_FAILED (0xc0000142), which would make a plain `cargo test` red
+# for a reason that has nothing to do with the engine. Nothing here loses
+# coverage: every export is exercised through the real artifact in
+# `web/test/abi.test.mjs`.
+doctest = false
+
+[dependencies]
+engine = { path = "../engine" }
