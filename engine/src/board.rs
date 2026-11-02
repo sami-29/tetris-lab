@@ -10,7 +10,12 @@ pub const W: usize = 10;
 pub const H: usize = 20;
 
 /// Every row of the field: twenty bits. Anything above that is not a Board.
-const FIELD: u32 = (1 << H) - 1;
+///
+/// Public because every feature that reads a column word has to mask with it:
+/// `32 - leading_zeros()` is a height in `0..=20` only while the bits above row 0
+/// are zero, and an unmasked word inflates heights, holes, wells and both
+/// transition counts at once — a parity bug that looks like a scoring bug.
+pub const FIELD: u32 = (1 << H) - 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Board(pub [u32; W]);
@@ -28,10 +33,11 @@ impl Board {
         self.0[col] |= 1u32 << (H - 1 - row);
     }
 
-    /// Stack height of one column in cells: zero when the column is empty.
+    /// Stack height of one column in cells: zero when the column is empty, and
+    /// always `0..=20` however the high bits of the word were written.
     #[inline]
     pub fn height(&self, col: usize) -> u32 {
-        u32::BITS - self.0[col].leading_zeros()
+        u32::BITS - (self.0[col] & FIELD).leading_zeros()
     }
 
     /// The tallest column's height: what the height cap is measured against.

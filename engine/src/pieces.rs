@@ -176,3 +176,50 @@ impl Piece {
         &ROTATIONS[self.index() as usize][..N_ROTATIONS[self.index() as usize]]
     }
 }
+
+impl Rotation {
+    /// How many of this rotation's cells land in `rows` when it rests `shift`
+    /// cells above the floor. `rows` is a mask over bit positions, bit 0 the
+    /// bottom row (§5.1); the column the piece was dropped in does not matter,
+    /// because a row bit means the same thing in every column word.
+    ///
+    /// This is the `b` of `eroded_cells`: the search multiplies it by the Lines
+    /// the placement cleared, which is the published product (§5.4).
+    #[inline]
+    pub fn cells_in_rows(&self, shift: u32, rows: u32) -> u32 {
+        let mut cells = 0;
+        let mut i = 0;
+        while i < self.width as usize {
+            cells += ((self.cols[i] as u32) << shift & rows).count_ones();
+            i += 1;
+        }
+        cells
+    }
+
+    /// Centre of mass of this rotation's cells above the floor when it rests
+    /// `shift` cells above it: `1..=20`, the landing height of §5.4.
+    ///
+    /// Centre of mass, not the top or the bottom of the piece and not the middle
+    /// of its bounding box: the paper's "height where the last piece is added"
+    /// does not say which, the readings differ by up to two rows and only for the
+    /// corner-footed orientations, and a fixture that pinned one of them by
+    /// accident would be a different evaluator. `+1` so a flat landing on the
+    /// floor is 1, matching a column height of 1 for a filled bottom row.
+    #[inline]
+    pub fn landing_height(&self, shift: u32) -> i32 {
+        let mut sum = 0;
+        let mut cells = 0;
+        let mut i = 0;
+        while i < self.width as usize {
+            let mut word = self.cols[i] as u32;
+            while word != 0 {
+                let bit = word.trailing_zeros();
+                sum += bit + shift + 1;
+                cells += 1;
+                word &= word - 1;
+            }
+            i += 1;
+        }
+        (sum / cells) as i32
+    }
+}
