@@ -82,11 +82,17 @@ fn counts(trace: &Trace) -> Vec<usize> {
 /// Claims 1, 2 and 3 of this file's header, over a whole trace.
 fn assert_invariants(trace: &Trace, band: u32) {
     let layers = layers(trace);
-    assert!(!layers.is_empty(), "a traced solve records at least the root");
+    assert!(
+        !layers.is_empty(),
+        "a traced solve records at least the root"
+    );
 
     // Claim 2: layer order, then rank order, and rank 0 is the best score.
     for (layer_index, layer) in layers.iter().enumerate() {
-        assert!(!layer.is_empty(), "layer {layer_index} exists but holds no records");
+        assert!(
+            !layer.is_empty(),
+            "layer {layer_index} exists but holds no records"
+        );
         assert!(
             layer.len() <= band as usize,
             "layer {layer_index} keeps {} records, band is {band}",
@@ -94,7 +100,10 @@ fn assert_invariants(trace: &Trace, band: u32) {
         );
         for (rank, record) in layer.iter().enumerate() {
             assert_eq!(record.layer as usize, layer_index, "layer order");
-            assert_eq!(record.rank as usize, rank, "rank is the index inside its layer");
+            assert_eq!(
+                record.rank as usize, rank,
+                "rank is the index inside its layer"
+            );
             if rank > 0 {
                 assert!(
                     record.score <= layer[rank - 1].score,
@@ -201,8 +210,15 @@ fn the_band_bounds_the_records_and_never_the_search() {
     );
     for band in [1u32, 5, 25] {
         let (traced_result, trace) = traced(&game, 8, 25, band);
-        assert_eq!(traced_result.packed(), plain.packed(), "band {band} changed the result");
-        assert_eq!(traced_result.moves, plain.moves, "band {band} changed the Move list");
+        assert_eq!(
+            traced_result.packed(),
+            plain.packed(),
+            "band {band} changed the result"
+        );
+        assert_eq!(
+            traced_result.moves, plain.moves,
+            "band {band} changed the Move list"
+        );
         assert_invariants(&trace, band);
     }
     // band 0 is a legal "no trace": the solve still answers, nothing is recorded.
@@ -260,6 +276,38 @@ fn every_layer_is_the_survive_set_of_that_layer_in_score_order() {
 }
 
 #[test]
+fn the_default_game_records_the_layers_and_counts_the_band_prints() {
+    // A golden, deliberately: ADR 0002's rule is that a moved number is a
+    // deliberate re-freeze, never an incidental one. Measured on this engine for
+    // the page's default game (seed 0, goal 8, 40 pieces, cap 7) at the shipped
+    // band of 25: the root, 17 survivors after the first piece, 25 per Layer from
+    // the second onwards, and one record for the state that reaches the Goal at
+    // layer 19 — 444 records in 20 layers.
+    //
+    // The fixture (`web/test/fixtures/trace-seed0-goal8-p40-cap7-band25.json`)
+    // carries the same numbers for the browser, written by the same engine through
+    // `solve_traced`, so an engine change fails here *and* in the wasm test that
+    // compares the two.
+    const EXPECTED_COUNTS: [usize; 20] = [
+        1, 17, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 1,
+    ];
+    let game = default_game();
+    let (_, trace) = traced(&game, 8, 25, BAND);
+    assert_eq!(trace.len(), 444, "the trace's record count");
+    assert_eq!(
+        counts(&trace),
+        EXPECTED_COUNTS.to_vec(),
+        "the per-layer counts"
+    );
+    // The Goal is reached inside the beam at this game, so the last layer is the
+    // winning state alone: the lineage ends at the Goal instead of a Layer short.
+    assert_eq!(
+        trace.records[trace.len() - 1].layer as usize,
+        EXPECTED_COUNTS.len() - 1
+    );
+}
+
+#[test]
 fn a_narrow_band_clips_records_and_says_so_with_the_unrecorded_parent_sentinel() {
     let game = default_game();
     let (_, wide) = traced(&game, 8, 25, BAND);
@@ -268,9 +316,17 @@ fn a_narrow_band_clips_records_and_says_so_with_the_unrecorded_parent_sentinel()
 
     let wide_counts = counts(&wide);
     let narrow_counts = counts(&narrow);
-    assert_eq!(narrow_counts.len(), wide_counts.len(), "clipping removes records, not layers");
+    assert_eq!(
+        narrow_counts.len(),
+        wide_counts.len(),
+        "clipping removes records, not layers"
+    );
     for (layer, (narrow_count, wide_count)) in narrow_counts.iter().zip(&wide_counts).enumerate() {
-        assert_eq!(*narrow_count, (*wide_count).min(4), "layer {layer} keeps its top 4");
+        assert_eq!(
+            *narrow_count,
+            (*wide_count).min(4),
+            "layer {layer} keeps its top 4"
+        );
     }
     let sentinels = narrow
         .records
@@ -287,8 +343,14 @@ fn a_narrow_band_clips_records_and_says_so_with_the_unrecorded_parent_sentinel()
     let narrow_layers = layers(&narrow);
     for (layer, (narrow_layer, wide_layer)) in narrow_layers.iter().zip(&wide_layers).enumerate() {
         for (rank, record) in narrow_layer.iter().enumerate() {
-            assert_eq!(record.score, wide_layer[rank].score, "layer {layer} rank {rank} score");
-            assert_eq!(record.lines, wide_layer[rank].lines, "layer {layer} rank {rank} lines");
+            assert_eq!(
+                record.score, wide_layer[rank].score,
+                "layer {layer} rank {rank} score"
+            );
+            assert_eq!(
+                record.lines, wide_layer[rank].lines,
+                "layer {layer} rank {rank} lines"
+            );
         }
     }
 }
@@ -318,6 +380,10 @@ fn a_trace_with_capacity_stops_at_a_layer_boundary_instead_of_overrunning() {
             "capacity {capacity} was overrun: {} records",
             trace.len()
         );
+        if capacity == 0 {
+            assert!(trace.is_empty(), "no room, no trace");
+            continue;
+        }
         assert_invariants(&trace, BAND);
         let recorded = counts(&trace);
         // A whole number of layers from the front: half a layer would break the
@@ -402,6 +468,10 @@ fn a_second_traced_solve_replaces_the_first_trace() {
     );
     let words = trace.words();
     assert_ne!(wide_count, words[0], "the count word must be rewritten");
-    assert_eq!(words[0] as usize, (words.len() - 1) / 5, "the count word is the record count");
+    assert_eq!(
+        words[0] as usize,
+        (words.len() - 1) / 5,
+        "the count word is the record count"
+    );
     assert_invariants(&trace, 4);
 }

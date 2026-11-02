@@ -12,6 +12,7 @@
 use crate::board::{Board, H, W};
 use crate::evaluator::{Evaluator, PlacementCtx};
 use crate::pieces::Piece;
+use crate::trace::{Trace, TraceRecord, PARENT_NONE, PARENT_UNRECORDED};
 
 pub use crate::generator::MAX_PIECES;
 
@@ -260,6 +261,11 @@ struct Cand {
     lines: u32,
     /// The node this candidate hangs off, i.e. its parent state's `node`.
     parent: u32,
+    /// The parent state's index in the previous Layer's survive-set — the rank
+    /// its trace record carries, because a recorded Layer *is* the survive-set in
+    /// rank order. This is the trace's `parent_rank` (§4.4) and nothing else;
+    /// `parent` above is the Move-list arena and moves when the Tail runs.
+    parent_rank: u16,
     score: i64,
     mv: Move,
     suicide: bool,
@@ -387,6 +393,151 @@ pub fn solve(
     cfg: &SolveConfig,
     evaluator: &dyn Evaluator,
 ) -> SolveResult {
+    run(board, sequence, cfg, evaluator, None)
+}
+
+/// §4.4's `solve_traced`: `solve`, and the survive-set of each Layer into
+/// `trace`.
+///
+/// Three things this signature promises, each of them a decision rather than a
+/// transcription of the spec (the ticket's report records all three):
+///
+/// * **the result is bit-identical to `solve`'s.** `band` bounds the records and
+///   never the search, so a trace cannot move a published number (§9.6: every
+///   figure is measured at `DEFAULT_BEAM`, and the band is measured at it too);
+/// * **the capture is after the trim and after Dedup**, i.e. exactly the list the
+///   next Layer expands, so a record's rank *is* the parent index its children
+///   carry. A pre-trim capture would record `band x 34` candidates per Layer and
+///   a deduped-away state could never be a parent anyway;
+/// * **records stop at a whole Layer.** If `trace`'s capacity runs out, the layers
+///   that did not fit are simply absent and every recorded `parent_rank` still
+///   resolves, which matters because the wasm writes into a fixed `alloc` at
+///   boot and cannot grow it.
+pub fn solve_traced(
+    board: &Board,
+    sequence: &[Piece],
+    cfg: &SolveConfig,
+    evaluator: &dyn Evaluator,
+    band: u32,
+    trace: &mut Trace,
+) -> SolveResult {
+    trace.clear();
+    let mut tracer = Tracer {
+        trace,
+        band: band as usize,
+        stopped: band == 0,
+    };
+    run(board, sequence, cfg, evaluator, Some(&mut tracer))
+}
+
+/// §4.4's record writer: the band, the capacity and the two sentinels in one
+/// place, so the beam and the Goal's last record cannot disagree about them.
+struct Tracer<'a> {
+    trace: &'a mut Trace,
+    /// §4.4: at most `band` records per Layer.
+    band: usize,
+    /// Set when the capacity (or a zero band) ended the trace: later Layers are
+    /// not recorded, because a half-recorded Layer would break the parent
+    /// invariant and a later Layer's parents live in this one.
+    stopped: bool,
+}
+
+impl Tracer<'_> {
+    /// Layer 0 is the start position: one record, no parent (§4.4's `-1`).
+    fn root(&mut self, board: &Board, evaluator: &dyn Evaluator) {
+        if self.stopped || self.trace.remaining() < 1 {
+            self.stopped = true;
+            return;
+        }
+        self.trace.push(TraceRecord {
+            layer: 0,
+            rank: 0,
+            score: clamp_score(evaluator.score(board, &PlacementCtx::NONE)),
+            lines: 0,
+            parent_rank: PARENT_NONE,
+        });
+    }
+
+    /// One Layer's survive-set: `cands`, already trimmed and deduped, in score
+    /// order, so the record index is the rank.
+    fn layer(&mut self, layer: u16, cands: &[Cand]) {
+        let band = self.band;
+        let count = cands.len().min(band);
+        let rows: Vec<(i32, u16, i32)> = cands
+            .iter()
+            .take(count)
+            .map(|cand| {
+                (
+                    clamp_score(cand.score),
+                    cand.lines.min(u16::MAX as u32) as u16,
+                    parent_of(cand.parent_rank, band),
+                )
+            })
+            .collect();
+        self.push_rows(layer, &rows);
+    }
+
+    /// The state that ended the search: one record, so the lineage reaches the
+    /// Goal instead of stopping a Layer short of it.
+    fn winner(&mut self, layer: u16, score: i64, lines: u32, parent_rank: u16) {
+        let rows = [(
+            clamp_score(score),
+            lines.min(u16::MAX as u32) as u16,
+            parent_of(parent_rank, self.band),
+        )];
+        self.push_rows(layer, &rows);
+    }
+
+    fn push_rows(&mut self, layer: u16, rows: &[(i32, u16, i32)]) {
+        if self.stopped || rows.is_empty() {
+            return;
+        }
+        if self.trace.remaining() < rows.len() {
+            // Never a partial Layer: the trace ends here, and every recorded
+            // parent is still inside a recorded Layer.
+            self.stopped = true;
+            return;
+        }
+        for (rank, (score, lines, parent_rank)) in rows.iter().enumerate() {
+            self.trace.push(TraceRecord {
+                layer,
+                rank: rank as u16,
+                score: *score,
+                lines: *lines,
+                parent_rank: *parent_rank,
+            });
+        }
+    }
+}
+
+/// A parent's rank inside the previous Layer's survive-set, mapped through the
+/// band: `PARENT_UNRECORDED` when the band cut that record.
+#[inline]
+fn parent_of(parent_rank: u16, band: usize) -> i32 {
+    if (parent_rank as usize) < band {
+        parent_rank as i32
+    } else {
+        PARENT_UNRECORDED
+    }
+}
+
+/// §4.4 fixes `score` as `i32` and notes/05 §3.4 bounds every shipped table at
+/// |score| <= 24,440, so this is a no-op today; it is here so a future table
+/// saturates instead of wrapping, because nothing in the ABI would report the
+/// wrap.
+#[inline]
+fn clamp_score(score: i64) -> i32 {
+    score.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+}
+
+/// The one search: `solve` and `solve_traced` differ only in the sink.
+fn run(
+    board: &Board,
+    sequence: &[Piece],
+    cfg: &SolveConfig,
+    evaluator: &dyn Evaluator,
+    mut tracer: Option<&mut Tracer<'_>>,
+) -> SolveResult {
     if !cfg.parameters_in_domain() {
         return SolveResult::failed(Status::OutOfDomain);
     }
@@ -418,10 +569,23 @@ pub fn solve(
     let mut evaluations: u32 = 0;
     let mut best_lines: u32 = 0;
 
+    // Layer 0 of the trace: the position the search starts from. Recorded before
+    // the first placement, so the lineage has an anchor and the band's first row
+    // is the Board the visitor is looking at.
+    if let Some(tracer) = tracer.as_deref_mut() {
+        tracer.root(board, evaluator);
+    }
+
     for (layer, piece) in sequence.iter().enumerate() {
         // §5.3's exact Tail: from the first of the final three pieces onwards the
         // beam's approximation is no longer worth its speed, so the rest of the
         // game is searched exactly from each surviving state.
+        // The Tail's Layers are **not** traced: §5.3's Tail has no width trim, so
+        // its Layers can hold thousands of states and a `band`-sized record set
+        // would clip them — which is the one case where a recorded parent could
+        // fall outside the band. The band stops at the last beam Layer, the last
+        // three pieces are covered by the move strip, and the trace's own
+        // invariant (every `parent_rank` resolvable) holds unconditionally.
         if cfg.toggles.tail && sequence.len() - layer <= TAIL {
             return tail_search(
                 &beam,
@@ -450,7 +614,7 @@ pub fn solve(
         };
         let mut any_safe = false;
 
-        for parent in &beam {
+        for (parent_rank, parent) in beam.iter().enumerate() {
             for (rotation_index, rotation) in rotations.iter().enumerate() {
                 for column in 0..=(W - rotation.width as usize) {
                     let Some(shift) = parent.board.rest_shift(rotation, column) else {
@@ -481,6 +645,26 @@ pub fn solve(
                     // the result is assembled.
                     if lines >= cfg.goal {
                         let winning = push_node(&mut arena, parent.node, mv);
+                        // The winning state is recorded as the last Layer's only
+                        // record, so the lineage ends at the Goal rather than one
+                        // Layer short of it. Its score is the same evaluator score
+                        // every other record carries.
+                        if let Some(tracer) = tracer.as_deref_mut() {
+                            tracer.winner(
+                                (layer + 1) as u16,
+                                evaluator.score(
+                                    &next_board,
+                                    &PlacementCtx {
+                                        lines_cleared: cleared,
+                                        landing_height: rotation.landing_height(shift),
+                                        eroded_cells: cleared
+                                            * rotation.cells_in_rows(shift, completed),
+                                    },
+                                ),
+                                lines,
+                                parent_rank as u16,
+                            );
+                        }
                         return SolveResult {
                             status: Status::Ok,
                             won: true,
@@ -501,6 +685,7 @@ pub fn solve(
                         board: next_board,
                         lines,
                         parent: parent.node,
+                        parent_rank: parent_rank as u16,
                         score: evaluator.score(
                             &next_board,
                             &PlacementCtx {
@@ -548,6 +733,13 @@ pub fn solve(
         cands.sort_by_key(|cand| std::cmp::Reverse(cand.score));
         if cands.len() > width {
             cands.truncate(width);
+        }
+
+        // §5.3's capture point: what survives the trim and Dedup *is* the next
+        // Layer's expansion list, so the record's index is the rank its children
+        // will name.
+        if let Some(tracer) = tracer.as_deref_mut() {
+            tracer.layer((layer + 1) as u16, &cands);
         }
 
         beam.clear();
@@ -618,6 +810,9 @@ fn tail_search(
             board: state.board,
             lines: state.lines,
             parent: rank as u32,
+            // The Tail is not traced (`solve_traced`'s doc comment says why), so
+            // this field has no reader here.
+            parent_rank: 0,
             score: 0,
             mv: Move::default(),
             suicide: false,
@@ -704,6 +899,7 @@ fn tail_search(
                             board: next_board,
                             lines,
                             parent: rank as u32,
+                            parent_rank: 0,
                             score: evaluator.score(
                                 &next_board,
                                 &PlacementCtx {
