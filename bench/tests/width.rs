@@ -16,7 +16,7 @@ use std::sync::Mutex;
 
 use bench::width::{
     self, Artifact, Bed, BedCost, CapBound, CostRow, DefaultBasis, DefaultSource, MsSource,
-    Options, Paired, Point, QualityAxis, QualityRow, Tally, WIDTHS,
+    Options, Overshoot, Paired, Point, QualityAxis, QualityRow, Summary, Tally, WIDTHS,
 };
 
 const DEFAULT_BED: &str = "goal8-p40-cap7";
@@ -66,6 +66,11 @@ fn scratch(tag: &str) -> PathBuf {
 /// the curve is measured in, so in debug the harder bed at width 50 already misses
 /// the 200 ms budget and the cap is the narrowest point. The shape of the artifact
 /// and the rules above the clock are the same either way, and those are the tests.
+///
+/// The probe is what makes the stop rule's verdict independent of the box: two of
+/// nine pre-registered points are asked for, so the curve is *truncated*, and the
+/// only honest way to say why the climb ended is the probe at width 100 — a budget
+/// that failed, at a size no debug build's clock can disagree with.
 fn quick(out: &Path) -> Options {
     Options {
         data: bench::dataset::root(),
@@ -81,6 +86,13 @@ fn quick(out: &Path) -> Options {
         reason: "test run".to_string(),
         quiet: true,
         now_secs: 1_800_000_000,
+        overshoot: Some(Overshoot {
+            width: 100,
+            substrate: "native".to_string(),
+            samples: 3,
+            ms_p90: 999.0,
+            note: "a test probe, so the bound does not depend on this box's clock".to_string(),
+        }),
     }
 }
 
@@ -111,11 +123,208 @@ fn committed_path() -> PathBuf {
         .join("width-curve.json")
 }
 
+fn bed_cost(bed: &str, ms_p90: f64) -> BedCost {
+    BedCost {
+        bed: bed.to_string(),
+        matches: tal(600, 600),
+        evaluations_p50: 1_000,
+        ms_p50: ms_p90 * 0.8,
+        ms_p90,
+        ms_max: ms_p90 * 1.2,
+        trials_ms_p90: vec![ms_p90],
+    }
+}
+
+/// One point of a synthetic series: both shipped beds, at the milliseconds given.
+fn measured(width: u32, default_p90: f64, harder_p90: f64) -> Point {
+    Point {
+        width,
+        cost: vec![
+            bed_cost(DEFAULT_BED, default_p90),
+            bed_cost(HARDER_BED, harder_p90),
+        ],
+        quality: Some(QualityRow {
+            width,
+            tally: tal(1_000, 1_000),
+            paired: Paired { b: 0, c: 0 },
+        }),
+        flat_step: None,
+    }
+}
+
+/// The committed curve's own cost series, through width 800 — the six points the
+/// run actually measured. Everything above 800 is a pre-registered point it did
+/// not measure, which is what the summary fields have to be honest about.
+fn measured_to_800() -> Vec<Point> {
+    [
+        (25, 4.421, 6.021),
+        (50, 8.017, 10.865),
+        (100, 14.977, 20.582),
+        (200, 30.070, 40.087),
+        (400, 57.254, 79.982),
+        (800, 111.474, 157.357),
+    ]
+    .into_iter()
+    .map(|(width, default_p90, harder_p90)| measured(width, default_p90, harder_p90))
+    .collect()
+}
+
+/// The probe the committed artifact records: width 1,600 on a coarse native
+/// sample, over the default configuration's 200 ms budget.
+fn probe(width: u32, ms_p90: f64) -> Overshoot {
+    Overshoot {
+        width,
+        substrate: "native".to_string(),
+        samples: 10,
+        ms_p90,
+        note: "≈215 ms on the wasm substrate this curve's cost series is measured on"
+            .to_string(),
+    }
+}
+
 // ------------------------------------------------------- the pre-registered list
 
 #[test]
 fn the_doubling_points_are_the_ones_the_spec_pre_registered() {
     assert_eq!(WIDTHS, [25, 50, 100, 200, 400, 800, 1_600, 3_200, 6_400]);
+}
+
+#[test]
+// ------------------------------------- the summary fields are derived, not requested
+
+#[test]
+fn a_truncated_width_list_cannot_produce_a_complete_curve_or_the_schedule() {
+    // Six of §9.5's nine points, exactly as the committed run was invoked
+    // (`--widths 25,…,800`), with nothing on the record to say why the climb
+    // ended. The derivation refuses to name a bound: `schedule` is the word that
+    // tells the page's tooltip "the curve was still climbing at the last measured
+    // width", which is a lie about a curve that won 1000/1000 everywhere it was
+    // measured. `complete: true` would be the same lie in a different field.
+    let points = measured_to_800();
+    let error = width::summarise(&points, None).expect_err("a truncated list is not a curve");
+    assert!(error.contains("1600"), "the reason names the widths: {error}");
+    assert!(error.contains("not measured"), "{error}");
+}
+
+#[test]
+fn a_probe_that_fails_the_budget_is_what_makes_the_bound_a_budget() {
+    let summary = width::summarise(&measured_to_800(), Some(&probe(1_600, 203.46)))
+        .expect("a probe over the budget is evidence");
+    assert_eq!(summary.width_cap, 800);
+    assert_eq!(summary.cap_bound, CapBound::Budget);
+    assert!(!summary.complete, "six of nine points were measured");
+    assert_eq!(summary.missing_widths, vec![1_600, 3_200, 6_400]);
+    // The one-line reason has to be checkable on its own: the width, the p90, the
+    // substrate, the sample size, the fact that the probe is not a point, and why
+    // the wider points are absent.
+    for needle in [
+        "1600",
+        "203.46",
+        "native",
+        "10 seeds",
+        "not as a measured point",
+        "3200",
+        "6400",
+        "the sweep stops at the first width that fails a budget",
+    ] {
+        assert!(
+            summary.incomplete_reason.contains(needle),
+            "{needle:?} in {:?}",
+            summary.incomplete_reason
+        );
+    }
+    assert!(
+        summary.incomplete_reason.contains("215 ms"),
+        "the probe's own note travels with it: {:?}",
+        summary.incomplete_reason
+    );
+}
+
+#[test]
+fn a_measured_failing_width_is_a_budget_too_and_the_point_stays_a_point() {
+    // The other route to `budget`: the sweep measured the width above the cap and
+    // it failed. No probe is needed, and the failing width is a point, not a probe.
+    let mut points = measured_to_800();
+    points.push(measured(1_600, 203.46, 290.0));
+    let summary = width::summarise(&points, None).expect("a measured failure is evidence");
+    assert_eq!(summary.width_cap, 800);
+    assert_eq!(summary.cap_bound, CapBound::Budget);
+    assert_eq!(summary.missing_widths, vec![3_200, 6_400]);
+    assert!(summary.incomplete_reason.contains("1600"));
+    assert!(summary.incomplete_reason.contains("203.46"));
+}
+
+#[test]
+fn only_a_fully_measured_curve_can_name_the_schedule() {
+    let all: Vec<Point> = WIDTHS
+        .iter()
+        .map(|width| measured(*width, *width as f64 / 100.0, *width as f64 / 50.0))
+        .collect();
+    let summary = width::summarise(&all, None).expect("every pre-registered point measured");
+    assert_eq!(summary.cap_bound, CapBound::Schedule);
+    assert!(summary.complete);
+    assert!(summary.missing_widths.is_empty());
+    assert_eq!(summary.incomplete_reason, "");
+    assert_eq!(summary.width_cap, 6_400);
+
+    // One point short — the widest, where a truncated request always stops — and
+    // the word "schedule" is gone.
+    assert!(width::summarise(&all[..8], None).is_err());
+}
+
+#[test]
+fn a_probe_that_does_not_fail_the_budget_is_not_why_the_climb_stopped() {
+    let points = measured_to_800();
+    let under = probe(1_600, 199.9);
+    assert!(
+        width::summarise(&points, Some(&under)).is_err(),
+        "a probe that fits the budget explains nothing"
+    );
+    let below_the_cap = probe(400, 900.0);
+    assert!(
+        width::summarise(&points, Some(&below_the_cap)).is_err(),
+        "the cap fits a budget at 400, so a probe cannot fail one there"
+    );
+    let not_pre_registered = probe(1_000, 900.0);
+    assert!(
+        width::summarise(&points, Some(&not_pre_registered)).is_err(),
+        "1000 is not one of §9.5's doubling points"
+    );
+    let mut no_samples = probe(1_600, 203.46);
+    no_samples.samples = 0;
+    assert!(
+        width::summarise(&points, Some(&no_samples)).is_err(),
+        "a p90 without a sample size is not a measurement"
+    );
+}
+
+#[test]
+fn a_run_that_was_asked_for_a_prefix_says_so_in_the_file() {
+    // `quick` asks for two of the nine pre-registered points, which is the shape of
+    // the committed run (`--widths 25,…,800`): a truncated list. The artifact must
+    // not claim to be complete, and it must not claim the doubling list stopped it.
+    let artifact = measure_quick("truncated");
+    assert!(!artifact.complete);
+    let expected: Vec<u32> = WIDTHS
+        .iter()
+        .copied()
+        .filter(|width| !artifact.points.iter().any(|point| point.width == *width))
+        .collect();
+    assert!(expected.len() >= 7, "{expected:?}");
+    assert_eq!(artifact.missing_widths, expected);
+    assert_eq!(artifact.cap_bound, CapBound::Budget);
+    assert!(
+        artifact.incomplete_reason.contains("100"),
+        "the probe at 100 is why the climb stopped: {:?}",
+        artifact.incomplete_reason
+    );
+
+    let text = artifact.render();
+    assert!(text.contains("\"complete\": false"));
+    assert!(
+        !text.contains("\"cap_bound\": \"schedule\""),
+        "a truncated list cannot claim the schedule stopped it"
+    );
 }
 
 #[test]
@@ -512,13 +721,26 @@ fn the_artifact_is_written_by_the_bench_and_not_hand_edited() {
     // The two budgets, as numbers, on the record.
     assert!(text.contains("\"default_ms\": 200"));
     assert!(text.contains("\"harder_ms\": 1000"));
-    // The curve's own honesty about its coverage, and the stop rule's verdict.
+    // The curve's own honesty about its coverage, and the stop rule's verdict. Two
+    // of nine pre-registered points were asked for, so the artifact says which seven
+    // are missing, why the climb stopped (the probe), and that it did *not* run out
+    // of schedule — the two fields the committed defect got wrong.
     assert!(
-        text.contains("\"complete\": true"),
-        "nothing was missing here"
+        text.contains("\"complete\": false"),
+        "two of nine points were measured"
     );
-    assert!(text.contains("\"missing_widths\": []"));
-    assert!(text.contains("\"incomplete_reason\": \"\""));
+    assert!(
+        text.contains("\"cap_bound\": \"budget\""),
+        "a probed failure ended the sweep"
+    );
+    assert!(
+        !text.contains("\"cap_bound\": \"schedule\""),
+        "a truncated list cannot claim the schedule stopped it"
+    );
+    assert!(!text.contains("\"missing_widths\": []"));
+    assert!(!text.contains("\"incomplete_reason\": \"\""));
+    assert!(text.contains("\"overshoot\": {"));
+    assert!(text.contains("\"probe\": true"));
     assert!(text.contains("\"quality_stop_rule_fired_at\""));
 }
 
@@ -541,6 +763,7 @@ fn a_curve_that_did_not_measure_every_point_says_which_ones_and_why() {
 
     // And the other direction: a complete curve cannot carry either field.
     artifact.complete = true;
+    artifact.missing_widths = vec![3_200, 6_400];
     assert!(
         artifact.validate().is_err(),
         "a complete curve measured every doubling point, so nothing can be missing"
@@ -551,7 +774,30 @@ fn a_curve_that_did_not_measure_every_point_says_which_ones_and_why() {
         "a complete curve has nothing to explain"
     );
     artifact.incomplete_reason.clear();
+    assert!(
+        artifact.validate().is_err(),
+        "a complete curve measured every point, so a probe above the cap is a contradiction"
+    );
+    // A "budget" bound is a claim about evidence: with the probe gone and no
+    // measured failing width above the cap, it cannot stand either.
+    artifact.overshoot = None;
+    assert!(artifact.validate().is_err(), "budget with no evidence");
+    // Only now is it a whole schedule that ran out, which is the one state that may
+    // say so.
+    artifact.cap_bound = CapBound::Schedule;
     assert_eq!(artifact.validate(), Ok(()));
+}
+
+#[test]
+fn a_partial_curve_may_not_claim_the_schedule_stopped_it() {
+    // The committed defect, in one field: six of nine points, `cap_bound:
+    // "schedule"`. The tooltip built on that word says the curve was still climbing
+    // at the last measured width, so the artifact refuses to say it.
+    let mut artifact = measure_quick("schedule");
+    assert!(!artifact.complete, "two of nine points were measured");
+    artifact.cap_bound = CapBound::Schedule;
+    let error = artifact.validate().expect_err("a truncated curve is not a schedule");
+    assert!(error.contains("schedule"), "{error}");
 }
 
 #[test]
@@ -669,4 +915,136 @@ fn the_committed_artifact_names_a_default_and_a_cap() {
     assert!(page.contains("export const DEFAULT_BEAM"));
     assert!(page.contains("curve.width_cap"));
     assert!(page.contains("export const WIDTH_CAP"));
+}
+
+#[test]
+fn the_committed_artifact_names_the_stop_rule_and_its_own_coverage() {
+    // The certificate a reader checks without re-running anything: what stopped the
+    // sweep, what it did not measure, and the probe that is evidence but not a point.
+    let text = fs::read_to_string(committed_path()).expect("the committed width curve");
+    let artifact = Artifact::from_text(&text).expect("the committed artifact parses back");
+    assert_eq!(artifact.width_cap, 800);
+    assert_eq!(artifact.default_beam, 25);
+    assert_eq!(artifact.cap_bound, CapBound::Budget);
+    assert!(!artifact.complete, "six of nine pre-registered points");
+    assert_eq!(artifact.missing_widths, vec![1_600, 3_200, 6_400]);
+    assert!(
+        artifact.incomplete_reason.contains("203.46"),
+        "{:?}",
+        artifact.incomplete_reason
+    );
+
+    let probe = artifact
+        .overshoot
+        .as_ref()
+        .expect("the probe is on the record, not in prose");
+    assert_eq!(probe.width, 1_600);
+    assert!((probe.ms_p90 - 203.46).abs() < 0.005, "{}", probe.ms_p90);
+    assert_eq!(probe.substrate, "native");
+    assert_eq!(probe.samples, 10);
+    assert!(
+        !artifact
+            .points
+            .iter()
+            .any(|point| point.width == probe.width),
+        "a probe is not a measured point"
+    );
+    // And the wider points are absent from the series, not zero-filled.
+    for width in [1_600, 3_200, 6_400] {
+        assert!(!artifact.points.iter().any(|point| point.width == width));
+    }
+}
+
+#[test]
+fn the_committed_artifact_round_trips_through_the_reader_and_the_writer() {
+    // The reader exists so `--summarise` can rewrite one artifact in place, so it
+    // has to reproduce the file exactly: a float that came back with a different
+    // number of decimals would be a measured number silently changing.
+    let text = fs::read_to_string(committed_path()).expect("the committed width curve");
+    let artifact = Artifact::from_text(&text).expect("parse");
+    assert_eq!(
+        artifact.render(),
+        text,
+        "the reader and the writer agree byte for byte"
+    );
+}
+
+#[test]
+fn summarising_the_committed_artifact_rewrites_only_the_derived_fields() {
+    // §The ticket's own constraint: the committed cost and quality series survive
+    // byte for byte. This is the command that says so, run on a copy.
+    let dir = scratch("summarise");
+    let path = dir.join("width-curve.json");
+    let committed = fs::read_to_string(committed_path()).expect("the committed width curve");
+    fs::write(&path, &committed).unwrap();
+
+    let report = width::summarise_file(&path, &path, None).expect("summarise");
+    assert_eq!(
+        report.before, report.after,
+        "re-deriving from the evidence already in the file changes nothing"
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        committed,
+        "and the file is untouched"
+    );
+}
+
+#[test]
+fn a_probe_turns_the_bound_into_a_budget_without_moving_a_measured_number() {
+    // The regeneration this ticket exists for, in miniature: an artifact that
+    // claims the schedule ran out, plus the probe that shows a budget ended it.
+    let dir = scratch("probe");
+    let path = dir.join("width-curve.json");
+    let committed = fs::read_to_string(committed_path()).expect("the committed width curve");
+
+    // The artifact as it was committed when the fields were derived from the
+    // requested list: the measured series is intact, the four summary fields lie.
+    let mut stale = Artifact::from_text(&committed).expect("parse");
+    stale.cap_bound = CapBound::Schedule;
+    stale.complete = true;
+    stale.missing_widths.clear();
+    stale.incomplete_reason.clear();
+    stale.overshoot = None;
+    fs::write(&path, stale.render()).unwrap();
+
+    let report = width::summarise_file(&path, &path, Some(probe(1_600, 203.46)))
+        .expect("the probe explains the stop");
+    assert_eq!(report.after.cap_bound, CapBound::Budget);
+    assert!(!report.after.complete);
+    assert_eq!(report.after.missing_widths, vec![1_600, 3_200, 6_400]);
+    assert!(report.after.incomplete_reason.contains("203.46"));
+
+    // Every measured point, both numbers and the quality fingerprint are the ones
+    // that were committed: the fix is to derived fields, not to the measurement.
+    assert_eq!(report.after.points, stale.points);
+    assert_eq!(report.after.width_cap, stale.width_cap);
+    assert_eq!(report.after.default_beam, stale.default_beam);
+    assert_eq!(report.after.quality_fingerprint, stale.quality_fingerprint);
+    let rewritten = fs::read_to_string(&path).unwrap();
+    assert!(
+        rewritten.contains("\"ms_p90\": 111.474"),
+        "width 800's default-bed p90 is the measured one"
+    );
+}
+
+#[test]
+fn summarise_refuses_a_file_whose_measured_numbers_would_move() {
+    // A hand-edited p90: the writer cannot keep four decimals, so re-rendering
+    // would change a measured number. The command refuses instead of quietly
+    // rounding somebody's evidence.
+    let dir = scratch("hand-edited");
+    let path = dir.join("width-curve.json");
+    let committed = fs::read_to_string(committed_path()).expect("the committed width curve");
+    let edited = committed.replace("\"ms_p90\": 111.474", "\"ms_p90\": 111.4744");
+    assert_ne!(edited, committed, "the edit landed");
+    fs::write(&path, &edited).unwrap();
+
+    let error = width::summarise_file(&path, &path, None).expect_err("refuse to move a p90");
+    assert!(error.contains("measured"), "{error}");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        edited,
+        "and the file is left exactly as it was found"
+    );
 }
