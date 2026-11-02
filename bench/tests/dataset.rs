@@ -641,6 +641,25 @@ fn nothing_under_the_dataset_is_ignored() {
                 path.display()
             );
         }
+
+        // A §6.2 archive file does not exist yet, so only the ignore half can be
+        // checked -- and it must hold for the paths that *will* exist: an
+        // `archive/` pattern would silently keep the next one out of the commit,
+        // which is exactly the promise §6.2 makes and would break.
+        let future_archive = dataset::archive_dir(&root, &cfg).join("4bf1a17b1685a774.txt");
+        let status = Command::new("git")
+            .arg("check-ignore")
+            .arg("--no-index")
+            .arg("-q")
+            .arg(&future_archive)
+            .current_dir(repo)
+            .status()
+            .expect("git check-ignore");
+        assert!(
+            !status.success(),
+            "{} would be ignored by .gitignore; an archived Dataset must be committable",
+            future_archive.display()
+        );
     }
 
     // The Dataset's bytes are pinned: `core.autocrlf=true` must not translate
