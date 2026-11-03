@@ -208,18 +208,24 @@ fn an_identical_measurement_passes_every_check() {
 
 #[test]
 fn a_quality_row_that_moves_under_an_identical_hash_fails_and_names_the_seed() {
-    // One seed's evaluations move by 3 — nothing else. The engine hash and the
-    // Dataset fingerprint are unchanged, so this cannot be a re-measurement.
-    let mut golden = committed();
+    // The engine now returns 3 more Evaluations for seed 37 — one row of one bed,
+    // and nothing else. The engine hash and the Dataset fingerprint are the committed
+    // ones, so this is the shape of a real behaviour change: the measured side moved
+    // while the golden did not, and no re-measurement may absorb it.
+    let golden = committed();
     let seed = 37usize;
-    let entry = golden.entry_mut("goal8-p40-cap7").expect("an entry");
-    let actual = entry.evals[seed] + 3;
-    entry.evals[seed] = actual;
-    golden.refresh();
+    let expected = golden.entry("goal8-p40-cap7").expect("an entry").evals[seed];
+    let actual = expected + 3;
 
     let measurements: Vec<Measurement> = CONFIGS
         .iter()
-        .map(|config| measured_from_golden(&golden, *config))
+        .map(|config| {
+            let mut measurement = measured_from_golden(&golden, *config);
+            if config.dir == "goal8-p40-cap7" {
+                measurement.samples[seed].evaluations = actual;
+            }
+            measurement
+        })
         .collect();
     let checks = checks_for(&golden, &identity_from_golden(&golden), &measurements);
 
@@ -227,8 +233,9 @@ fn a_quality_row_that_moves_under_an_identical_hash_fails_and_names_the_seed() {
     assert_eq!(evals.state, State::Fail, "{}", text(evals));
     let body = text(evals);
     assert!(body.contains("seed 37"), "{body}");
+    assert!(body.contains(&expected.to_string()), "{body}");
     assert!(body.contains(&actual.to_string()), "{body}");
-    assert!(body.contains("994 of 1000 seeds match"), "{body}");
+    assert!(body.contains("999 of 1000 seeds match"), "{body}");
     // The classification is what keeps a slow box from printing this text.
     let hint = evals.hint.as_deref().expect("a classification");
     assert!(hint.contains("BEHAVIOUR"), "{hint}");

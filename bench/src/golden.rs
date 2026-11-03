@@ -981,7 +981,7 @@ pub fn checks(golden: &Golden, identity: &Identity, measurements: &[Measurement]
         };
 
         checks.push(vector_check(
-            "evals",
+            "evaluations",
             config,
             golden.split.first,
             &entry.evals,

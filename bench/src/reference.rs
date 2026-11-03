@@ -422,8 +422,10 @@ impl Measurement {
 }
 
 /// Wilson's score interval for a proportion, 95 %, no continuity correction: the
-/// formula notes/09 §1.2 fixes, including its exactness at a saturated bed
-/// (`wins == n` gives an upper bound of exactly 1).
+/// formula notes/09 §1.2 fixes, including its exactness at the two ends (a
+/// saturated bed is exactly 1 at the top, an empty one exactly 0 at the bottom —
+/// the formula gives those in real arithmetic, and floating point leaves 2e-19
+/// behind, which is not a number the Reference row should print).
 pub fn wilson95(wins: u32, n: u32) -> [f64; 2] {
     const Z: f64 = 1.959_963_984_540_054;
     if n == 0 {
@@ -434,10 +436,18 @@ pub fn wilson95(wins: u32, n: u32) -> [f64; 2] {
     let denominator = 1.0 + Z * Z / n;
     let centre = (p + Z * Z / (2.0 * n)) / denominator;
     let half = (Z / denominator) * (p * (1.0 - p) / n + Z * Z / (4.0 * n * n)).sqrt();
-    [
-        (centre - half).clamp(0.0, 1.0),
-        (centre + half).clamp(0.0, 1.0),
-    ]
+    let mut lower = (centre - half).clamp(0.0, 1.0);
+    let mut upper = (centre + half).clamp(0.0, 1.0);
+    // The two ends are exact in real arithmetic (p = 0 gives 0, p = 1 gives 1), but
+    // `centre ± half` lands 2e-19 away from the boundary in f64. Pin them: a Reference
+    // row prints 0 and 1, not 2.17e-19.
+    if wins == 0 {
+        lower = 0.0;
+    }
+    if wins as f64 >= n {
+        upper = 1.0;
+    }
+    [lower, upper]
 }
 
 /// Nearest rank on a sorted slice, `k = ceil(p * n)`; `None` for no samples. `null`
