@@ -894,18 +894,21 @@ try {
 
     // 1. Stop, and be honest about it. The whole Run is ~1 s here, so the stop has
     //    to land inside that window; retried a few times rather than flaking.
+    //
+    //    The trigger is a *measured* cell, not the progress line: a worker reports
+    //    games from inside a chunk, and terminate() throws that chunk away, so a stop
+    //    that lands on the first in-flight progress is honestly a partial Run of 0
+    //    games — correct, but not what this assertion is about. The live cell is the
+    //    games the table holds, so waiting for it is waiting for a denominator.
+    const liveWinRate = (state) => state.cells["0-r1-yours"] ?? "";
     let partial = null;
-    for (let attempt = 0; attempt < 4 && !partial; attempt += 1) {
+    for (let attempt = 0; attempt < 6 && !partial; attempt += 1) {
       await clickId("run-dataset");
       for (let i = 0; i < 400; i += 1) {
         await sleep(10);
         const state = await runState();
         if (state.status === "complete" || state.status === "failed") break;
-        // Games actually measured, read off the progress line: the line also names
-        // the total, so "a digit somewhere" is not the same as "work has landed".
-        const counted = /(\d[\d,]*) of [\d,]+ games/.exec(state.state);
-        const games = counted ? Number(counted[1].replaceAll(",", "")) : 0;
-        if (state.status === "running" && games > 0) {
+        if (state.status === "running" && / of [\d,]+$/.test(liveWinRate(state))) {
           await clickId("run-stop");
           break;
         }
@@ -913,11 +916,12 @@ try {
       for (let i = 0; i < 100; i += 1) {
         await sleep(20);
         const state = await runState();
-        if (state.status === "stopped") {
+        if (state.status === "stopped" && / of [\d,]+$/.test(liveWinRate(state))) {
           partial = state;
           break;
         }
         if (state.status === "complete") break;
+        if (state.status === "stopped") break; // a 0-game stop: retry the gesture
       }
     }
     check(
