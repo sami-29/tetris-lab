@@ -2,7 +2,9 @@
 
 Measured on a real trace: layered beam, width 200, Dataset game `seed 0`
 (goal 8, 40 pieces), 19 layers, **3,435 surviving states**. Artifact:
-`prototype/t14-tree/index.html`. Regenerate with `gen_trace.py`; see `README.md`.
+`docs/design/t14-tree/index.html`. The trace is a frozen fixture -- the generator (a
+throwaway numpy script that depended on the Python solver) was deleted at cutover; its
+recovery command is in `README.md`.
 
 ## The answer
 

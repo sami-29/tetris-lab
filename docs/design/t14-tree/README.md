@@ -1,6 +1,7 @@
 # Ticket 14 spike — is the search tree legible at width 200?
 
-Throwaway code from `.scratch/browser-tetris-lab/issues/14-prototype-search-tree.md`.
+Throwaway code from ticket 14 ("is the search tree legible at width 200?"); this
+directory is the committed artifact the tree decision rests on.
 It exists to answer one question: 08 put a **full pannable search tree** in v1 at
 beams of 200 states per layer — can a visitor read that, or is it a hairball?
 
@@ -25,14 +26,17 @@ t10 mockup's.
 ## Run it
 
 ```bash
-# 1. regenerate the trace (23 s, numpy; writes trace.js, ~260 KB)
-python prototype/t14-tree/gen_trace.py --seed 0 --width 200 --goal 8
-
-# 2. open the viewer — file:// is enough, trace.js is a plain script, no fetch
-start prototype/t14-tree/index.html
+# open the viewer — file:// is enough, trace.js is a plain script, no fetch
+start docs/design/t14-tree/index.html
 ```
 
-`gen_trace.py` prints one row per layer: states kept, candidates, dedup %, score
+`trace.js` is a **frozen fixture**: it is a real width-200 beam trace of Dataset seed
+0, produced by a throwaway numpy script that depended on the Python solver this
+repository no longer contains
+(`git show 4bb9354:prototype/t14-tree/gen_trace.py`). The viewer opens from `file://`;
+there is nothing to regenerate.
+
+The generator printed one row per layer: states kept, candidates, dedup %, score
 band, mean board distance, children, ancestor concentration, and where the winning
 lineage sat in that layer.
 
