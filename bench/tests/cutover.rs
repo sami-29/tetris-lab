@@ -442,19 +442,25 @@ fn the_deleted_host_is_not_cited() {
         if !text_like.iter().any(|extension| path.ends_with(extension)) {
             continue;
         }
-        // The two survivors that may name the host on purpose: the research note that
+        // The survivors that may name the host on purpose: the research note that
         // surveyed free hosts (it predates the decision and is evidence, not a
-        // citation) and the banned-words list that exists to forbid the word.
-        let allowed = path.starts_with("docs/research/") || path == "web/scripts/words.mjs";
+        // citation), the banned-words list that exists to forbid the word, this
+        // test, whose assertion is where the token is written down, and the
+        // runbook, whose retirement step must spell the URL it is proving dead
+        // (the spec's own §11 sentence does too).
+        let allowed = path.starts_with("docs/research/")
+            || path == "web/scripts/words.mjs"
+            || path == "bench/tests/cutover.rs";
+        let may_name_the_retired_url = allowed || path == "docs/runbook.md";
         let text = read(&repo().join(&path)).to_lowercase();
         assert!(
-            !text.contains("onrender.com"),
+            !text.contains("onrender.com") || may_name_the_retired_url,
             "{path} cites the retired Render URL; the old host is torn down, not linked"
         );
-        if !allowed {
+        if !may_name_the_retired_url {
             assert!(
                 !text.contains("render.com"),
-                "{path} names the retired host; only docs/research/ and the banned-words list may"
+                "{path} names the retired host; only docs/research/, the banned-words list and the runbook may"
             );
         }
     }
