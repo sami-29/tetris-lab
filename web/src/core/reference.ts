@@ -215,21 +215,18 @@ function wilson(committed: readonly [number, number], wins: number, n: number): 
   return [Math.max(0, centre - half), Math.min(1, centre + half)];
 }
 
-/** The label under the reference column: what produced these numbers. */
+/** The label under the reference column: what produced these numbers — short, so it reads on one line. */
 export function referenceLabel(row: ReferenceRow): string {
   // The CPU string carries its memory ("…, 31.9 GB"), which is not what makes a
   // column comparable; the core count in parentheses is, so keep that and drop the RAM.
   const cpu = (row.labels.cpu.split(",")[0] ?? "").trim() || row.labels.machine;
-  const wasm = row.labels.wasmHash.length >= 8 ? `${row.labels.wasmHash.slice(0, 8)}…` : row.labels.wasmHash;
-  return [
-    cpu,
-    row.labels.os,
-    row.labels.runtime,
-    `engine ${row.labels.engineCommit.slice(0, 7)}`,
-    wasm ? `wasm ${wasm}` : "",
-    `beam ${row.width}`,
-    row.labels.date,
-  ]
+  // The engine commit and the wasm hash stay in the tooltip (referenceDetail); a line
+  // of hashes is for a diff, not for the panel.
+  // The runtime string carries its explanation in parentheses ("v24.21.0 (V8
+  // headless, …)"); the version is what makes the column comparable, the essay is
+  // in the tooltip.
+  const runtime = row.labels.runtime.split("(")[0].trim();
+  return [cpu, row.labels.os, runtime, `beam ${row.width}`, row.labels.date]
     .filter((part) => part.length > 0)
     .join(" · ");
 }

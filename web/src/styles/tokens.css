@@ -27,9 +27,9 @@
   --line: #23282d;
   --line2: #2c3238;
   --ink: #c6ccd3;
-  --ink2: #8b959f;
-  --ink3: #5e6873;
-  --ink4: #454e57;
+  --ink2: #a5aeb6;
+  --ink3: #8b959f;
+  --ink4: #7d8893;
 
   /* the two accents, and the board's own background */
   --amber: #e0a33e;
@@ -52,13 +52,13 @@
   --tipbg: #080a0b;
   --on-amber: #14100a;
 
-  /* six steps of type */
-  --fs-micro: 9px;
-  --fs-chip: 10px;
-  --fs-data: 11px;
-  --fs-body: 12px;
-  --fs-title: 13px;
-  --fs-brand: 12px;
+  /* six steps of type — floored at 11 px on the smallest step, the legibility bar */
+  --fs-micro: 12px;
+  --fs-chip: 12px;
+  --fs-data: 12px;
+  --fs-body: 14px;
+  --fs-title: 16px;
+  --fs-brand: 14px;
 
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --sans: ui-sans-serif, system-ui, "Segoe UI", Inter, Roboto, sans-serif;

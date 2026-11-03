@@ -123,41 +123,6 @@
   color: var(--ink4);
 }
 
-.bar .fields {
-  display: flex;
-  align-items: stretch;
-  min-width: 0;
-}
-
-.bar .field {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 0 11px;
-  border-right: 1px solid var(--line);
-  transition: background var(--t-hover) linear;
-}
-
-.bar .field:hover {
-  background: var(--panel2);
-}
-
-.bar .field .fig {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-}
-
-.bar .field .fig .num {
-  min-width: 0;
-  font-size: var(--fs-body);
-}
-
-.bar .field .fig .unit {
-  display: none;
-}
-
 .baractions {
   margin-left: auto;
   display: flex;
@@ -919,7 +884,7 @@
 #band-caption {
   margin: 0;
   padding: 3px 9px 4px;
-  font: var(--fs-micro) / 1.35 var(--sans);
+  font: var(--fs-chip) / 1.35 var(--sans);
   color: var(--ink4);
   /* One line: the whole sentence is in the element's tooltip, and the band needs the
      height more than the caption does. */
@@ -1077,7 +1042,7 @@
 #tree-caption {
   margin: 0;
   padding: 0 9px 4px;
-  font: var(--fs-micro) / 1.35 var(--sans);
+  font: var(--fs-chip) / 1.35 var(--sans);
   color: var(--ink4);
   white-space: nowrap;
   overflow: hidden;
@@ -1130,7 +1095,7 @@
 
 #tree-facts {
   margin: 0;
-  font: var(--fs-micro) / 1.5 var(--sans);
+  font: var(--fs-chip) / 1.5 var(--sans);
   color: var(--ink3);
 }
 
@@ -1220,42 +1185,6 @@
     opacity: 1;
     transform: none;
   }
-}
-
-.logpanel {
-  flex: 0 0 auto;
-  height: 96px;
-  min-height: 96px;
-}
-
-#log {
-  margin: 0;
-  padding: 5px 9px 6px;
-  list-style: none;
-  font: var(--fs-chip) / 1.7 var(--mono);
-  color: var(--ink3);
-  overflow: auto;
-  min-height: 0;
-  flex: 1 1 auto;
-}
-
-#log li {
-  display: flex;
-  gap: 7px;
-}
-
-#log li time {
-  color: var(--ink4);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-#log li[data-tone="error"] {
-  color: var(--amber);
-}
-
-#log li[data-current="true"] {
-  color: var(--ink);
 }
 
 /* ══ status bar ═══════════════════════════════════════════════════════════ */
@@ -1544,6 +1473,11 @@
   display: none;
 }
 
+
+#layers tbody td {
+  overflow-wrap: anywhere;
+}
+
 /* ── the Run panel's table: figure, yours, reference ───────────────────── */
 .run-body {
   display: flex;
@@ -1581,26 +1515,22 @@
 }
 
 .rtable thead th:first-child {
-  width: 30%;
+  width: 42%;
 }
 
-/* Three columns since ticket 15: figure | yours | reference. The two value columns
-   are equal so the eye compares them down the page, and the reference column is
-   dimmed — it is the yardstick, not the answer. The label column takes what is left:
-   its words wrap to two lines, which costs no width the numbers need. */
-.rtable thead th:last-child {
-  width: 35%;
-}
-
+/* Three columns: label | yours | reference. The two value columns are equal so the
+   eye compares them down the page, and the reference column is dimmed — it is the
+   yardstick, not the answer. Values wrap only when they must. */
+.rtable thead th:last-child,
 .rtable thead th:nth-child(2) {
-  width: 35%;
+  width: 28%;
 }
 
 .rtable tbody td {
   padding: 3px 5px;
   border-bottom: 1px solid var(--rowline);
   color: var(--ink3);
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
 }
 
 .rtable tbody td + td {
@@ -1627,7 +1557,7 @@
   margin: 0;
   padding: 6px 9px 7px;
   border-top: 1px solid var(--line);
-  font: var(--fs-micro) / 1.5 var(--sans);
+  font: var(--fs-chip) / 1.5 var(--sans);
   color: var(--ink4);
 }
 
@@ -1673,6 +1603,75 @@
   display: none;
 }
 
+/* ── your own run: the form above the benchmark ─────────────────────────── */
+#run-yours {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--rowline);
+  padding-bottom: 4px;
+}
+
+.run-lede {
+  margin: 0;
+  padding: 6px 9px 2px;
+  font: var(--fs-chip) / 1.5 var(--sans);
+  color: var(--ink3);
+}
+
+.run-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 9px 8px;
+}
+
+.rfield {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: var(--fs-chip) / 1 var(--mono);
+  color: var(--ink3);
+}
+
+.rfield input {
+  width: 74px;
+  padding: 5px 7px;
+  border: 1px solid var(--line2);
+  border-radius: 2px;
+  background: var(--bg);
+  color: var(--ink);
+  font: var(--fs-data) / 1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.rfield input:focus-visible {
+  border-color: var(--teal);
+  outline: none;
+}
+
+.run-startrow {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 9px 6px;
+}
+
+.run-startrow .tbtn {
+  border: 1px solid var(--line);
+  border-left-width: 0;
+  padding: 8px 13px;
+}
+
+.run-startrow .tbtn:first-child {
+  border-left-width: 1px;
+  border-radius: 2px 0 0 2px;
+}
+
+.run-startrow .tbtn:last-child {
+  border-radius: 0 2px 2px 0;
+}
+
 .run-reference,
 .rtable td.run-reference .fig .num {
   color: var(--ink4);
@@ -1685,4 +1684,209 @@
 .spark .line,
 .spark .dot {
   will-change: auto;
+}
+
+/* ══ responsive: the grid gives ground, then the page scrolls ═════════════════ */
+
+/* Between the full design width and 1100 px the same three regions stay on one row;
+   the fixed rails narrow instead of the centre collapsing, and the inspector's
+   clamp keeps it inside 36vw so it can never push the board out. */
+@media (max-width: 1400px) {
+  #app {
+    grid-template-columns: 200px minmax(0, 1fr) clamp(320px, 30vw, 480px);
+  }
+
+  .readout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .boardbody {
+    grid-template-columns: 22px minmax(0, 1fr) clamp(260px, calc(100% - 520px), 560px);
+  }
+}
+
+@media (max-width: 1200px) {
+  #app {
+    grid-template-columns: 176px minmax(0, 1fr) clamp(300px, 32vw, 440px);
+  }
+
+  .readout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bar .brandtext span {
+    display: none;
+  }
+}
+
+/* Below 1100 px the workbench becomes a page: the regions stack in reading order,
+   the page scrolls, and every region gets the full width for itself. Touch targets
+   go to 44 px and the type goes up a step, because a phone is not a shrunken desk. */
+@media (max-width: 1100px) {
+  html,
+  body {
+    overflow: auto;
+    height: auto;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: 100svh;
+  }
+
+  [data-region] {
+    overflow: visible;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .bar {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    height: 52px;
+  }
+
+  .brandtext span {
+    display: none;
+  }
+
+  .baractions {
+    margin-left: auto;
+  }
+
+  .tbtn {
+    padding: 0 16px;
+    min-height: 44px;
+  }
+
+  .clock {
+    max-width: 46%;
+  }
+
+  [data-region="rail"],
+  [data-region="centre"],
+  [data-region="inspector"] {
+    border: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  [data-region="rail"],
+  [data-region="inspector"] {
+    display: block;
+  }
+
+  [data-region="centre"] {
+    display: grid;
+    grid-template-rows: minmax(280px, 52vh) auto;
+  }
+
+  .boardbody {
+    grid-template-columns: 22px minmax(0, 1fr);
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .readout {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #panel-run {
+    min-height: 0;
+  }
+
+  .run-body,
+  .rows {
+    overflow: visible;
+  }
+
+  /* Full-width panels need real margins: the rail's 9 px gutter reads as a bleed
+     when the paragraph is 390 px wide. */
+  #run-lede,
+  .run-note,
+  .run-cfg,
+  .refnote,
+  .ro-empty {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  #run-assumption,
+  .run-note#run-yours-note {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .ro-pane {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  #band-caption {
+    padding-left: 16px;
+    padding-right: 16px;
+    white-space: normal;
+  }
+
+  .rfield input {
+    height: 44px;
+    width: 5.5em;
+  }
+
+  .tbtn,
+  .run-startrow .tbtn {
+    min-height: 44px;
+  }
+
+  .transport {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .transport .tbtn {
+    min-width: 44px;
+    padding: 8px;
+  }
+
+  #speed {
+    width: 90px;
+  }
+
+  .statusbar {
+    position: sticky;
+    bottom: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .readout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .brandtext,
+  .clock p:first-child {
+    display: none;
+  }
+
+  .clock {
+    border: 0;
+  }
+
+  #kbdmap span:not(:first-child) {
+    display: none;
+  }
+}
+
+/* Motion is a preference: anyone who asked the system to calm down gets a calm page. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

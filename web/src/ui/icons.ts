@@ -87,20 +87,46 @@ export function svgIcon(name: IconName, size = 12): string {
  * per-layer table, 6 in "next four". The boxes are inset by 1 px so two touching
  * cells read as two cells.
  */
-export function pieceGlyph(letter: string, cell = 4): string {
+export function pieceGlyph(letter: string, cell = 4): SVGSVGElement {
   const index = PIECE_LETTERS.indexOf(letter.toUpperCase());
-  if (index < 0) return "";
-  const shape = ROTATIONS[index][0];
-  const width = shape.width * cell;
-  const height = shape.height * cell;
+  const rest = index < 0 ? null : ROTATIONS[index][0];
+  const word = letter.toUpperCase();
+  if (!rest) {
+    return svgElement(
+      `<svg class="glyph" width="${cell}" height="${cell}" viewBox="0 0 ${cell} ${cell}" fill="currentColor" role="img" aria-label="${word}" data-letter="${word}"></svg>`,
+    );
+  }
+  const width = rest.width * cell;
+  const height = rest.height * cell;
   const cells: string[] = [];
-  for (let x = 0; x < shape.width; x += 1) {
-    for (let y = 0; y < shape.height; y += 1) {
-      if ((shape.cols[x] & (1 << (shape.height - 1 - y))) === 0) continue;
+  for (let x = 0; x < rest.width; x += 1) {
+    for (let y = 0; y < rest.height; y += 1) {
+      if ((rest.cols[x] & (1 << (rest.height - 1 - y))) === 0) continue;
       cells.push(`<rect x="${x * cell}" y="${y * cell}" width="${cell - 1}" height="${cell - 1}"/>`);
     }
   }
-  return `<svg class="glyph" width="${width - 1}" height="${height - 1}" viewBox="0 0 ${width - 1} ${height - 1}" fill="currentColor" role="img" aria-label="${letter.toUpperCase()}" data-letter="${letter.toUpperCase()}">${cells.join("")}</svg>`;
+  return svgElement(
+    `<svg class="glyph" width="${width - 1}" height="${height - 1}" viewBox="0 0 ${width - 1} ${height - 1}" fill="currentColor" role="img" aria-label="${word}" data-letter="${word}">${cells.join("")}</svg>`,
+  );
+}
+
+/**
+ * Turn one of this module's own constant SVG strings into an element.
+ *
+ * The strings above are literals in this file, so the parse is trusted; the funnel
+ * keeps every mount site free of `innerHTML`, which is where an injection would have
+ * to sneak past instead of at the source. The parse is HTML-mode because the markup
+ * carries no xmlns, and an XML-mode parse of that is a parse error, not an svg.
+ */
+export function svgElement(markup: string): SVGSVGElement {
+  const parsed = new DOMParser().parseFromString(markup, "text/html");
+  const root = parsed.body.firstElementChild;
+  if (!(root instanceof SVGSVGElement)) throw new Error(`not an svg: ${markup}`);
+  return root;
+}
+/** Mount one of the icons by name: replaces the host's children. */
+export function mountIcon(host: Element, name: IconName, size = 12): void {
+  host.replaceChildren(svgElement(svgIcon(name, size)));
 }
 
 /** The seven letters, for a legend or a size check. */

@@ -75,20 +75,19 @@ export function mountRunPanel(options: RunPanelOptions): RunPanel {
     head.className = "run-cfg";
     head.textContent =
       `${config.name} · goal ${config.goal} · ${config.pieces} pieces · ` +
-      `starting height ${config.cap} · beam ${config.beamWidth}`;
+      `height ${config.cap} · beam ${config.beamWidth}`;
     head.dataset.tip =
-      `One of the two committed configurations. Its test Split is seeds ${config.first}–${config.last} ` +
-      `(${config.last - config.first + 1} games), solved at the shipped beam width so the two columns ` +
-      "are a comparison and not two different searches.";
+      `One of the two committed configurations. Its test seeds are ${config.first}–${config.last} ` +
+      `(${config.last - config.first + 1} games), solved at the shipped beam width.`;
 
     const table = document.createElement("table");
     table.className = "rtable";
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
     for (const [label, tip] of [
-      ["figure", "The seven rows §2.4 asks for, one per configuration."],
-      ["yours", "Measured in this tab, just now, by this browser's workers. The label under the table names the machine."],
-      ["reference", "From the committed Reference run: the same statistic, measured on the machine named under the table."],
+      ["", "One row per statistic."],
+      ["Yours", "Measured now, by this browser's workers. The label under the table names the machine."],
+      ["Ref.", "The committed reference run: the same statistic on the machine named under the table."],
     ]) {
       const th = document.createElement("th");
       th.textContent = label;
@@ -131,10 +130,6 @@ export function mountRunPanel(options: RunPanelOptions): RunPanel {
       tbody.append(tr);
     }
     table.append(tbody);
-
-    // R8: the label block, one per column. It is a figure in its own right — a number
-    // with no machine behind it does not go on this page — so it carries the same
-    // registry attributes every other figure does.
     const label = document.createElement("p");
     label.className = "refnote";
     label.dataset.runLabel = `${config.id}-yours`;

@@ -5,21 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tetris Lab — watch a solve</title>
     <!--
-      The workbench (§2). One page, no page scroll, five regions and a drawer:
+      The workbench. One page, five regions and a drawer:
 
         toolbar · left rail · centre · right inspector · status bar
         plus the Explainer drawer, which a no-scroll page has nowhere else to put.
 
-      This file is the skeleton and only the skeleton: panel heads, section labels,
-      column heads, the field names, the keyboard chips, and the four toolbar fields.
-      Every value slot is filled by `src/main.ts` from the engine's own numbers, so
-      "a region cannot collapse, because it never had children to remove"
-      (notes/14 §3). A number on this page is either a `[data-figure]` here or one
-      built by `createFigure` from `src/ui/figure.ts`, and both carry the words label
-      and the provenance that make it explainable.
+      This file is the skeleton: panel heads, section labels, column heads and the
+      keyboard chips. Every value slot is filled by `src/main.ts` from the engine's
+      own numbers, so a region cannot collapse, because it never had children to
+      remove. A number on the page is either a `[data-figure]` here or one built by
+      `createFigure` from `src/ui/figure.ts`.
 
       The style system is `src/styles/tokens.css` (ink, six type steps, two accents)
-      and `src/styles/shell.css` (the grid). No webfont, no icon font, no framework.
+      and `src/styles/shell.css` (the grid and the breakpoints). No webfont, no icon
+      font, no framework.
     -->
   </head>
   <body>
@@ -31,80 +30,24 @@
           <div class="brandtext"><b>Tetris Lab</b><span>solver workbench</span></div>
         </div>
 
-        <div class="fields" id="toolbar-fields">
-          <span class="field">
-            <span
-              class="fig"
-              data-figure="t1"
-              data-figure-label="Seed"
-              data-figure-source="url"
-              data-figure-kind="number"
-              data-tip="Seed — the integer that fixes this game's starting Board and its Sequence. The same seed is always the same game, up to the height cap."
-            ><span class="flabel">Seed</span><b class="num">0</b><i class="unit">integer</i></span>
-          </span>
-          <span class="field">
-            <span
-              class="fig"
-              data-figure="t2"
-              data-figure-label="Goal"
-              data-figure-source="url"
-              data-figure-kind="number"
-              data-tip="Goal — how many Lines this Solve must clear to count as a win. Changing it re-solves."
-            ><span class="flabel">Goal</span><b class="num">8</b><i class="unit">Lines</i></span>
-          </span>
-          <span class="field">
-            <span
-              class="fig"
-              data-figure="t3"
-              data-figure-label="Pieces"
-              data-figure-source="url"
-              data-figure-kind="number"
-              data-tip="Pieces — how many pieces the Sequence holds. One Piece is one Layer, so this is also the longest the game can run."
-            ><span class="flabel">Pieces</span><b class="num">40</b><i class="unit">pieces</i></span>
-          </span>
-          <span class="field">
-            <span
-              class="fig"
-              data-figure="t4"
-              data-figure-label="Beam width"
-              data-figure-source="dataset"
-              data-figure-kind="number"
-              data-tip="Beam width — how many states survive each Layer. Narrower is cheaper and weaker. It opens at the shipped default from the measured width curve; the slider runs to the Width cap, where searching wider stops fitting its budget."
-            ><span class="flabel">Beam width</span><b class="num">25</b><i class="unit">states per Layer</i></span>
-          </span>
-        </div>
-
         <div class="baractions">
           <button
             class="tbtn"
             type="button"
             id="how"
-            data-tip="How the search works — the Board, the Layer, Dedup and the band, in a drawer. Opens with E; Escape closes it."
+            data-tip="How the search works. Opens with E; E or Escape closes it."
           ><span data-icon="help"></span>How it works</button>
           <button
             class="tbtn"
             type="button"
-            id="run-dataset"
-            data-tip="Run the Dataset in this tab: solve the test Split of both configurations — 2,000 games — in a pool of workers, and report the result beside the committed Reference run. Nothing is measured until you press it; the rail's Run panel says so rather than showing a figure."
-          ><span data-icon="play"></span>Run dataset</button>
-          <button
-            class="tbtn"
-            type="button"
-            id="run-stop"
-            disabled
-            data-tip="Stop the Run immediately: every worker is terminated, and what was measured so far is labelled partial rather than shown as the whole Split."
-          ><span data-icon="stop"></span>Stop</button>
-          <button
-            class="tbtn go"
-            type="button"
             id="solve"
-            data-tip="Solve this game again at the settings in the rail. The Solve is traced, so the band, the per-layer table and the readout all come from the same call."
+            data-tip="Solve the game shown in the Playground, again."
           ><span data-icon="play"></span>Solve</button>
         </div>
 
         <div class="clock">
-          <p id="outcome" data-outcome="solving" aria-live="polite">solving · seed 0 · goal 8 Lines</p>
-          <p id="status">seed 0 · goal 8 lines · 40 pieces · starting height 7 · beam 25</p>
+          <p id="status" aria-live="off">seed 0 · goal 8 lines · 40 pieces · height 7 · beam 25</p>
+          <p id="outcome" data-outcome="solving" aria-live="polite">Solving seed 0…</p>
         </div>
       </header>
 
@@ -115,6 +58,8 @@
             <span class="t">Playground</span>
             <span class="s" id="preset-name">the default game</span>
           </div>
+          <!-- All the controls whose job is to change the game: `src/ui/playground.ts`
+               builds them, every change here re-solves. -->
           <!-- Ticket 13's controls; `src/ui/playground.ts` builds them here. -->
           <div id="playground"></div>
         </section>
@@ -129,7 +74,7 @@
                 id="expert"
                 aria-expanded="false"
                 aria-controls="engine-weights"
-                data-tip="Expert: the shipped Evaluator's eight Weights, and the bound of each Feature. Read-only on purpose — the ABI has no export for a weight, so this is the table the engine was built with."
+                data-tip="Show the evaluator's eight weights and the bound of each feature. Read-only."
               >Expert<span data-icon="expert-chevron"></span></button>
             </span>
           </div>
@@ -137,23 +82,45 @@
           <div class="rows" id="engine-weights" hidden></div>
         </section>
 
-        <!-- The Run: one block per committed configuration, each with the seven rows
-             and two columns — `yours`, measured in this tab, beside `reference`, read
-             from `data/dataset/<config>/reference.jsonl`. `src/ui/run-panel.ts` builds
-             the skeleton (column heads, figure labels, label slots) at boot and fills
-             only the value slots afterwards, so the panel is never empty and never
-             rebuilt. -->
+        <!-- The Run: first your own runs over seeds you pick, then the committed
+             Dataset benchmark as a secondary action. `src/ui/run-panel.ts` builds the
+             benchmark's skeleton (column heads, figure labels, label slots) at boot
+             and fills only the value slots afterwards. -->
         <section class="panel" id="panel-run" aria-label="Run">
           <div class="phead">
             <span class="t">Run</span>
-            <span class="s" id="run-state" data-run-status="idle">no Run in this tab yet</span>
+            <span class="s" id="run-state" data-run-status="idle">not run yet</span>
+          </div>
+          <div id="run-yours">
+            <p class="run-lede" id="run-lede">
+              Solve many seeds with the settings on the Playground and report the win rate and
+              timings.
+            </p>
+            <div class="run-form">
+              <label class="rfield">First seed
+                <input id="run-first" type="number" min="0" max="4294967295" step="1" value="0"
+                  data-tip="The first seed of your run. Seeds run up from it."
+                  aria-label="First seed of your run" />
+              </label>
+              <label class="rfield">Runs
+                <input id="run-count" type="number" min="1" max="4000" step="1" value="100"
+                  data-tip="How many seeds to solve, starting at the first seed."
+                  aria-label="How many seeds to solve" />
+              </label>
+              <button class="tbtn go" type="button" id="run-start" data-tip="Start solving your seeds in a pool of workers."><span data-icon="play"></span>Run</button>
+              <button class="tbtn" type="button" id="run-yours-stop" disabled data-tip="Stop the run. Workers end immediately."><span data-icon="stop"></span>Stop</button>
+            </div>
+            <p class="run-note" id="run-yours-note"></p>
           </div>
           <div class="run-body" id="run-body">
             <p class="run-note" id="run-assumption">
-              A Run solves the test Split of both configurations in this tab — 2,000 games across a
-              pool of workers — and reports the seven rows below beside the committed Reference run,
-              each column labelled with the machine that produced it.
+              The benchmark solves both committed configurations' 2,000 test games beside the
+              reference machine's results. Its budget is a sized assumption, not a measurement.
             </p>
+            <div class="run-startrow">
+              <button class="tbtn" type="button" id="run-dataset" data-tip="Run the benchmark: 2,000 games from the committed Dataset, then show them beside the reference machine's results."><span data-icon="play"></span>Run benchmark</button>
+              <button class="tbtn" type="button" id="run-stop" disabled data-tip="Stop the benchmark. Workers end immediately, and what was measured is labelled partial."><span data-icon="stop"></span>Stop</button>
+            </div>
           </div>
         </section>
       </aside>
@@ -162,8 +129,8 @@
       <main class="stage" data-region="centre" id="centre">
         <section class="panel boardpanel" aria-label="The board and its readout">
           <div class="phead">
-            <span class="t">position</span>
-            <span class="s" id="layer-line">Layer 0 of 0 · goal 8</span>
+            <span class="t">Board</span>
+            <span class="s" id="layer-line">Layer 0 of 0</span>
             <span class="sp"><span class="piece-now" id="piece-now"><span class="word">next</span></span></span>
           </div>
           <div class="boardbody">
@@ -177,39 +144,29 @@
             </div>
             <div class="readout" id="readout">
               <section class="ro-pane">
-                <p class="ro-sec">What the evaluator charges</p>
+                <p class="ro-sec">Score</p>
                 <div class="ro-body" id="ro-charge">
                   <p class="ro-empty">
-                    the per-Feature breakdown appears when the first Solve lands — the ABI reports a
-                    state's total score, not the terms it was built from
+                    The evaluator charges this position one total score. It appears at the first
+                    solve; the feature-by-feature split is the Engine panel's Expert table.
                   </p>
                   <div class="ro-total" id="ro-score"></div>
                 </div>
               </section>
 
               <section class="ro-pane">
-                <p class="ro-sec">Column profile</p>
+                <p class="ro-sec">Columns</p>
                 <div class="ro-body" id="ro-columns"></div>
               </section>
 
               <section class="ro-pane">
-                <p class="ro-sec">This Placement</p>
+                <p class="ro-sec">This placement</p>
                 <div class="ro-body place" id="ro-placement"></div>
               </section>
 
               <section class="ro-pane">
-                <p class="ro-sec">Next in Sequence</p>
+                <p class="ro-sec">Next pieces</p>
                 <div class="ro-body"><div class="nxt" id="ro-next"></div></div>
-              </section>
-
-              <section class="ro-pane">
-                <p class="ro-sec">This Layer's counts</p>
-                <div class="ro-body ro-layer" id="ro-layer"></div>
-              </section>
-
-              <section class="ro-pane">
-                <p class="ro-sec">Score across Layers</p>
-                <div class="ro-body"><div class="spark" id="spark"></div></div>
               </section>
             </div>
           </div>
@@ -226,13 +183,13 @@
               aria-valuemax="0"
               aria-valuenow="0"
               aria-valuetext="Move 0 of 0"
-              data-tip="Move strip — one cell per Move of the solution, and the seek bar: drag or click to any Move, the arrows step, Home and End jump. A cell with an amber underline is a Move that cleared at least one row."
+              data-tip="One cell per move of the solution, doubled as the seek bar: click or drag to any move, a cell with an amber underline cleared at least one row."
             ></div>
             <b id="caret" aria-hidden="true"></b>
           </div>
 
           <div class="transport" id="transport">
-            <button class="tbtn" type="button" id="prev" aria-label="Previous Move" data-tip="Previous Move (←). Stepping pauses the replay, so the picture stops where you put it.">
+            <button class="tbtn" type="button" id="prev" aria-label="Previous move" data-tip="Step one move back (←). Stepping pauses the replay.">
               <span data-icon="step-back"></span>
             </button>
             <button
@@ -241,19 +198,19 @@
               id="play"
               aria-pressed="false"
               aria-label="Play / pause"
-              data-tip="Play or pause the replay (Space). Ignored while typing in a field, so a space stays a space."
+              data-tip="Play or pause (Space)."
             ><span data-icon="play" id="play-icon"></span><span id="play-word">play</span></button>
-            <button class="tbtn" type="button" id="next" aria-label="Next Move" data-tip="Next Move (→). Stepping pauses the replay, so the picture stops where you put it.">
+            <button class="tbtn" type="button" id="next" aria-label="Next move" data-tip="Step one move forward (→). Stepping pauses the replay.">
               <span data-icon="step-forward"></span>
             </button>
-            <button class="tbtn" type="button" id="restart" aria-label="Restart" data-tip="Replay from the first Move (R). The speed you chose is kept; the game is not re-solved.">
+            <button class="tbtn" type="button" id="restart" aria-label="Restart" data-tip="Replay from the first move (R). Speed is kept; the game is not re-solved.">
               <span data-icon="restart"></span>
             </button>
             <span id="move-figure"></span>
             <div class="spd">
               <label
                 for="speed"
-                data-tip="Playback speed, continuous from 0.25 to 40 Moves a second on a log scale — not four presets. Minus and equals step it one stop."
+                data-tip="Playback speed, anything from 0.25 to 40 moves a second. − and = step it."
               >speed</label>
               <input
                 id="speed"
@@ -261,8 +218,8 @@
                 min="0"
                 max="1"
                 step="0.001"
-                aria-label="Playback speed in Moves per second"
-                data-tip="Drag for any speed. The readout beside it gives both the Moves per second and the seconds per Move, because those are the two ways to read a pace."
+                aria-label="Playback speed in moves per second"
+                data-tip="Drag for any speed from 0.25 to 40 moves a second."
               />
               <output
                 id="speed-readout"
@@ -272,10 +229,10 @@
                 data-figure-label="Playback speed"
                 data-figure-source="control"
                 data-figure-kind="number"
-                data-tip="Playback speed — continuous, not four presets: 0.25 to 40 Moves a second on a log scale. The time per Move is its reciprocal, and it is a preference, so it survives a new Solve."
-              ><b class="num">1.43</b><i class="unit">Moves/s · 0.70 s per Move</i></output>
+                data-tip="Playback speed, 0.25 to 40 moves a second. It is a preference, so it survives a new solve."
+              ><b class="num">1.43</b><i class="unit">moves/s</i></output>
             </div>
-            <p id="progress" aria-live="off">Move 0 of 0 · paused</p>
+            <p id="progress" aria-hidden="true" hidden></p>
           </div>
         </section>
       </main>
@@ -293,7 +250,7 @@
             aria-selected="true"
             aria-controls="band-panel"
             data-view="beam"
-            data-tip="Beam — the band: one row per Layer, exactly as many states as the search kept, each placed by its score."
+            data-tip="The band: one row per layer, exactly as many states as the search kept, each placed by its score."
           >Beam</button>
           <button
             id="view-tree"
@@ -302,34 +259,31 @@
             aria-selected="false"
             aria-controls="tree-panel"
             data-view="tree"
-            data-tip="Tree — the same trace as a drill-down: the top states of each Layer, ticks for states with no child, stems for a parent outside the bound."
+            data-tip="The same search as a drill-down: the top states of each layer, with the lines the winning path took."
           >Tree</button>
         </div>
         <section class="panel bandpanel" id="band-panel" aria-label="The band">
           <div class="phead">
-            <span class="t">The band</span>
-            <span class="s" id="band-label">traced at band 25 = the shipped beam</span>
+            <span class="t">Band</span>
+            <span class="s" id="band-label">25 states per layer</span>
           </div>
           <canvas
             id="band"
             role="img"
-            aria-label="Score band: one row per Layer with its states placed by score, and the winning lineage drawn through them"
+            aria-label="Score band: one row per layer with its states placed by score, and the winning lineage drawn through them"
           ></canvas>
-          <p id="band-caption">
-            waiting for a traced solve — the band is the beam, so it keeps exactly as many states per
-            Layer as the search did
-          </p>
+          <p id="band-caption">Waiting for a traced solve.</p>
           <div class="legend" id="band-legend"></div>
-          <ol id="band-counts" aria-label="Per-layer counts, from the trace"></ol>
+          <ol id="band-counts" aria-label="Per-layer counts"></ol>
         </section>
 
         <section class="panel treepanel" id="tree-panel" hidden aria-label="The tree">
           <div class="phead">
-            <span class="t">The tree</span>
-            <span class="s" id="tree-note">top 24 per Layer</span>
+            <span class="t">Tree</span>
+            <span class="s" id="tree-note">top 24 per layer</span>
           </div>
           <div id="tree-controls">
-            <label id="tree-bound-label" for="tree-bound">the tree's bound</label>
+            <label id="tree-bound-label" for="tree-bound">Drawn per layer</label>
             <input
               id="tree-bound"
               type="range"
@@ -337,29 +291,29 @@
               max="60"
               step="2"
               value="24"
-              data-tip="The tree's bound — how many of each Layer's best states are drawn. It does not change the beam, and it does not change the search."
-              aria-label="the tree's bound — how many of each Layer's best states are drawn"
+              data-tip="How many of each layer's best states to draw. Display only; it does not change the search."
+              aria-label="How many of each layer's best states are drawn"
             />
-            <output id="tree-bound-readout" for="tree-bound">top 24 per Layer</output>
+            <output id="tree-bound-readout" for="tree-bound">top 24 per layer</output>
           </div>
-          <p id="tree-caption">no trace yet — solve a game to draw the tree</p>
+          <p id="tree-caption">No trace yet — solve a game to draw the tree.</p>
           <canvas
             id="tree"
             role="img"
             tabindex="0"
-            aria-label="The tree: the top states per Layer, ticks where the search dropped a state, stems where the drawing did, the selected state's path at full weight"
+            aria-label="The tree: the top states per layer, ticks where the search dropped a state, stems where the drawing did, the selected state's path at full weight"
           ></canvas>
           <ul id="tree-legend" aria-label="What the marks mean"></ul>
           <div id="tree-state">
-            <canvas id="tree-board" role="img" aria-label="The selected state's Board"></canvas>
-            <p id="tree-facts">click a state to see its Board</p>
+            <canvas id="tree-board" role="img" aria-label="The selected state's board"></canvas>
+            <p id="tree-facts">Click a state to see its board.</p>
           </div>
         </section>
 
         <section class="panel layerpanel" aria-label="Per-layer table">
           <div class="phead">
-            <span class="t">Per-layer</span>
-            <span class="s" id="layer-count">0 of 0 Layers</span>
+            <span class="t">Layers</span>
+            <span class="s" id="layer-count">no layers yet</span>
           </div>
           <div class="tablewrap">
             <table id="layers">
@@ -374,22 +328,11 @@
               </thead>
               <tbody id="layer-rows">
                 <tr>
-                  <td class="empty" colspan="5">
-                    no Layer yet — every column of this table is the trace's, so it fills when the
-                    first Solve lands
-                  </td>
+                  <td class="empty" colspan="5">Fills at the first solve.</td>
                 </tr>
               </tbody>
             </table>
           </div>
-        </section>
-
-        <section class="panel logpanel" aria-label="Log">
-          <div class="phead">
-            <span class="t">Log</span>
-            <span class="s" id="log-state">milliseconds since this page loaded</span>
-          </div>
-          <ol id="log" aria-label="What happened, when, in order"></ol>
         </section>
       </aside>
 
@@ -404,15 +347,15 @@
           data-figure-label="Keyboard map"
           data-figure-source="control"
           data-figure-kind="picture"
-          data-tip="Keyboard map — every key the page takes. Space plays and pauses; the arrows step; Home and End jump; minus and equals change the speed; R restarts; E opens the explainer; ? opens the whole list. A focused field keeps its own keys."
+          data-tip="The keys this page takes. ? shows the whole list."
         >
-          <span data-tip="Space — play or pause (ignored while typing in a field, so a space stays a space)."><span class="kbd">space</span>play</span>
-          <span data-tip="The arrow keys step one Move at a time; with Shift they step ten."><span class="kbd">←</span><span class="kbd">→</span>step</span>
-          <span data-tip="R — replay from the first Move, keeping the speed you chose."><span class="kbd">R</span>restart</span>
-          <span data-tip="E — open the Explainer drawer; Escape closes it again."><span class="kbd">E</span>explainer</span>
-          <span data-tip="? — the whole keyboard map, including Home and End and the two speed keys."><span class="kbd">?</span>keys</span>
+          <span data-tip="Space plays or pauses."><span class="kbd">space</span>play</span>
+          <span data-tip="The arrow keys step one move; with Shift they step ten."><span class="kbd">←</span><span class="kbd">→</span>step</span>
+          <span data-tip="R replays from the first move."><span class="kbd">R</span>restart</span>
+          <span data-tip="E opens the explainer."><span class="kbd">E</span>explainer</span>
+          <span data-tip="? shows the whole keyboard map."><span class="kbd">?</span>keys</span>
         </span>
-        <span class="grp right" id="boot">booting wasm…</span>
+        <span class="grp right" id="boot">wasm booting…</span>
       </footer>
     </div>
 
@@ -421,7 +364,7 @@
     <aside id="drawer" data-open="false" role="dialog" aria-modal="false" aria-labelledby="drawer-title" aria-hidden="true" tabindex="-1">
       <div class="dhead">
         <span class="t" id="drawer-title">How the search works</span>
-        <button class="iconbtn close" type="button" id="drawer-close" data-tip="Close the explainer (E toggles it, Escape closes it).">
+        <button class="iconbtn close" type="button" id="drawer-close" data-tip="Close (E or Escape).">
           <span data-icon="close"></span>
         </button>
       </div>

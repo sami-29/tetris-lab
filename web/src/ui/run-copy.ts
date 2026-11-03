@@ -19,12 +19,10 @@
 // The mid-range 8-core laptop is the budget's sizing assumption and is stated as one,
 // next to the numbers rather than in an about page: §9.3's own sentence.
 
-/** The assumption the 5 s budget is sized on, in §9.3's words and not a claim more. */
+/** The assumption the benchmark's 5 s budget is sized on. The machine differs; the check is the same. */
 export const ASSUMPTION =
-  "What the 5 s budget is measured on: the reference rows were measured on the reference box by a " +
-  "native harness. A mid-range 8-core laptop is an assumption used to size the budget — it is not " +
-  "a measurement, and no figure on this page was produced on one. Your column is this machine and " +
-  "this browser.";
+  "The 5 s budget was sized on a mid-range 8-core laptop. That is an assumption, not a measurement: " +
+  "your column is whatever machine you ran it on.";
 
 export interface YoursLabelInput {
   /** How many workers the Run actually used. */
@@ -39,41 +37,37 @@ export interface YoursLabelInput {
 }
 
 /**
- * The label under the live column. Provenance, not decoration: the browser, the OS,
- * the worker count against the core count, the beam the Run used, and the fact that
- * it was measured just now rather than committed.
+ * The label under your column: the browser, the worker count against the core count,
+ * and the fact that this was measured now, not committed.
  */
 export function yoursLabel(input: YoursLabelInput): string {
-  const cores = input.cores > 0 ? `${input.cores} logical cores` : "the cores this browser reports";
+  const cores = input.cores > 0 ? `${input.cores} logical cores` : "unknown core count";
   const parts = [
     "this browser",
     `${input.workers} ${input.workers === 1 ? "worker" : "workers"} of ${cores}`,
     input.browser,
     input.os,
     `beam ${input.beam}`,
-    "measured just now",
+    "measured now",
   ];
   return parts.filter((part) => part.length > 0).join(" · ");
 }
 
-/** The tooltip under the live column: what the page cannot know, said out loud. */
+/** The tooltip under your column: what a page can and cannot know about its own machine. */
 export const YOURS_DETAIL =
-  "This column was measured in this tab, just now, by this browser's own workers: each game is a " +
-  "`solve_batch` call timed with performance.now(), because the engine cannot time itself (its " +
-  "clock traps in wasm). A browser does not expose the CPU model, so the worker count against the " +
-  "logical core count is the honest machine fact here; the ms rows are quantised by this " +
-  "browser's clock, which is 0.1 ms in a page that is not cross-origin isolated.";
+  "Measured now by this browser's own workers. A page cannot read the CPU model, so the worker " +
+  "count against the logical core count is the honest machine fact; times are quantised by this " +
+  "browser's clock.";
 
 /**
- * What a stopped Run says. Two jobs: name the count it stopped at, and refuse the
- * comparison a partial Run cannot support — a prefix of the split is not the split,
- * and its ms rows would quote a mean over the seeds it happened to reach.
+ * What a stopped run says: the count it stopped at, and a warning that the reference
+ * column covers the whole split while your column covers only what was measured.
  */
 export function partialNote(input: { readonly games: number; readonly total: number }): string {
   const games = input.games.toLocaleString("en-US");
   const total = input.total.toLocaleString("en-US");
   return (
-    `partial Run — stopped by hand after ${games} of ${total} games. The reference column is the ` +
+    `${games} of ${total} games, stopped by hand — a partial run. The reference column is the ` +
     "whole split: 1,000 games per configuration."
   );
 }
@@ -99,12 +93,10 @@ export function progressWords(input: {
     case "complete":
       return `${games}/${total} games · ${work}`;
     case "stopped":
-      // The word `partial` is the point of the sentence: what is on screen is not the
-      // Split, and the ms rows are a mean over a prefix of the seeds.
       return `partial · ${games}/${total} games`;
     case "failed":
       return `failed · ${games}/${total} games`;
     default:
-      return "no Run in this tab yet";
+      return "not run yet";
   }
 }

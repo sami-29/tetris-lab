@@ -37,33 +37,33 @@ import { widthTooltip } from "./width-copy.ts";
 export const PLAYGROUND_TEXT = {
   legend: "Playground",
   presets: "Presets",
-  /** The visible label and the tooltip, per game field (§2.1.2). */
+  /** The visible label and the tooltip, per game field. */
   fields: {
     seed: {
-      label: "seed",
-      tip: "Seed 0–4,294,967,295: the whole game comes from it — the same seed is the same Board and the same Sequence.",
+      label: "Seed",
+      tip: "The whole game comes from the seed: the same seed is the same board and the same piece sequence.",
     },
     goal: {
-      label: "goal",
-      tip: "Goal in lines (0–255 accepted, clamped): the solve stops at the first position that clears this many. Above 255 the packed result could not report a win.",
+      label: "Goal",
+      tip: "How many lines the solve must clear to win. Changing it re-solves.",
     },
     pieces: {
-      label: "pieces",
-      tip: "Pieces 1–200: how long the Sequence is. A short game is one you can watch to the end.",
+      label: "Pieces",
+      tip: "How many pieces the sequence holds — how long the game can run.",
     },
     cap: {
-      label: "starting height",
-      tip: "Starting height 2–19: how tall the pre-fill stack is. The piece that would cross it is never placed, so raising it keeps the Sequence and changes only the Board.",
+      label: "Starting height",
+      tip: "How tall the pre-filled stack is; the piece that would cross it is never placed.",
     },
     beam: {
-      label: "beam width",
-      tip: "Expert: how many states the search keeps per layer. More width buys a wider search and costs time.",
+      label: "Beam width",
+      tip: "Search width: how many states survive each layer. Narrower is cheaper and weaker.",
     },
   },
   expert: "Expert",
   /** The beam slider's readout: the value, the slider's end, and where the default sits. */
   beamReadout: (value: number, bounds: Bounds) =>
-    `beam ${value} of ${bounds.widthCap} · default ${bounds.defaultBeam}`,
+    `${value} of ${bounds.widthCap} · default ${bounds.defaultBeam}`,
   unit: { seed: "", goal: "lines", pieces: "pieces", cap: "rows", beam: "states per layer" },
 } as const;
 

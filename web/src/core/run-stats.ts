@@ -234,6 +234,8 @@ export function formatCells(stats: ConfigStats, options: CellOptions = {}): RunC
   const pct = `${(stats.winRate * 100).toFixed(1)} %`;
   const failLines = (value: number | null): string =>
     value === null ? FAILURES_NONE : `${value.toFixed(1).replace(/\.0$/, "")} (n = ${group(stats.nFail)})`;
+  // A median/p90 pair stays one word; the table cell wraps it only when it must
+  // (overflow-wrap on the panel's cells), so the format never changes with width.
   const pair = (p50: number, p90: number, suffix = ""): string =>
     `${group(p50)}/${group(p90)}${suffix}`;
   // Milliseconds keep one decimal: a Solve at the default width is ~2.5 ms, and

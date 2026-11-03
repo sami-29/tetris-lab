@@ -254,7 +254,10 @@ test("S11: both columns are formatted by one formatter, so they cannot be two st
   assert.match(label, /Ryzen/, "the label names the CPU");
   assert.match(label, /Windows/, "and the OS");
   assert.match(label, /beam 25/, "and the beam width the row was measured at");
-  assert.ok(label.includes(latest.labels.engineCommit.slice(0, 7)), "and the engine commit");
+  // The commit and the wasm hash moved to the tooltip (referenceDetail): a line of
+  // hashes is for a diff, not for the panel.
+  assert.doesNotMatch(label, /wasm\s|[0-9a-f]{7,40}/, "the label stays short");
+  assert.ok(referenceDetail(latest).includes(latest.labels.engineCommit), "the detail still names the commit");
 });
 
 test("S12: the mid-range 8-core laptop is an assumption, and the page says so in those words", () => {

@@ -45,7 +45,7 @@ import type { FromWorker, GameMessage, GameInput, ToWorker } from "./core/protoc
 import { H, W, emptyField, fieldFrom, type Field } from "./ui/field.ts";
 import { BoardView } from "./ui/board.ts";
 import { BandView } from "./ui/band-canvas.ts";
-import { buildBand, countLines, decodeTrace, layerSlice, winningLineage, type BandModel } from "./ui/band-model.ts";
+import { buildBand, countLines, decodeTrace, winningLineage, type BandModel } from "./ui/band-model.ts";
 import type { Trace } from "./ui/trace.ts";
 import { Playback, type PlaybackStatus } from "./ui/playback.ts";
 import { Playground } from "./ui/playground.ts";
@@ -53,22 +53,22 @@ import { letterOf } from "./ui/pieces.ts";
 import { MPS_DEFAULT, MPS_MAX, MPS_MIN, mpsToSlider, msPerMove, sliderToMps } from "./ui/phases.ts";
 import { KEY_MAP, SPEED_STOP, resolveKey, type Action } from "./ui/keys.ts";
 import { moveToX, stripMode, xToMove } from "./ui/seek.ts";
-import { createFigure, adoptFigure, type FigureId, type FigureView } from "./ui/figure.ts";
-import { pieceGlyph, svgIcon, type IconName } from "./ui/icons.ts";
+import { createFigure, type FigureId, type FigureView } from "./ui/figure.ts";
+import { mountIcon, pieceGlyph, svgIcon, svgElement, type IconName } from "./ui/icons.ts";
 import { adoptTitles, installTooltips } from "./ui/tooltip.ts";
 import { mountExplainer } from "./ui/explainer.ts";
-// Ticket 15: the Run. `core/pool.ts` owns the workers, the chunk queue and the
-// totals (and is DOM-free, so its properties are asserted in `node --test`);
-// `ui/run-panel.ts` fills the rail's value slots; `ui/run-copy.ts` holds the words
-// that say which machine produced which column.
+// The Run. `core/pool.ts` owns the workers, the chunk queue and the totals
+// (and is DOM-free, so its properties are asserted in `node --test`);
+// `ui/run-panel.ts` fills the benchmark's value slots; `ui/run-copy.ts` holds the
+// words that say which machine produced which column.
 import { createRunPool, poolSize, type RunPool } from "./core/pool.ts";
 import { formatCells, statsOf, type ConfigShape } from "./core/run-stats.ts";
 import { referenceFor } from "./core/reference-data.ts";
 import { mountRunPanel } from "./ui/run-panel.ts";
-import { ASSUMPTION, YOURS_DETAIL, partialNote, progressWords, yoursLabel } from "./ui/run-copy.ts";
+import { YOURS_DETAIL, partialNote, progressWords, yoursLabel } from "./ui/run-copy.ts";
 import { ENGINE_FACTS } from "./generated/engine-facts.ts";
 import { columnProfile, profileScale, profileTip } from "./ui/readout.ts";
-import { layerRows, logStamp, sparkline } from "./ui/inspector.ts";
+import { layerRows } from "./ui/inspector.ts";
 // Ticket 12's drill-down, mounted rather than re-implemented: the same decoded trace
 // the band read, drawn as the top states of each Layer. It owns its own view switch
 // and its own bound, and it never reaches the solver (its module comment says so).
@@ -84,9 +84,6 @@ const ABI = 2;
  * curve through `./config/width.ts` — the one module allowed to name them.
  */
 const BOUNDS: Bounds = { defaultBeam: DEFAULT_BEAM, widthCap: WIDTH_CAP };
-
-/** Milliseconds since this page loaded: the log's and `elapsed`'s one clock. */
-const bootAt = performance.now();
 
 /** Every element the page needs, or a loud failure at boot. */
 function must<T extends Element>(selector: string): T {
@@ -107,7 +104,6 @@ const app = must<HTMLElement>("#app");
 const canvas = must<HTMLCanvasElement>("#board");
 const statusLine = must<HTMLElement>("#status");
 const outcomeLine = must<HTMLElement>("#outcome");
-const progressLine = must<HTMLElement>("#progress");
 const bootSlot = must<HTMLElement>("#boot");
 const playButton = must<HTMLButtonElement>("#play");
 const playIcon = must<HTMLElement>("#play-icon");
@@ -132,6 +128,11 @@ const drawerClose = must<HTMLButtonElement>("#drawer-close");
 const explainerBody = must<HTMLElement>("#explainer-body");
 const playgroundRoot = must<HTMLElement>("#playground");
 const presetName = must<HTMLElement>("#preset-name");
+const runFirstInput = must<HTMLInputElement>("#run-first");
+const runCountInput = must<HTMLInputElement>("#run-count");
+const runStartButton = must<HTMLButtonElement>("#run-start");
+const runCustomStopButton = must<HTMLButtonElement>("#run-yours-stop");
+const runCustomNote = must<HTMLElement>("#run-yours-note");
 const bandCanvas = must<HTMLCanvasElement>("#band");
 const bandPanel = must<HTMLElement>("#band-panel");
 const bandLabel = must<HTMLElement>("#band-label");
@@ -145,8 +146,6 @@ const treeState = must<HTMLElement>("#tree-state");
 const treeBoundSlider = must<HTMLInputElement>("#tree-bound");
 const layerCountSlot = must<HTMLElement>("#layer-count");
 const layerRowsBody = must<HTMLElement>("#layer-rows");
-const logList = must<HTMLElement>("#log");
-const logState = must<HTMLElement>("#log-state");
 const layerLine = must<HTMLElement>("#layer-line");
 const pieceNow = must<HTMLElement>("#piece-now");
 const gutter = must<HTMLElement>("#gutter");
@@ -154,14 +153,11 @@ const roScore = must<HTMLElement>("#ro-score");
 const roColumns = must<HTMLElement>("#ro-columns");
 const roPlacement = must<HTMLElement>("#ro-placement");
 const roNext = must<HTMLElement>("#ro-next");
-const roLayer = must<HTMLElement>("#ro-layer");
-const sparkHost = must<HTMLElement>("#spark");
 const statusFigures = must<HTMLElement>("#status-figures");
 const engineFigures = must<HTMLElement>("#engine-figures");
 const engineWeights = must<HTMLElement>("#engine-weights");
 const runBody = must<HTMLElement>("#run-body");
 const runState = must<HTMLElement>("#run-state");
-const runAssumption = must<HTMLElement>("#run-assumption");
 const runButton = must<HTMLButtonElement>("#run-dataset");
 const stopButton = must<HTMLButtonElement>("#run-stop");
 const moveFigureHost = must<HTMLElement>("#move-figure");
@@ -184,9 +180,9 @@ const treePanel = new TreePanel(treePanelRoot, {
 
 /** Every `[data-icon]` placeholder gets its hand-made SVG. */
 for (const host of document.querySelectorAll<HTMLElement>("[data-icon]")) {
-  host.innerHTML = svgIcon(host.dataset.icon as IconName);
+  mountIcon(host, host.dataset.icon as IconName);
 }
-document.getElementById("play-icon")!.innerHTML = svgIcon("play", 10);
+mountIcon(document.getElementById("play-icon")!, "play", 10);
 
 /** The figures, by id, so an update is one lookup and one `set`. */
 const FI: Partial<Record<FigureId, FigureView>> = {};
@@ -197,19 +193,6 @@ function fig(id: FigureId, host: HTMLElement, initial?: string): FigureView {
   FI[id] = built;
   return built;
 }
-
-/** Adopt a figure the markup already carries (the toolbar's four fields). */
-function adopt(id: FigureId): FigureView {
-  const found = adoptFigure(id);
-  if (!found) throw new Error(`index.html is missing the ${id} figure`);
-  FI[id] = found;
-  return found;
-}
-
-const t1 = adopt("t1");
-const t2 = adopt("t2");
-const t3 = adopt("t3");
-const t4 = adopt("t4");
 
 // The Engine panel: the width (the same setting the Playground's slider carries) and,
 // behind `Expert`, the shipped Evaluator's eight Weights with their bounds.
@@ -243,19 +226,18 @@ const RUN_CONFIGS: readonly ConfigShape[] = ENGINE_FACTS.dataset.configs
 
 const RUN_GAMES = RUN_CONFIGS.reduce((sum, config) => sum + (config.last - config.first + 1), 0);
 
+// The assumption is a fixed line under the benchmark table, not a tooltip: it
+// qualifies the budget the ms and total rows are read against. It is appended to a
+// slot the markup carries, so first paint already holds its words.
 const runPanel = mountRunPanel({ host: runBody, configs: RUN_CONFIGS, reference: referenceFor });
 // The static words in the markup are the first paint's; from here the figure owns the
 // slot, so the skeleton sentence must not survive underneath it.
 runState.replaceChildren();
 const r9 = fig("r9", runState);
 r9.el.classList.add("nolabel");
-r9.set("no Run in this tab yet", "");
+r9.set("not run yet", "");
 runPanel.paintNote(null);
-// The assumption is a fixed line under the table, not a tooltip: it qualifies the
-// budget the ms and total rows are read against (notes/14 §6.3). Appended after the
-// blocks so the numbers and their labels are the first thing in the panel.
-runAssumption.textContent = ASSUMPTION;
-runBody.append(runAssumption);
+// The assumption sentence is static in the markup; leave the first paint's words.
 
 let runPool: RunPool | null = null;
 let runStartedAt = 0;
@@ -360,7 +342,7 @@ function spawnRunWorker(): Worker {
  * is why the label under the column names it.
  */
 function startRun(): void {
-  if (runPool?.status === "running") return;
+  if (anyRunBusy()) return;
   const cores = navigator.hardwareConcurrency ?? 1;
   const workers = poolSize(cores);
   runStartedAt = performance.now();
@@ -371,6 +353,7 @@ function startRun(): void {
   runPanel.paintNote(null);
   for (const [index] of RUN_CONFIGS.entries()) runPanel.paint(index, null);
   runButton.disabled = true;
+  runStartButton.disabled = true;
   stopButton.disabled = false;
   const pool = createRunPool({
     spawn: spawnRunWorker,
@@ -409,6 +392,7 @@ function startRun(): void {
       log(`Run failed: ${outcome.reason}`, "error");
     }
     runButton.disabled = false;
+    runStartButton.disabled = false;
     stopButton.disabled = true;
   });
 }
@@ -418,24 +402,149 @@ runButton.addEventListener("click", () => startRun());
 // synchronous wasm loop could ignore (§7).
 stopButton.addEventListener("click", () => runPool?.stop());
 
-// The status bar's four figures, in the glossary's words (§2.6, story 9).
-const s1 = fig("s1", statusFigures, "0");
-const s2 = fig("s2", statusFigures, "0 of 0");
-const s3 = fig("s3", statusFigures, "0 of 8");
-const s4 = fig("s4", statusFigures, "0.0");
+// ── your own run: the Playground's settings, over seeds you pick ──────────
 
-// The move figure and speed, in the transport.
+let customPool: RunPool | null = null;
+let customStartedAt = 0;
+const customElapsed = (): number => (customStartedAt === 0 ? 0 : performance.now() - customStartedAt);
+
+/** The seed range the form names, clamped to the engine's domain. */
+function readSeedRange(): { first: number; count: number } {
+  const maxSeed = 4294967295;
+  const first = Math.max(0, Math.min(maxSeed, Math.floor(Number(runFirstInput.value) || 0)));
+  let count = Math.max(1, Math.min(4000, Math.floor(Number(runCountInput.value) || 1)));
+  if (first + count - 1 > maxSeed) count = maxSeed - first + 1;
+  return { first, count };
+}
+
+/** The one benchmark and the one custom run never run together. */
+function anyRunBusy(): boolean {
+  return runPool?.status === "running" || customPool?.status === "running";
+}
+
+function setStartButtons(busy: boolean): void {
+  runButton.disabled = busy;
+  runStartButton.disabled = busy;
+  stopButton.disabled = true;
+  runCustomStopButton.disabled = true;
+}
+
+/** The sentence your run's note carries: progress while running, results when done. */
+function paintCustomProgress(
+  status: "idle" | "running" | "complete" | "stopped" | "failed",
+  workers: number,
+): void {
+  const progress = customPool?.progress ?? { gamesDone: 0, chunkDone: 0, evals: 0, ms: 0 };
+  const started = readSeedRange();
+  runState.dataset.runStatus = status;
+  runState.dataset.workers = String(workers);
+  runState.textContent = progressWords({
+    games: progress.gamesDone,
+    total: started.count,
+    workMs: progress.ms,
+    workers,
+    status,
+  });
+  const totals = customPool?.totals()[0];
+  const measured = totals !== undefined && totals.n !== 0 && status !== "running";
+  if (!measured) {
+    const cells = totals === undefined ? null : formatCells(statsOf(totals), {
+      live: true,
+      partial: false,
+      clock: 0.1,
+      elapsedMs: customElapsed(),
+    });
+    runCustomNote.textContent = cells?.winRate
+      ? `Win rate ${cells.winRate} · ${progress.gamesDone.toLocaleString("en-US")} of ` +
+        `${started.count.toLocaleString("en-US")} games…`
+      : `${progress.gamesDone.toLocaleString("en-US")} of ${started.count.toLocaleString("en-US")} games · ` +
+        `${(progress.ms / 1000).toFixed(1)} s`;
+    return;
+  }
+  const cells = formatCells(statsOf(totals), {
+    live: true,
+    partial: status === "stopped",
+    clock: 0.1,
+    elapsedMs: customElapsed(),
+  });
+  if (!cells) {
+    runCustomNote.textContent = "No game answered.";
+    return;
+  }
+  const parts: string[] = [];
+  parts.push(`Win rate ${cells.winRate} · ${cells.ms} ms per game`);
+  if (cells.evals) parts.push(cells.evals);
+  if (cells.failLinesMean) parts.push(`${cells.failLinesMean} lines on losses`);
+  if (status === "stopped") parts.unshift(`Partial, ${progress.gamesDone.toLocaleString("en-US")} games —`);
+  runCustomNote.textContent = parts.join(" · ");
+}
+
+function startCustomRun(): void {
+  if (anyRunBusy()) return;
+  const { first, count } = readSeedRange();
+  runFirstInput.value = String(first);
+  runCountInput.value = String(count);
+  const workers = poolSize(navigator.hardwareConcurrency ?? 1);
+  const config: ConfigShape = {
+    id: 0,
+    name: "your seeds",
+    goal: game.goal,
+    pieces: game.pieces,
+    cap: game.heightCap,
+    beamWidth: game.beamWidth,
+    first,
+    last: first + count - 1,
+  };
+  setStartButtons(true);
+  runCustomStopButton.disabled = false;
+  customStartedAt = performance.now();
+  const pool = createRunPool({
+    spawn: spawnRunWorker,
+    workers,
+    configs: [config],
+    onProgress: () => paintCustomProgress("running", workers),
+    onChunk: () => paintCustomProgress("running", workers),
+    onLog: (line, tone) => log(line, tone),
+  });
+  customPool = pool;
+  runState.textContent = `0 of ${count} games · ${workers} ${workers === 1 ? "worker" : "workers"}`;
+  runCustomNote.dataset.tip =
+    `Seed ${first} up, goal ${game.goal} lines, ${game.pieces} pieces, starting height ${game.heightCap}, ` +
+    `beam ${game.beamWidth}. Timings are this browser's; change the Playground to change the settings.`;
+  void pool.start().then((outcome) => {
+    if (outcome.status === "complete") {
+      paintCustomProgress("complete", workers);
+    } else if (outcome.status === "stopped") {
+      paintCustomProgress("stopped", workers);
+    } else {
+      runState.textContent = "failed";
+      runCustomNote.textContent = outcome.reason;
+    }
+    runState.dataset.runStatus = outcome.status;
+    runState.dataset.workers = String(workers);
+    customPool = null;
+    setStartButtons(false);
+  });
+}
+
+runStartButton.addEventListener("click", () => startCustomRun());
+runCustomStopButton.addEventListener("click", () => customPool?.stop());
+runCustomNote.textContent = "Nothing measured yet.";
+
+// The status bar's Evaluations count: the one solve number shown nowhere else.
+const s1 = fig("s1", statusFigures, "0");
+
+// The move figures in the transport.
 const m1 = fig("m1", moveFigureHost, "0");
 const m2 = fig("m2", moveFigureHost, "0");
 m2.el.classList.add("nolabel");
 
-// The board header's line: the Layer on screen, and the Goal it is being solved to.
+// The board header's line: the Layer on screen.
 layerLine.replaceChildren();
-const c1 = fig("c1", layerLine, "Layer 0 of 0");
-const c2 = fig("c2", layerLine, String(BOUNDS.defaultBeam > 0 ? 8 : 8));
+const c1 = fig("c1", layerLine, "Layer 0");
 
-// The readout, section by section (notes/14 §2.3).
-const c5 = fig("c5", roScore, "awaiting the first Solve");
+// The readout, section by section.
+const c5 = fig("c5", roScore, "no solve yet");
 const c6 = createFigure("c6");
 c6.el.classList.add("fig-picture");
 const cols = el("div", "cols");
@@ -444,7 +553,7 @@ c6.el.classList.add("nolabel");
 c6.el.append(cols, caps);
 roColumns.append(c6.el);
 FI.c6 = c6;
-const c7 = fig("c7", roPlacement, "Move 0 is the starting Board");
+const c7 = fig("c7", roPlacement, "Move 0 is the starting board");
 const c8 = fig("c8", roPlacement, "not placed");
 const c9 = fig("c9", roPlacement, "not placed");
 const c10 = fig("c10", roPlacement, "0");
@@ -457,17 +566,6 @@ c12.el.classList.add("nolabel");
 c12.el.append(nextSeq, nextWords);
 roNext.append(c12.el);
 FI.c12 = c12;
-const c13 = fig("c13", roLayer, "not measured");
-const c15 = fig("c15", roLayer, "not measured");
-const c16 = fig("c16", roLayer, "not measured");
-const c17 = fig("c17", roLayer, "not measured");
-const c18 = createFigure("c18");
-c18.el.classList.add("fig-picture");
-const sparkHostSvg = el("span", "spark");
-c18.el.classList.add("nolabel");
-c18.el.append(sparkHostSvg);
-sparkHost.append(c18.el);
-FI.c18 = c18;
 
 // The inspector's legend: the four things the band draws (§2.5 I1–I4), the best score
 // in the Layer on screen (I5), and the selection card (I11).
@@ -484,7 +582,7 @@ for (const className of ["t3", "t2", "t1"]) {
 }
 const i5 = fig("i5", bandLegend, "not measured");
 i5.el.classList.add("nolabel");
-const i11 = fig("i11", treeState, "no state selected yet");
+const i11 = fig("i11", treeState, "no state selected");
 i11.el.classList.add("nolabel");
 
 // The tree's head: ticket 12's panel draws into `#tree`, `#tree-caption` and
@@ -496,30 +594,15 @@ const i7 = fig("i7", treeNote, "not drawn yet");
 const i8 = fig("i8", treeNote, "the tree is closed");
 for (const view of [i6, i7, i8]) view.el.classList.add("nolabel");
 
-// The per-layer table's head count and the log's line count.
+// The per-layer table's head count.
 layerCountSlot.replaceChildren();
-logState.replaceChildren();
-const i9 = fig("i9", layerCountSlot, "0 of 0 Layers");
-const i10 = fig("i10", logState, "0 lines");
+const i9 = fig("i9", layerCountSlot, "no layers yet");
 i9.el.classList.add("nolabel");
-i10.el.classList.add("nolabel");
 
-// ── the log ─────────────────────────────────────────────────────────────────
-
-/** One line of the log: a stamp since load, then the words. */
+// ── the log: console only. Diagnostics belong to devtools, not the screen. ─
 function log(words: string, tone: "plain" | "error" = "plain"): void {
-  const item = el("li");
-  item.dataset.tone = tone;
-  const time = el("time");
-  time.textContent = logStamp(performance.now() - bootAt);
-  const text = el("span");
-  text.textContent = words;
-  item.append(time, text);
-  for (const line of logList.children) line.removeAttribute("data-current");
-  item.dataset.current = "true";
-  logList.append(item);
-  logList.scrollTop = logList.scrollHeight;
-  i10.set(String(logList.children.length), "lines");
+  if (tone === "error") console.error(words);
+  else console.info(words);
 }
 
 // ── the board's row ruler (C3): twenty static numbers, 0 at the top ─────────
@@ -693,59 +776,35 @@ function writeUrl(input: GameInput): void {
 
 // ── what the page says about the game ──────────────────────────────────────
 
-/** The four toolbar figures and the two the rail carries, from the game on screen. */
+/** The Engine panel's width figure and the Playground head's seed line. */
 function paintIdentity(): void {
-  t1.set(String(game.seed));
-  t2.set(String(game.goal));
-  t3.set(String(game.pieces));
-  t4.set(String(game.beamWidth));
-  e1.set(String(game.beamWidth), `of ${BOUNDS.widthCap} states per Layer`);
-  c2.set(String(game.goal));
-  presetName.textContent = `seed ${game.seed} · goal ${game.goal} · ${game.pieces} pieces · height ${game.heightCap}`;
+  e1.set(String(game.beamWidth), `of ${BOUNDS.widthCap} states per layer`);
+  presetName.textContent = `seed ${game.seed} · ${game.pieces} pieces · goal ${game.goal}`;
 }
 
-/** The toolbar's outcome slot: a word, the Lines against the Goal, and the clock. */
+/** The outcome line: a word, the lines against the goal, and the solve time. */
 function paintOutcome(): void {
   const goal = shown?.input.goal ?? game.goal;
   if (outcome === "solving") {
     outcomeLine.dataset.outcome = "solving";
-    outcomeLine.textContent = `solving · seed ${game.seed} · goal ${goal} Lines`;
+    outcomeLine.textContent = `Solving seed ${game.seed}…`;
     app.dataset.solving = "true";
     return;
   }
   const lines = shown?.outcome.lines ?? 0;
   const won = shown?.outcome.won ?? false;
   outcomeLine.dataset.outcome = won ? "solved" : "lost";
-  outcomeLine.textContent = `${won ? "solved" : "lost"} · ${lines} of ${goal} Lines cleared · ${elapsedMs.toFixed(1)} ms`;
+  outcomeLine.textContent = won
+    ? `Win · ${lines} of ${goal} lines · ${elapsedMs.toFixed(1)} ms`
+    : `Loss · reached ${lines} of ${goal} lines · ${elapsedMs.toFixed(1)} ms`;
   app.dataset.solving = "false";
-  const t5 = FI.t5;
-  t5?.set(`${lines} of ${goal}`);
-  FI.t7?.set(won ? "solved" : "lost");
 }
 
-/** The status bar: Evaluations, Layers, Lines cleared, elapsed — in the glossary's words. */
-function paintStatus(state?: PlaybackStatus): void {
-  const goal = shown?.input.goal ?? game.goal;
+/** The status bar: Evaluations, the one solve number shown nowhere else. */
+function paintStatus(): void {
   const evaluations = shown?.outcome.evaluations ?? 0;
-  const layertotal = traced?.layerCount ?? 0;
-  const played = state ? Math.min(state.played, layertotal) : playback ? playback.k : 0;
-  const lines = state ? state.lines : 0;
-  s1.set(evaluations.toLocaleString("en-US"), "");
-  s2.set(`${Math.min(played, layertotal)} of ${layertotal}`, "");
-  s3.set(`${lines} of ${goal}`);
-  s4.set(elapsedMs.toFixed(1));
-  i9.set(`${layertotal} of ${layertotal} Layers`);
-}
-
-/** Where a Move is in words, so no figure on the page is unlabelled. */
-function describePosition(state: PlaybackStatus): string {
-  const total = state.total;
-  const k = Math.min(state.played, total);
-  const pieceIndex = shown && k < total ? (shown.moves[k] >>> 16) & 0xff : null;
-  const piece = pieceIndex === null ? "" : ` · next ${letterOf(pieceIndex)}`;
-  const goal = shown ? ` of ${shown.input.goal}` : "";
-  const pace = `${state.speed.toFixed(2)} Moves/s · ${(msPerMove(state.speed) / 1000).toFixed(2)} s per Move`;
-  return `Move ${k} of ${total}${piece} · ${state.lines}${goal} Lines cleared · ${pace} · ${state.playing ? "playing" : "paused"}`;
+  s1.set(evaluations.toLocaleString("en-US"), "per solve");
+  i9.set(traced ? `${traced.layerCount} layers` : "no layers yet");
 }
 
 // ── the readout, the table, the band ───────────────────────────────────────
@@ -754,7 +813,7 @@ function describePosition(state: PlaybackStatus): string {
 function layerOnScreen(): number {
   if (!traced || traced.layerCount === 0) return 0;
   const lost = shown !== null && shown.moves.length === 0;
-  const k = lost ? traced.layerCount - 1 : playback ? playback.k : 0;
+  const k = lost ? traced.layerCount - 1 : (playback ? playback.k : 0);
   return Math.min(traced.layerCount - 1, Math.max(0, k));
 }
 
@@ -821,8 +880,9 @@ function paintNext(k: number): void {
     const letter = sequence[at];
     letters.push(letter);
     const glyph = el("span");
-    glyph.innerHTML = pieceGlyph(letter, 6);
-    glyph.dataset.tip = `${letter} — the piece ${at - k + 1} placement${at - k === 0 ? "" : "s"} from here, drawn from the 7-bag.`;
+    glyph.append(pieceGlyph(letter, 6));
+    const steps = at - k + 1;
+    glyph.dataset.tip = `${letter} — ${steps === 1 ? "next" : `${steps} ahead`}.`;
     nextSeq.append(glyph);
   }
   if (letters.length === 0) {
@@ -835,60 +895,22 @@ function paintNext(k: number): void {
   c12.unit.textContent = "pieces";
 }
 
-/** This Layer's counts: the trace's own records, never a recount. */
-function paintLayerCounts(layer: number): void {
-  const records = traced ? layerSlice(traced, layer) : [];
-  if (records.length === 0) {
-    c13.set("not measured");
-    c15.set("not measured");
-    c16.set("not measured");
-    c17.set("not measured");
-    return;
-  }
-  const best = records[0].score;
-  const worst = records[records.length - 1].score;
-  const atBest = records.filter((record) => record.score === best).length;
-  c13.set(String(traced?.perLayerCounts[layer] ?? 0));
-  c15.set(String(best));
-  c16.set(String(atBest));
-  c17.set(String(best - worst));
-  c5.set(String(best));
-  i5.set(`${best} in Layer ${layer}`, "score");
-}
-
-/** Score across Layers: the best score kept at each Layer, and where the playhead is. */
-function paintSpark(layer: number): void {
-  const scores = traced
-    ? traced.perLayerCounts.map((_, at) => traced!.records[traced!.layerStart[at]]?.score ?? 0)
-    : [];
-  const line = sparkline(scores, 200, 54);
-  const dot = line.points[layer];
-  sparkHostSvg.innerHTML =
-    line.points.length === 0
-      ? `<p class="ro-empty">one point per Layer, left to right — the picture arrives with the first Solve</p>`
-      : `<svg viewBox="0 -2 200 58" preserveAspectRatio="none" role="img" aria-label="Best score kept at each Layer">
-          <path class="line" d="${line.path}"/>
-          ${dot ? `<circle class="dot" cx="${dot.x}" cy="${dot.y}" r="2.2"/>` : ""}
-        </svg>`;
-  c18.set(
-    scores.length === 0 ? "not measured" : `${Math.max(...scores)} best · ${Math.min(...scores)} worst`,
-    scores.length === 0 ? "" : "score",
-  );
-}
-
-/** Per-layer table: one row per Layer, every column the trace's own. */
+/** Per-layer table: one row per layer, every column the trace's own. */
 function paintTable(currentLayer: number): void {
   if (!traced || !shown) {
     layerRowsBody.replaceChildren();
     const row = el("tr");
     const cell = el("td", "empty");
     cell.colSpan = 5;
-    cell.textContent = "no Layer yet — every column of this table is the trace's, so it fills when the first Solve lands";
+    cell.textContent = "Fills at the first solve.";
     row.append(cell);
     layerRowsBody.append(row);
+    c5.set("no solve yet");
     return;
   }
   const rows = layerRows(traced, shown.sequence);
+  const onScreen = rows.filter((entry) => entry.layer === currentLayer);
+  c5.set(String(onScreen[0]?.best ?? rows[rows.length - 1]?.best ?? ""), "score");
   const built = rows.map((entry) => {
     const row = el("tr");
     if (entry.layer === currentLayer) row.dataset.current = "true";
@@ -896,7 +918,7 @@ function paintTable(currentLayer: number): void {
     const layer = el("td");
     layer.textContent = String(entry.layer).padStart(2, "0");
     const piece = el("td", "piece");
-    piece.innerHTML = pieceGlyph(entry.piece, 7);
+    piece.append(pieceGlyph(entry.piece, 7));
     const best = el("td");
     best.textContent = String(entry.best);
     const lines = el("td");
@@ -1001,21 +1023,33 @@ function sizeInspector(): void {
 // ── painting the whole page from one state ─────────────────────────────────
 function paintAll(state?: PlaybackStatus): void {
   const layer = layerOnScreen();
-  const k = state ? Math.min(state.played, state.total) : playback ? playback.k : 0;
+  const k = state ? Math.min(state.played, state.total) : (playback ? playback.k : 0);
   paintIdentity();
   paintOutcome();
-  paintStatus(state);
+  paintStatus();
   paintColumns(k);
   paintPlacement(k);
   paintNext(k);
-  paintLayerCounts(layer);
-  paintSpark(layer);
   paintTable(layer);
   c1.set(`${layer} of ${traced?.layerCount ?? 0}`, "");
   const step = playback && k > 0 ? playback.timeline.steps[k - 1] : null;
-  const nextLetter = step ? letterOf(step.piece) : shown ? letterOf((shown.moves[0] >>> 16) & 0xff) : "?";
-  pieceNow.innerHTML = `${svgIcon("brand-mark")}<span class="word">${step ? "placed" : "next"}</span>${pieceGlyph(nextLetter, 5)}<span class="word">${nextLetter}</span>`;
-  pieceNow.dataset.tip = `The Piece this Move placed, drawn from the Sequence the Generator fixed before the search started.`;
+  let nextLetter = "?";
+  if (step) nextLetter = letterOf(step.piece);
+  else if (shown) nextLetter = letterOf((shown.moves[0] >>> 16) & 0xff);
+  pieceNow.replaceChildren(
+    svgElement(svgIcon("brand-mark")),
+    word(step ? "placed" : "next"),
+    pieceGlyph(nextLetter, 5),
+    word(nextLetter),
+  );
+  pieceNow.dataset.tip = `The piece the move on screen placed.`;
+}
+
+/** One labelled chip inside the piece-now slot. */
+function word(text: string): HTMLElement {
+  const span = el("span", "word");
+  span.textContent = text;
+  return span;
 }
 
 // ── showing a game ─────────────────────────────────────────────────────────
@@ -1038,7 +1072,7 @@ function paintStrip(k: number, total: number): void {
     }
     strip.dataset.mode = mode;
     strip.setAttribute("aria-valuemax", String(total));
-    m1.set(String(total), "cells");
+    m1.set(String(total), "");
     painted = { k: -1, total };
   }
   strip.setAttribute("aria-valuenow", String(k));
@@ -1067,8 +1101,7 @@ function paintStrip(k: number, total: number): void {
  * disables the transport rather than leaving a play button that plays nothing.
  */
 function showLoss(message: GameMessage): void {
-  const words = `No Moves to replay: the search stopped at ${message.outcome.lines} Lines cleared.`;
-  say(progressLine, words);
+  const words = `No moves to replay: the search stopped at ${message.outcome.lines} lines.`;
   for (const button of [playButton, prevButton, nextButton, restartButton]) button.disabled = true;
   setPlayButton("play", false);
   newGameStrip(words);
@@ -1079,7 +1112,7 @@ function newGameStrip(words: string): void {
   strip.replaceChildren();
   const cell = el("i");
   cell.dataset.empty = "true";
-  cell.textContent = "no Moves — the search ended before the first Move";
+  cell.textContent = "No moves to replay";
   cell.dataset.tip = words;
   strip.dataset.mode = "none";
   strip.append(cell);
@@ -1089,15 +1122,16 @@ function newGameStrip(words: string): void {
   caret.style.left = "0px";
   painted = { k: 0, total: 0 };
   clearedMoveFlag = [];
-  m1.set("0", "cells");
-  m2.set("0", "of 0 Moves");
+  m1.set("0", "");
+  m2.set("0", "of 0 moves");
 }
 
 function setPlayButton(word: "play" | "pause" | "replay", pressed: boolean): void {
   playWord.textContent = word;
-  playIcon.innerHTML = svgIcon(word === "pause" ? "pause" : "play", 10);
+  mountIcon(playIcon, word === "pause" ? "pause" : "play", 10);
   playButton.setAttribute("aria-pressed", String(pressed));
-  playButton.setAttribute("aria-label", word === "replay" ? "Replay from the start" : word === "pause" ? "Pause" : "Play");
+  const aria = word === "replay" ? "Replay from the start" : (word === "pause" ? "Pause" : "Play");
+  playButton.setAttribute("aria-label", aria);
 }
 
 function show(message: GameMessage): void {
@@ -1132,16 +1166,14 @@ function show(message: GameMessage): void {
   playback = new Playback(view, message, {
     speed,
     onStatus(state) {
-      say(progressLine, describePosition(state));
       paintStrip(Math.min(state.played, state.total), state.total);
-      setPlayButton(state.atEnd ? "replay" : state.playing ? "pause" : "play", state.playing);
-      paintStatus(state);
+      const word = state.atEnd ? "replay" : (state.playing ? "pause" : "play");
+      setPlayButton(word, state.playing);
+      paintStatus();
       const layer = layerOnScreen();
       paintColumns(Math.min(state.played, state.total));
       paintPlacement(Math.min(state.played, state.total));
       paintNext(Math.min(state.played, state.total));
-      paintLayerCounts(layer);
-      paintSpark(layer);
       paintTable(layer);
       c1.set(`${layer} of ${traced?.layerCount ?? 0}`, "");
     },
@@ -1259,16 +1291,17 @@ function setDrawer(open: boolean): void {
   drawer.dataset.open = String(open);
   drawer.setAttribute("aria-hidden", String(!open));
   scrim.dataset.open = String(open);
-  if (!open) {
-    setSheet(false);
-    const back = drawerReturn;
-    drawerReturn = null;
-    if (back?.isConnected) back.focus();
-  } else {
-    // `#drawer` carries `tabindex="-1"`, so the panel — not its close button — takes
-    // focus and the screen reader announces the title, not the first control.
+  // `#drawer` carries `tabindex="-1"`, so the panel — not its close button — takes
+  // focus and the screen reader announces the title, not the first control. On close,
+  // the keyboard sheet goes with the panel and focus returns to whatever opened it.
+  if (open) {
     drawer.focus();
+    return;
   }
+  setSheet(false);
+  const back = drawerReturn;
+  drawerReturn = null;
+  if (back?.isConnected) back.focus();
 }
 
 function setSheet(open: boolean): void {

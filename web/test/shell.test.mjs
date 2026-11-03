@@ -74,14 +74,14 @@ test("the type scale is six steps and every numeral is tabular", () => {
   for (const token of ["--fs-micro", "--fs-chip", "--fs-data", "--fs-body", "--fs-title", "--fs-brand"]) {
     assert.ok(css.includes(token), `${token} is part of the scale`);
   }
-  assert.match(css, /--fs-micro:\s*9px/, "the notes' 9 px micro label");
+  assert.match(css, /--fs-micro:\s*12px/, "the 12 px legibility floor on the smallest step");
   assert.match(css, /font-variant-numeric:\s*tabular-nums/, "tabular numerals, as the as-built page already had");
   assert.equal((css.match(/--fs-[a-z]+:\s*[\d.]+px/g) ?? []).length, 6, "six steps, no more");
 });
 
 test("the two accents are the palette's, and there is no third", () => {
   const tokens = read("src", "styles", "tokens.css");
-  for (const colour of ["#e0a33e", "#3d8f8a", "#5fc0b8", "#c6ccd3", "#8b959f", "#5e6873", "#454e57", "#0e1012", "#15181b", "#191d21"]) {
+  for (const colour of ["#e0a33e", "#3d8f8a", "#5fc0b8", "#c6ccd3", "#a5aeb6", "#8b959f", "#7d8893", "#0e1012", "#15181b", "#191d21"]) {
     assert.ok(tokens.includes(colour), `${colour} is a token`);
   }
   // One place owns colour. A hex in a component file is how a third accent appears.
@@ -149,10 +149,11 @@ test("the figure registry covers the ticket's table, with a label, a unit and a 
 });
 
 test("a figure element is data-figure + label + source, and never a bare dash", () => {
-  // The static markup carries figures for the values that exist before a Solve, so
-  // the first paint is never empty (notes/14 §3).
+  // The static markup carries figures for the values that exist before a Solve —
+  // now just the playback speed and the keyboard map, since the toolbar fields moved
+  // into the Playground — so the first paint is never empty.
   const markup = [...html.matchAll(/data-figure="([a-z0-9-]+)"([^>]*)>/g)];
-  assert.ok(markup.length >= 4, `the first paint has figures (${markup.length})`);
+  assert.ok(markup.length >= 2, `the first paint has figures (${markup.length})`);
   for (const [, id, attrs] of markup) {
     assert.match(attrs, /data-figure-label="[^"]{3,}"/, `${id} is labelled in words`);
     assert.match(attrs, /data-figure-source="(solve|trace|replay|dataset|reference|url|measured|control)"/, `${id} says where it came from`);
