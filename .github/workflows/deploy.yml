@@ -98,6 +98,10 @@ jobs:
           name: dist
           path: web/dist
           run-id: ${{ github.event.workflow_run.id }}
+          # Cross-run needs the token spelled out: the default token covers this
+          # workflow's own artifacts only, which is why the download above it
+          # reported `Artifact not found` on a run whose artifact existed.
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: the smoke test's tooling
         working-directory: web
