@@ -124,3 +124,23 @@ jobs:
         if: always()
         shell: bash
         run: echo "a red line above names its gate and its assertion"
+
+      # Ticket 17's deploy job publishes this, not a second build of its own:
+      # what ships is the tree the Gates just measured. Public-repository
+      # artifacts are free and the tree is a few hundred kB; a week is long
+      # enough for a deploy that follows the push, and short enough not to
+      # accumulate. `dist/` carries `manifest.json` (logical name -> hashed
+      # path) and `_headers`, which the deploy and the smoke test both read.
+      #
+      # Guarded to `main` so a pull request does not spend the bytes. A deploy
+      # whose artifact is missing fails loudly at the download step rather than
+      # falling back to a rebuild, which would deploy something the Gates never
+      # saw.
+      - name: the gated page
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 7

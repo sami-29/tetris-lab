@@ -44,6 +44,10 @@ web/pkg/
 # ticket 10's fixture generator is its own workspace (web/scripts/gen-replay-vectors)
 web/scripts/gen-replay-vectors/target/
 
+# `wrangler deploy` / `wrangler dev` local state (ticket 17): caches, never
+# committed, never uploaded.
+web/.wrangler/
+
 # The Dataset is a build gate, so nothing under it may ever be ignored (§11).
 # `!data/` comes first: git never descends into an ignored directory. Only the
 # last matching pattern counts, so these win against any broad rule added *above*
