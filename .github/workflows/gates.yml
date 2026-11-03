@@ -1,0 +1,166 @@
+# The six Gates of §9.2 on every push and every pull request (ticket 03).
+#
+# One job, named `gates`, and one gated command:
+#
+#   cargo fmt --all --check
+#   npm --prefix web run gates
+#
+# which are the commands a developer types. The job is the required check for
+# `main`, so a red Gate blocks instead of being noticed later:
+#
+#   Settings -> Rules -> New branch ruleset -> target `main`
+#     -> Require status checks to pass -> add `gates`
+#
+# GitHub requires a check to have completed in the repository within the past
+# seven days before it can be selected, so this workflow has to run once on a
+# pull request before the ruleset can name it. `rewrite` is the integration
+# branch during the build; adding the same rule to `rewrite` is an operator
+# decision (run/log.md) and is recommended, so the Gate is exercised as a
+# blocker daily rather than once at the cutover.
+#
+# Why `windows-latest` and not `ubuntu-latest`: `rust-toolchain.toml` pins
+# `1.99.1-x86_64-pc-windows-gnu`, which is a *host* toolchain -- its `rustc` is
+# a Windows PE binary that an Ubuntu runner cannot execute. The pin exists
+# because this repository's build box has no MSVC linker (run/log.md), so the
+# msvc host toolchain cannot link a native binary there; `ubuntu-latest` would
+# force either a different pin (breaking the box) or `RUSTUP_TOOLCHAIN` in this
+# file (a second source of truth for the version, which is exactly what the
+# committed pin exists to prevent -- §10). `windows-latest` currently resolves
+# to the `windows-2025` image, which ships Rustup, Bash and Node; the win-gnu
+# toolchain carries its own MinGW linker, so no MSVC linker is needed on the
+# runner either. Do not change the pin without changing the box.
+
+name: gates
+
+on:
+  pull_request:
+  # Every branch: the fire drill and topic branches must go red here too, not
+  # only once a pull request exists.
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per ref: a pushed fix cancels the run it supersedes. Two triggers on a
+# branch that is also a pull request means two runs (different refs); that is
+# the price of having `push:` unfiltered.
+concurrency:
+  group: gates-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gates:
+    name: gates
+    # `windows-2025` is what `windows-latest` resolves to today; naming it keeps
+    # a future alias change from silently moving the toolchain under the pin.
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # The toolchain comes from the committed file, parsed here rather than
+      # passed as an action input: one place names the version (§10). The
+      # `targets`/`components` keys in the file are not applied by a bare
+      # `rustup toolchain install`, so the wasm target is passed explicitly.
+      - name: Rust toolchain from the committed pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHANNEL=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' \
+            rust-toolchain.toml)
+          if [ -z "$CHANNEL" ]; then
+            echo "::error file=rust-toolchain.toml::no channel = \"...\" line"
+            exit 1
+          fi
+          echo "channel: $CHANNEL"
+          rustup toolchain install "$CHANNEL" --profile minimal \
+            --component rustfmt \
+            --target wasm32-unknown-unknown
+          rustup default "$CHANNEL"
+          rustup show active-toolchain
+          rustc -V
+          cargo -V
+
+      # Cargo registry, git index and the workspace `target/`: the three things
+      # that make a warm run minutes rather than seconds. The explicit `key`
+      # names the two files the ticket requires the cache to be keyed on; the
+      # action already hashes the installed rustc versions and every
+      # `CARGO*`/`RUST*` environment variable.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: ${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        working-directory: web
+        run: npm ci
+
+      # The one command. `npm run gates` =
+      #   npm run build        wasm artifact + tsc --noEmit + vite build
+      #   cargo test --workspace
+      #                        the engine, the Dataset seam, the gates' tests
+      #   node --test "test/**/*.test.mjs"
+      #                        the ABI data-segment guard and the page
+      #   cargo run --release -p bench -- gate all
+      #                        gates 1-6
+      # Formatting is part of the Gate, not a style opinion: it was red on a
+      # merged tip after tickets 09/15/17 and nothing caught it because this
+      # file did not run it (ticket 18). rustfmt comes from the same pinned
+      # toolchain -- the `--component rustfmt` above -- so the formatter and the
+      # compiler cannot disagree about which toolchain is authoritative. A diff
+      # here fails the run; the fix is `cargo fmt --all`, committed.
+      - name: fmt
+        run: cargo fmt --all --check
+
+      # `web/scripts/gen-replay-vectors` declares its own workspace (a fixture
+      # generator, not a member of the repo workspace), so the root `cargo fmt
+      # --all --check` never touches it. Check it from its own manifest with the
+      # same pinned toolchain.
+      - name: fmt (gen-replay-vectors)
+        run: >-
+          cargo fmt --manifest-path
+          web/scripts/gen-replay-vectors/Cargo.toml --check
+
+      # The build comes first because gates 4 and 6 measure
+      # `web/pkg/engine.wasm` and `web/dist`, which are not committed.
+      - name: six gates
+        working-directory: web
+        run: npm run gates
+
+      # A red run has to stay diagnosable after the fact. The gate log is short;
+      # each red line names its gate and its assertion, and the annotations the
+      # binary emits when GITHUB_ACTIONS=true put the same text in the summary.
+      - name: gate log
+        if: always()
+        shell: bash
+        run: echo "a red line above names its gate and its assertion"
+
+      # Ticket 17's deploy job publishes this, not a second build of its own:
+      # what ships is the tree the Gates just measured. Public-repository
+      # artifacts are free and the tree is a few hundred kB; a week is long
+      # enough for a deploy that follows the push, and short enough not to
+      # accumulate. `dist/` carries `manifest.json` (logical name -> hashed
+      # path) and `_headers`, which the deploy and the smoke test both read.
+      #
+      # Guarded to `main` so a pull request does not spend the bytes. A deploy
+      # whose artifact is missing fails loudly at the download step rather than
+      # falling back to a rebuild, which would deploy something the Gates never
+      # saw.
+      - name: the gated page
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 7

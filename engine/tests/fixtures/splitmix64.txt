@@ -1,0 +1,11 @@
+# splitmix64 reference vectors, spec §5.6 (normative).
+# The stream below is the *raw* splitmix64 stream from state = the decimal seed
+# in column 1, with no stream constant mixed in. Four draws per line.
+#
+# The generator itself never uses this raw stream: it seeds two purpose-separated
+# streams (seed ^ C_fill, seed ^ C_sequence, §5.7). These vectors exist so a port
+# proves its splitmix64 before it plays a game.
+#
+# seed  draw0             draw1             draw2             draw3
+0       e220a8397b1dcdaf  6e789e6aa1b965f4  06c45d188009454f  f88bb8a8724c81ec
+42      bdd732262feb6e95  28efe333b266f103  47526757130f9f52  581ce1ff0e4ae394

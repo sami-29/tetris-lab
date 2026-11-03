@@ -1,0 +1,22 @@
+[package]
+name = "bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Tetris Lab native bench: Dataset export and the fingerprint gate. The only crate that reads or writes data/dataset/."
+
+# engine only: the bench must run the *same* Generator the wasm build ships
+# (§6, ADR 0003). A second dependency would be a second thing that decides what
+# a game is, and std is all the I/O this crate needs -- the manifest is written
+# and read by hand rather than with serde.
+[dependencies]
+engine = { path = "../engine" }
+
+[lib]
+name = "bench"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"

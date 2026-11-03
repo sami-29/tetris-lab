@@ -1,0 +1,23 @@
+{
+  "name": "tetris-lab-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Tetris Lab page: one wasm instance in one worker, Canvas 2D board. No runtime dependencies.",
+  "scripts": {
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "dev": "vite",
+    "build": "npm run build:wasm && npm run build:facts && tsc --noEmit && vite build && node scripts/manifest.mjs",
+    "preview": "vite preview",
+    "test": "npm run build:wasm && npm run build:facts && node --test \"test/**/*.test.mjs\"",
+    "gates": "npm run build && npm run check:words && cargo test --workspace && node --test \"test/**/*.test.mjs\" && cargo run --release -p bench -- gate all",
+    "build:facts": "node scripts/build-facts.mjs",
+    "check:words": "node scripts/check-words.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "wrangler": "^4.156.1"
+  },
+  "dependencies": {}
+}

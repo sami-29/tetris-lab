@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "goal": 8,
+  "pieces": 40,
+  "cap": 7,
+  "seeds": { "first": 0, "last": 1999 },
+  "splits": {
+    "test": { "first": 0, "last": 999 },
+    "tuning": { "first": 1000, "last": 1999 }
+  },
+  "game_count": 2000,
+  "generator_version": 1,
+  "generator_description": "splitmix64 from seed^C_fill (board) and seed^C_sequence (bag), pre-fill draws piece/rotation/column and stops before the crossing piece, 7-bags shuffled Fisher-Yates descending with an S/Z re-shuffle at the seam",
+  "fingerprint": "4bf1a17b1685a774",
+  "notes": []
+}

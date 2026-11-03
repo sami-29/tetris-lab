@@ -1,0 +1,19 @@
+[package]
+name = "gen-replay-vectors"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Its own workspace root: this crate is a fixture generator, not a member of the
+# repo workspace, so `cargo test` at the root neither builds nor owns it.
+[workspace]
+
+[dependencies]
+engine = { path = "../../../engine" }
+
+[[bin]]
+name = "gen-replay-vectors"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 1

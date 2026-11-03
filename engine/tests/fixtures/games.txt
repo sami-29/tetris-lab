@@ -1,0 +1,16 @@
+# Golden generated games — the Generator contract of §5.6–5.8, frozen.
+#
+# One game per line, whitespace separated:
+#   seed pieces cap  <ten board column words, 8 lowercase hex digits>  <sequence>
+#
+# Column word bit n is row 19-n, so bit 0 is the bottom row (§5.1). The sequence
+# is one ASCII letter per piece, in the canonical order of §5.2.
+#
+# These two games are the pair the Playground and the page open on (seed 0) and
+# the game every quick check uses (seed 42). They were first produced by an
+# independent scratch port and agree with the §5.6 vectors and the board/sequence
+# reported for seed 42 during exploration.
+#
+# seed pieces cap board                                                                                  sequence
+0      40     7   00000000 00000000 00000000 00000000 0000000f 00000000 00000002 0000004a 0000007f 00000004 ITOLSZJISJOZTLIOTZJSLIOLTJSZIZJTSOLLZSIT
+42     40     7   00000000 0000001f 0000001f 00000004 00000064 00000050 0000007e 00000003 00000000 00000000 OJTISZLSTIZOLJSIZTJLOSTJILZOTZSLIOJISZLO

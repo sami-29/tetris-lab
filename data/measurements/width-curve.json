@@ -1,0 +1,294 @@
+{
+  "format": 1,
+  "kind": "width-curve",
+  "generated_at": "2026-11-02T20:54:05Z",
+  "engine": {
+    "commit": "8b4a004",
+    "profile": "release: lto=fat, codegen-units=1, panic=abort, strip=true",
+    "wasm": {
+      "path": "web/pkg/engine.wasm",
+      "bytes": 55934,
+      "fingerprint": "fnv1a64:482ef42be51de975"
+    }
+  },
+  "dataset": {
+    "goal8-p40-cap7": { "fingerprint": "4bf1a17b1685a774", "generator_version": 1 },
+    "goal12-p100-cap7": { "fingerprint": "4ebdf44940134c40", "generator_version": 1 }
+  },
+  "evaluator": {
+    "id": "E1",
+    "name": "dellacherie-thiery",
+    "table": "E1_PUBLISHED",
+    "toggles": "shipped"
+  },
+  "machine": {
+    "label": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB, Microsoft Windows 11 Pro",
+    "runtime": "v24.21.0 (V8: the engine headless Chrome runs, without the DOM); rustc 1.99.1 release bench",
+    "workers": 1
+  },
+  "protocol": {
+    "widths": [25, 50, 100, 200, 400, 800],
+    "cost_split": { "first": 0, "last": 999 },
+    "cost_trials": 3,
+    "cost_seeds_per_trial": 200,
+    "cost_games_per_point": 600,
+    "quality_bed": "goal16-p160-cap7",
+    "quality_split": { "first": 1000, "last": 1999 },
+    "quality_games_per_point": 1000,
+    "quality_stop_rule_fired_at": 100,
+    "p90_method": "nearest-rank",
+    "substrate": "wasm",
+    "quality_substrate": "native (win counts are engine-deterministic; the wasm/native parity gate holds them)",
+    "quality_stop_rule": "two consecutive flat steps, a flat step being the §9.5 tie predicate",
+    "cost_stop_rule": "the first width that fails either budget",
+    "ranking_rule": "§9.5: narrowest doubling point whose win rate ties the cap's; ties resolve narrower"
+  },
+  "statistic": {
+    "name": "exact McNemar (two-sided binomial sign test on the discordant pairs)",
+    "alpha": 0.01,
+    "max_shortfall_pp": 1.0,
+    "max_shortfall_tenths_pp": 10,
+    "saturation_percent": 99,
+    "budgets_ms": {
+      "default_bed": "goal8-p40-cap7",
+      "default_ms": 200,
+      "harder_bed": "goal12-p100-cap7",
+      "harder_ms": 1000
+    }
+  },
+  "saturation": {
+    "checked_at_width": 800,
+    "saturated": true,
+    "beds": {
+      "goal8-p40-cap7": { "wins": 1000, "games": 1000 },
+      "goal12-p100-cap7": { "wins": 1000, "games": 1000 }
+    },
+    "quality_bed": "goal16-p160-cap7",
+    "quality_split": { "first": 1000, "last": 1999 },
+    "fallback_reason": "saturation (§9.1): goal8-p40-cap7 wins 1000/1000 and goal12-p100-cap7 wins 1000/1000 at width 800 on its test split, so the shipped beds cannot rank any width; the validation-only bed goal 16/160/cap 7 over seeds 1000-1999 ranks them"
+  },
+  "points": [
+    {
+      "width": 25,
+      "cost": [
+        {
+          "bed": "goal8-p40-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 9776,
+          "ms_p50": 3.547,
+          "ms_p90": 4.421,
+          "ms_max": 8.116,
+          "trials_ms_p90": [4.386, 4.457, 4.469]
+        },
+        {
+          "bed": "goal12-p100-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 14359,
+          "ms_p50": 5.069,
+          "ms_p90": 6.021,
+          "ms_max": 10.063,
+          "trials_ms_p90": [6.062, 6.117, 5.864]
+        }
+      ],
+      "quality": {
+        "wins": 1000,
+        "games": 1000,
+        "paired_vs_cap": { "b": 0, "c": 0, "n": 0 },
+        "shortfall_wins_vs_cap": 0,
+        "saturated": true,
+          "flat_step": true
+      }
+    },
+    {
+      "width": 50,
+      "cost": [
+        {
+          "bed": "goal8-p40-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 18509,
+          "ms_p50": 6.518,
+          "ms_p90": 8.017,
+          "ms_max": 18.898,
+          "trials_ms_p90": [8.071, 7.971, 7.925]
+        },
+        {
+          "bed": "goal12-p100-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 27665,
+          "ms_p50": 9.613,
+          "ms_p90": 10.865,
+          "ms_max": 23.182,
+          "trials_ms_p90": [10.865, 10.781, 10.896]
+        }
+      ],
+      "quality": {
+        "wins": 1000,
+        "games": 1000,
+        "paired_vs_cap": { "b": 0, "c": 0, "n": 0 },
+        "shortfall_wins_vs_cap": 0,
+        "saturated": true,
+          "flat_step": true
+      }
+    },
+    {
+      "width": 100,
+      "cost": [
+        {
+          "bed": "goal8-p40-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 35644,
+          "ms_p50": 12.587,
+          "ms_p90": 14.977,
+          "ms_max": 34.960,
+          "trials_ms_p90": [14.977, 14.875, 15.097]
+        },
+        {
+          "bed": "goal12-p100-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 53511,
+          "ms_p50": 18.725,
+          "ms_p90": 20.582,
+          "ms_max": 42.645,
+          "trials_ms_p90": [20.793, 20.459, 20.569]
+        }
+      ],
+      "quality": {
+        "wins": 1000,
+        "games": 1000,
+        "paired_vs_cap": { "b": 0, "c": 0, "n": 0 },
+        "shortfall_wins_vs_cap": 0,
+        "saturated": true,
+          "flat_step": true
+      }
+    },
+    {
+      "width": 200,
+      "cost": [
+        {
+          "bed": "goal8-p40-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 68910,
+          "ms_p50": 24.662,
+          "ms_p90": 30.070,
+          "ms_max": 61.320,
+          "trials_ms_p90": [28.842, 29.907, 30.816]
+        },
+        {
+          "bed": "goal12-p100-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 105176,
+          "ms_p50": 36.662,
+          "ms_p90": 40.087,
+          "ms_max": 51.676,
+          "trials_ms_p90": [39.652, 40.197, 40.495]
+        }
+      ],
+      "quality": {
+        "wins": 1000,
+        "games": 1000,
+        "paired_vs_cap": { "b": 0, "c": 0, "n": 0 },
+        "shortfall_wins_vs_cap": 0,
+        "saturated": true,
+          "flat_step": true
+      }
+    },
+    {
+      "width": 400,
+      "cost": [
+        {
+          "bed": "goal8-p40-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 134541,
+          "ms_p50": 49.489,
+          "ms_p90": 57.254,
+          "ms_max": 83.598,
+          "trials_ms_p90": [56.485, 57.254, 56.710]
+        },
+        {
+          "bed": "goal12-p100-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 206859,
+          "ms_p50": 73.510,
+          "ms_p90": 79.982,
+          "ms_max": 103.264,
+          "trials_ms_p90": [79.812, 80.777, 79.714]
+        }
+      ],
+      "quality": {
+        "wins": 1000,
+        "games": 1000,
+        "paired_vs_cap": { "b": 0, "c": 0, "n": 0 },
+        "shortfall_wins_vs_cap": 0,
+        "saturated": true,
+          "flat_step": true
+      }
+    },
+    {
+      "width": 800,
+      "cost": [
+        {
+          "bed": "goal8-p40-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 259200,
+          "ms_p50": 94.756,
+          "ms_p90": 111.474,
+          "ms_max": 224.521,
+          "trials_ms_p90": [105.966, 120.141, 109.690]
+        },
+        {
+          "bed": "goal12-p100-cap7",
+          "wins": 600,
+          "games": 600,
+          "evaluations_p50": 406895,
+          "ms_p50": 144.623,
+          "ms_p90": 157.357,
+          "ms_max": 275.283,
+          "trials_ms_p90": [155.739, 162.317, 157.526]
+        }
+      ],
+      "quality": {
+        "wins": 1000,
+        "games": 1000,
+        "paired_vs_cap": { "b": 0, "c": 0, "n": 0 },
+        "shortfall_wins_vs_cap": 0,
+        "saturated": true,
+          "flat_step": null
+      }
+    }
+  ],
+  "default_beam": 25,
+  "width_cap": 800,
+  "cap_bound": "budget",
+  "overshoot": {
+    "width": 1600,
+    "bed": "goal8-p40-cap7",
+    "substrate": "native",
+    "samples": 10,
+    "ms_p90": 203.46,
+    "budget_ms": 200,
+    "probe": true,
+    "note": "the wasm substrate this curve's cost series is measured on extrapolates the same way — 111.474 × 2^0.946 ≈ 215 ms — so the cap does not rest on the probe alone"
+  },
+  "default_beam_source": "tie",
+  "quality_axis": "no-resolution",
+  "default_beam_basis": "cost",
+  "quality_fingerprint": "fnv1a64:af9f8a8c76b93ad5",
+  "complete": false,
+  "missing_widths": [1600, 3200, 6400],
+  "incomplete_reason": "width 1600 was probed outside the curve and failed the default configuration's 200 ms p90 budget at 203.46 ms on native (10 seeds); the wasm substrate this curve's cost series is measured on extrapolates the same way — 111.474 × 2^0.946 ≈ 215 ms — so the cap does not rest on the probe alone; it is recorded as the probe it is and not as a measured point; 3200 and 6400 were not measured because the sweep stops at the first width that fails a budget",
+  "provenance": {
+    "reason": "initial measurement for ticket 06 (spec 9.5): E1 with shipped Toggles; cost p90 measured on the built wasm through node 24.21's V8, 3 trials x 200 seeds per point; width 1600 was probed separately on a coarse 10-seed native sample and fails the 200 ms budget (p90 203.46 ms), which is what ends the sweep; the 9.1 pilot and the quality series are native, where win counts are exact and the parity gate holds them; reference box busy with other worktree builds; §9.1: goal16-p160-cap7 wins 1000/1000 at width 800 on seeds 1000-1999 (≥99%), so the quality axis could not separate the widths and default_beam 25 is the narrowest measured point — named on cost, not on a quality result",
+    "supersedes": null
+  }
+}

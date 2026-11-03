@@ -1,0 +1,1997 @@
+//! `bench` -- the native Dataset tool (§6, §9.2 gate 1).
+//!
+//! ```text
+//! bench export [--config <name|all>] [--data <dir>] [--accept-change "<reason>"] [--dry-run]
+//! bench verify [--config <name|all>] [--data <dir>] [--json]
+//! bench fingerprint [--config <name|all>] [--data <dir>]
+//! bench show [--config <name>] --seed <n> [--data <dir>]
+//! bench gate <1|2|3|4|5|6|all> [--data <dir>] [--no-colour]
+//! bench solve --emit [--config <name|all>] [--seeds <a,b,c>] [--beam <n>] [--data <dir>]
+//! bench width-curve [--widths <w,w,...>] [--trials <n>] [--seeds-per-trial <n>]
+//!                   [--quality-games <n>] [--ms native|wasm] [--out <file>]
+//!                   [--reason "<one line>"] [--machine "<label>"]
+//!                   [--overshoot <width>=<p90_ms> --overshoot-samples <n>
+//!                    [--overshoot-substrate native|wasm] [--overshoot-note "<one line>"]]
+//! bench width-curve --summarise <artifact> [--overshoot ...] [--out <file>]
+//! bench tune [--seed <u64|0x...>] [--bed <name>] [--candidates <n>] [--games <n>]
+//!            [--iterations <n>] [--data <dir>] [--out <file>] [--rows <file>]
+//! bench tune --replay [<record>] [--data <dir>]
+//! bench ladder [--seeds <a-b>] [--bed <name>] [--width <n>] [--width-curve <file>]
+//!              [--scan-pieces <n>] [--scan-cap <n>] [--out <file>] [--rows <file>]
+//!              [--docs <file>] [--machine "<label>"]
+//! ```
+//!
+//! Exit codes: `0` clean, `1` the Dataset drifted or a Gate failed, `2` a usage
+//! or I/O error or a Gate whose prerequisite is missing. Argument parsing is here
+//! and nothing else is: every subcommand is one call into the library, which is
+//! what the tests call too.
+
+use std::io::{IsTerminal, Write};
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use bench::dataset::{self, Config};
+use bench::gate::{self, Options as GateOptions};
+use bench::golden;
+use bench::ladder;
+use bench::reference;
+use bench::tuning;
+use bench::width::{self, MsSource, Options as WidthOptions, WIDTHS};
+use bench::{export, fingerprint, show, verify};
+
+const USAGE: &str = "\
+usage:
+  bench export      [--config <name|all>] [--data <dir>] [--accept-change \"<reason>\"] [--dry-run]
+  bench verify      [--config <name|all>] [--data <dir>] [--json]
+  bench fingerprint [--config <name|all>] [--data <dir>]
+  bench show        [--config <name>] --seed <n> [--data <dir>]
+  bench gate        <1|2|3|4|5|6|all> [--data <dir>] [--no-colour]
+  bench solve       --emit [--config <name|all>] [--seeds <a,b,c|a-b>] [--beam <n>]
+  bench width-curve [--widths <w,w,...>] [--trials <n>] [--seeds-per-trial <n>]
+                    [--quality-games <n>] [--ms native|wasm] [--out <file>]
+                    [--reason \"<one line>\"] [--machine \"<label>\"]
+                    [--overshoot <width>=<p90_ms> --overshoot-samples <n>
+                     [--overshoot-substrate native|wasm] [--overshoot-note \"<one line>\"]]
+  bench width-curve --summarise <artifact> [--overshoot ...] [--out <file>]
+  bench tune        [--seed <u64|0x...>] [--bed <name>] [--candidates <n>] [--games <n>]
+                    [--iterations <n>] [--data <dir>] [--out <file>] [--rows <file>]
+  bench tune        --replay [<record>] [--data <dir>]
+  bench ladder      [--seeds <a-b>] [--bed <name>] [--width <n>] [--width-curve <file>]
+                    [--scan-pieces <n>] [--scan-cap <n>] [--out <file>] [--rows <file>]
+                    [--docs <file>] [--machine \"<label>\"]
+  bench reference   [--config <name|all>] [--split test|tuning] [--width <n>]
+                    [--ms wasm|native] [--wasm <path>] [--cal <n>] [--reason \"<one line>\"]
+                    [--out <file>] [--append] [--json] [--data <dir>]
+  bench golden      check [--cal <n>] [--ms wasm|native] [--wasm <path>] [--json]
+  bench golden      update --reason \"<one line>\" [--cal <n>] [--ms wasm|native]
+                    [--wasm <path>] [--out <file>]
+
+configurations: goal8-p40-cap7, goal12-p100-cap7
+width-curve defaults: every doubling point, 3 trials of 200 seeds, 1,000 quality
+games, wasm milliseconds, written to data/measurements/width-curve.json.
+--data defaults to the repository's data/dataset.
+width-curve --summarise re-derives an artifact's summary fields (cap_bound,
+complete, missing_widths, incomplete_reason) from the points and the probe it
+already records, without re-measuring: it refuses to write if any measured number
+would move, and it writes back to the artifact it was given unless --out is set.
+--overshoot records a width probed outside the curve that failed the default
+configuration's 200 ms p90 budget, which is what makes cap_bound \"budget\". A
+probe is never a point: it has no place in the cost or quality series.
+bench tune runs ticket 07's cross-entropy search over the tuning Split only, at
+DEFAULT_BEAM read from data/measurements/width-curve.json, measures E0/E1/BCTS/E2
+on all 1,000 tuning seeds and appends one run to data/measurements/e2-tuning.json
+plus its per-seed rows. --replay re-runs a committed run's seed and checks the
+table fingerprint; a rejected run exits 1.
+bench reference measures §9.6's Reference run at DEFAULT_BEAM over the test Split,
+both configurations, and labels every row with the engine commit, the wasm hash,
+the build flags, the CPU, the OS, the runtime and the date. --append is the only
+mode that writes data/dataset/<config>/reference.jsonl, and it only appends: a
+re-measurement adds a dated row carrying its reason. The rows are measured on the
+wasm artifact the page loads (--ms wasm, the default), because that is the engine a
+visitor's Run uses; --ms native is labelled native and is not what the page shows.
+bench golden check compares the evaluations-to-solve and lines-to-solve vectors
+exactly against data/measurements/golden-evals.json and the wall clock against a
+normalised 4x bound (spec 9.2 gate 6). bench golden update re-pins the file from a
+committed Reference row and refuses when there is none.
+exit codes: 0 clean, 1 Dataset drift, a failed Gate or a rejected tuning run,
+2 usage, I/O, or a Gate whose prerequisite is missing.";
+
+struct Args {
+    configs: Vec<Config>,
+    data: PathBuf,
+    accept_change: Option<String>,
+    dry_run: bool,
+    json: bool,
+    seed: Option<u32>,
+    widths: Vec<u32>,
+    trials: u32,
+    seeds_per_trial: u32,
+    quality_games: u32,
+    ms: MsSource,
+    /// `None` means "wherever this command's output belongs": the measurements
+    /// path for a fresh curve, the artifact being re-derived for `--summarise`.
+    out: Option<PathBuf>,
+    reason: Option<String>,
+    machine: Option<String>,
+    /// `--summarise`: re-derive an artifact's summary fields instead of measuring.
+    summarise: Option<PathBuf>,
+    /// `--overshoot <width>=<p90_ms>`: a probed width and the p90 it failed on.
+    overshoot: Option<(u32, f64)>,
+    overshoot_samples: Option<u32>,
+    overshoot_substrate: Option<MsSource>,
+    overshoot_note: Option<String>,
+}
+
+impl Args {
+    fn defaults() -> Args {
+        Args {
+            configs: dataset::CONFIGS.to_vec(),
+            data: dataset::root(),
+            accept_change: None,
+            dry_run: false,
+            json: false,
+            seed: None,
+            widths: WIDTHS.to_vec(),
+            trials: 3,
+            seeds_per_trial: 200,
+            quality_games: 1_000,
+            ms: MsSource::Wasm,
+            out: None,
+            reason: None,
+            machine: None,
+            summarise: None,
+            overshoot: None,
+            overshoot_samples: None,
+            overshoot_substrate: None,
+            overshoot_note: None,
+        }
+    }
+}
+
+/// `data/measurements/width-curve.json`, next to the Dataset.
+fn measurements_path() -> PathBuf {
+    dataset::root()
+        .parent()
+        .expect("data/dataset has a parent: data/")
+        .join("measurements")
+        .join("width-curve.json")
+}
+
+fn main() -> ExitCode {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let Some(command) = argv.first().cloned() else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    if command == "--help" || command == "-h" || command == "help" {
+        println!("{USAGE}");
+        return ExitCode::from(0);
+    }
+
+    // The two subcommands with their own flags are dispatched before the Dataset
+    // parser below, so neither can grow the other's argument surface.
+    if command == "gate" {
+        return ExitCode::from(gate_command(&argv[1..]));
+    }
+    if command == "solve" {
+        return ExitCode::from(solve_command(&argv[1..]));
+    }
+    if command == "tune" {
+        return ExitCode::from(tune_command(&argv[1..]));
+    }
+    if command == "ladder" {
+        return ExitCode::from(ladder_command(&argv[1..]));
+    }
+    if command == "reference" {
+        return ExitCode::from(reference_command(&argv[1..]));
+    }
+    if command == "golden" {
+        return ExitCode::from(golden_command(&argv[1..]));
+    }
+
+    let args = match parse(&argv[1..]) {
+        Ok(args) => args,
+        Err(message) => {
+            eprintln!("error: {message}\n\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let outcome = match command.as_str() {
+        "export" => export(&args),
+        "verify" => verify(&args),
+        "fingerprint" => fingerprint(&args),
+        "show" => show_game(&args),
+        "width-curve" => width_curve(&args),
+        other => {
+            eprintln!("error: unknown command {other:?}\n\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    match outcome {
+        Ok(()) => ExitCode::from(0),
+        Err(code) => ExitCode::from(code),
+    }
+}
+
+fn parse(argv: &[String]) -> Result<Args, String> {
+    let mut args = Args::defaults();
+    let mut selected: Option<Vec<Config>> = None;
+    let mut index = 0;
+    while index < argv.len() {
+        let flag = argv[index].as_str();
+        let mut take = |what: &str| -> Result<String, String> {
+            index += 1;
+            argv.get(index)
+                .cloned()
+                .ok_or_else(|| format!("{flag} needs a value ({what})"))
+        };
+        match flag {
+            "--config" => {
+                let value = take("a configuration name or all")?;
+                if value == "all" {
+                    selected = Some(dataset::CONFIGS.to_vec());
+                } else {
+                    let cfg = Config::from_name(&value).ok_or_else(|| {
+                        format!(
+                            "unknown configuration {value:?}; known: {}",
+                            dataset::CONFIGS
+                                .iter()
+                                .map(|cfg| cfg.dir)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })?;
+                    selected.get_or_insert_with(Vec::new).push(cfg);
+                }
+            }
+            "--data" => args.data = PathBuf::from(take("a directory")?),
+            "--accept-change" => args.accept_change = Some(take("a one-line reason")?),
+            "--dry-run" => args.dry_run = true,
+            "--json" => args.json = true,
+            "--seed" => {
+                let value = take("a seed number")?;
+                args.seed = Some(
+                    value
+                        .parse::<u32>()
+                        .map_err(|_| format!("--seed must be a number, found {value:?}"))?,
+                );
+            }
+            "--widths" => {
+                let value = take("a comma-separated list of widths")?;
+                args.widths = value
+                    .split(',')
+                    .map(|field| {
+                        field
+                            .trim()
+                            .parse::<u32>()
+                            .map_err(|_| format!("--widths: {field:?} is not a width"))
+                    })
+                    .collect::<Result<Vec<u32>, String>>()?;
+            }
+            "--trials" => {
+                let value = take("a repeat count")?;
+                args.trials = value
+                    .parse()
+                    .map_err(|_| format!("--trials must be a number, found {value:?}"))?;
+            }
+            "--seeds-per-trial" => {
+                let value = take("a seed count")?;
+                args.seeds_per_trial = value
+                    .parse()
+                    .map_err(|_| format!("--seeds-per-trial must be a number, found {value:?}"))?;
+            }
+            "--quality-games" => {
+                let value = take("a game count")?;
+                args.quality_games = value
+                    .parse()
+                    .map_err(|_| format!("--quality-games must be a number, found {value:?}"))?;
+            }
+            "--ms" => {
+                let value = take("native or wasm")?;
+                args.ms = match value.as_str() {
+                    "native" => MsSource::Native,
+                    "wasm" => MsSource::Wasm,
+                    other => return Err(format!("--ms must be native or wasm, found {other:?}")),
+                };
+            }
+            "--out" => args.out = Some(PathBuf::from(take("a file")?)),
+            "--reason" => args.reason = Some(take("a one-line reason")?),
+            "--machine" => args.machine = Some(take("a machine label")?),
+            "--summarise" => {
+                args.summarise = Some(PathBuf::from(take("a width-curve artifact")?));
+            }
+            "--overshoot" => {
+                let value = take("a probed width and its p90, like 1600=203.46")?;
+                let (width, ms) = value.split_once('=').ok_or_else(|| {
+                    format!("--overshoot wants <width>=<p90_ms>, found {value:?}")
+                })?;
+                let width = width
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| format!("--overshoot: {width:?} is not a width"))?;
+                let ms = ms
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| format!("--overshoot: {ms:?} is not a p90 in ms"))?;
+                args.overshoot = Some((width, ms));
+            }
+            "--overshoot-samples" => {
+                let value = take("a seed count")?;
+                args.overshoot_samples = Some(value.parse().map_err(|_| {
+                    format!("--overshoot-samples must be a number, found {value:?}")
+                })?);
+            }
+            "--overshoot-substrate" => {
+                let value = take("native or wasm")?;
+                args.overshoot_substrate = Some(match value.as_str() {
+                    "native" => MsSource::Native,
+                    "wasm" => MsSource::Wasm,
+                    other => {
+                        return Err(format!(
+                            "--overshoot-substrate must be native or wasm, found {other:?}"
+                        ))
+                    }
+                });
+            }
+            "--overshoot-note" => args.overshoot_note = Some(take("a one-line note")?),
+            other => return Err(format!("unknown argument {other:?}")),
+        }
+        index += 1;
+    }
+    if let Some(selected) = selected {
+        args.configs = selected;
+    }
+    Ok(args)
+}
+
+fn export(args: &Args) -> Result<(), u8> {
+    let mut code = 0u8;
+    for cfg in &args.configs {
+        match export::run(cfg, &args.data, args.accept_change.as_deref(), args.dry_run) {
+            Ok(report) => {
+                let action = match &report.action {
+                    export::Action::Created => "created".to_string(),
+                    export::Action::Unchanged => "unchanged".to_string(),
+                    export::Action::Accepted { archive, replaced } => {
+                        format!("accepted, archived {replaced} -> {}", archive.display())
+                    }
+                };
+                println!(
+                    "{:<18} {:<10} {} {} games {} bytes{}  {}",
+                    report.config.dir,
+                    action,
+                    report.fingerprint,
+                    report.games,
+                    report.bytes,
+                    if report.dry_run {
+                        "  (dry run, nothing written)"
+                    } else {
+                        ""
+                    },
+                    report.path.display()
+                );
+            }
+            Err(drift) => {
+                eprintln!("{drift}");
+                code = 1;
+            }
+        }
+    }
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(code)
+    }
+}
+
+fn verify(args: &Args) -> Result<(), u8> {
+    let single = args.configs.len() == 1;
+    let mut code = 0u8;
+    for cfg in &args.configs {
+        match verify::check_config(cfg, &args.data) {
+            Ok(report) => {
+                if args.json {
+                    println!(
+                        "{{\"config\":\"{}\",\"ok\":true,\"fingerprint\":\"{}\",\"games\":{},\"tallest\":{},\"at_cap\":{}}}",
+                        report.config.dir,
+                        report.fingerprint,
+                        report.games.len(),
+                        report.tallest_over_set,
+                        report.at_cap
+                    );
+                } else {
+                    println!(
+                        "{:<18} ok  {}  {} games  cap {}: {} at the cap, tallest {}  generator_version {}",
+                        report.config.dir,
+                        report.fingerprint,
+                        report.games.len(),
+                        report.config.cap,
+                        report.at_cap,
+                        report.tallest_over_set,
+                        report.manifest.generator_version
+                    );
+                }
+            }
+            Err(drift) => {
+                if args.json {
+                    let message = drift.to_string().replace('\\', "\\\\").replace('"', "\\\"");
+                    println!(
+                        "{{\"config\":\"{}\",\"ok\":false,\"error\":\"{}\"}}",
+                        cfg.dir,
+                        message.replace('\n', "\\n")
+                    );
+                } else {
+                    eprintln!("{drift}");
+                }
+                code = 1;
+            }
+        }
+    }
+    // The pairing property needs both files, so it only runs when both are in
+    // scope.
+    if !single && code == 0 {
+        if let Err(drift) = verify::run_all(&args.data) {
+            eprintln!("{drift}");
+            code = 1;
+        }
+    }
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(code)
+    }
+}
+
+fn fingerprint(args: &Args) -> Result<(), u8> {
+    let mut code = 0u8;
+    for cfg in &args.configs {
+        let path = dataset::games_path(&args.data, cfg);
+        match std::fs::read_to_string(&path) {
+            Ok(text) => match dataset::parse(cfg, &text) {
+                Ok(parsed) => println!(
+                    "{} {} {}",
+                    cfg.dir,
+                    fingerprint::hex(fingerprint::fingerprint(&parsed.games)),
+                    path.display()
+                ),
+                Err(error) => {
+                    eprintln!("error: {} does not parse: {error}", path.display());
+                    code = 1;
+                }
+            },
+            Err(error) => {
+                eprintln!("error: cannot read {}: {error}", path.display());
+                code = 1;
+            }
+        }
+    }
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(code)
+    }
+}
+
+fn show_game(args: &Args) -> Result<(), u8> {
+    let Some(seed) = args.seed else {
+        eprintln!("error: show needs --seed <n>");
+        return Err(2);
+    };
+    let cfg = args.configs.first().copied().unwrap_or(dataset::GOAL8);
+    let path = dataset::games_path(&args.data, &cfg);
+    let text = std::fs::read_to_string(&path).map_err(|error| {
+        eprintln!("error: cannot read {}: {error}", path.display());
+        1u8
+    })?;
+    let parsed = dataset::parse(&cfg, &text).map_err(|error| {
+        eprintln!("error: {} does not parse: {error}", path.display());
+        1u8
+    })?;
+    let game = parsed
+        .games
+        .iter()
+        .find(|game| game.seed == seed)
+        .ok_or_else(|| {
+            eprintln!("error: seed {seed} is not in {}", path.display());
+            1u8
+        })?;
+    print!("{}", show::ascii(game));
+    let _ = std::io::stdout().flush();
+    Ok(())
+}
+
+// ------------------------------------------------------------------ gate
+
+/// `bench gate <1..6|all> [--data <dir>] [--no-colour]`.
+///
+/// One command, one exit code, one block of named assertions per gate. Colour is
+/// for a terminal only (`NO_COLOR` respected), exactly as `host-probe/verify.sh`
+/// guards its own: a log in CI is read as text, not as escape codes.
+fn gate_command(argv: &[String]) -> u8 {
+    let mut selector = "all".to_string();
+    let mut data: Option<PathBuf> = None;
+    let mut colour = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    let mut index = 0;
+    while index < argv.len() {
+        match argv[index].as_str() {
+            "--data" => {
+                index += 1;
+                match argv.get(index) {
+                    Some(value) => data = Some(PathBuf::from(value)),
+                    None => {
+                        eprintln!(
+                            "error: --data needs a directory
+
+{USAGE}"
+                        );
+                        return 2;
+                    }
+                }
+            }
+            "--no-colour" | "--no-color" => colour = false,
+            other if other.starts_with("--") => {
+                eprintln!(
+                    "error: unknown flag {other:?}
+
+{USAGE}"
+                );
+                return 2;
+            }
+            other => selector = other.to_string(),
+        }
+        index += 1;
+    }
+
+    let mut options = GateOptions::resolve();
+    if let Some(data) = data {
+        options.paths.data = data;
+    }
+    let reports = match selector.as_str() {
+        "all" => gate::run_all(&options),
+        "1" | "2" | "3" | "4" | "5" | "6" => {
+            vec![gate::run(
+                selector.parse().expect("selected above"),
+                &options,
+            )]
+        }
+        other => {
+            eprintln!(
+                "error: unknown gate {other:?}; known: 1, 2, 3, 4, 5, 6, all
+
+{USAGE}"
+            );
+            return 2;
+        }
+    };
+
+    let in_ci = std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true");
+    for (position, report) in reports.iter().enumerate() {
+        if position > 0 {
+            println!();
+        }
+        println!("{}", report.render_with(colour));
+        if in_ci {
+            for annotation in report.annotations() {
+                println!("{annotation}");
+            }
+        }
+    }
+    let _ = std::io::stdout().flush();
+    gate::worst_exit_code(&reports)
+}
+
+// ------------------------------------------------------------- solve --emit
+
+/// The hidden half of gate 5: solve the fixed seeds and print one line per
+/// `(configuration, seed)` to stdout, and nothing else.
+///
+/// ```text
+/// goal8-p40-cap7 0 10713641301068153 0109,50105,30008,20100,40105
+/// ```
+///
+/// `<config> <seed> <packed decimal> <Move words, or ->`, the words being
+/// `(piece_index << 16) | (rotation << 8) | column` in lowercase hex. The
+/// comparison unit is
+/// the printed line, not the packed `i64`: the packed value carries the Move
+/// *count* and not the Move order, so a determinism check on it alone could pass
+/// while the returned moves differ.
+///
+/// The child reads nothing from `data/dataset`: it regenerates each game from its
+/// Seed, so a Dataset that happens to be dirty cannot make two processes disagree.
+fn solve_command(argv: &[String]) -> u8 {
+    let mut emit = false;
+    let mut configs: Option<Vec<Config>> = None;
+    let mut seeds: Vec<u32> = vec![0];
+    let mut beam = gate::GATE_BEAM;
+    let mut index = 0;
+    while index < argv.len() {
+        let flag = argv[index].as_str();
+        let mut take = |what: &str| -> Option<String> {
+            index += 1;
+            argv.get(index).cloned().or_else(|| {
+                eprintln!("error: {flag} needs {what}");
+                None
+            })
+        };
+        match flag {
+            "--emit" => emit = true,
+            "--config" => {
+                let Some(value) = take("a configuration name or all") else {
+                    return 2;
+                };
+                if value == "all" {
+                    configs = Some(dataset::CONFIGS.to_vec());
+                } else {
+                    let Some(cfg) = Config::from_name(&value) else {
+                        eprintln!("error: unknown configuration {value:?}");
+                        return 2;
+                    };
+                    configs.get_or_insert_with(Vec::new).push(cfg);
+                }
+            }
+            "--seeds" => {
+                let Some(value) = take("a seed list or range") else {
+                    return 2;
+                };
+                match parse_seeds(&value) {
+                    Ok(parsed) => seeds = parsed,
+                    Err(message) => {
+                        eprintln!("error: {message}");
+                        return 2;
+                    }
+                }
+            }
+            "--beam" => {
+                let Some(value) = take("a width") else {
+                    return 2;
+                };
+                match value.parse() {
+                    Ok(width) => beam = width,
+                    Err(_) => {
+                        eprintln!("error: --beam must be a number, found {value:?}");
+                        return 2;
+                    }
+                }
+            }
+            other => {
+                eprintln!(
+                    "error: unknown argument {other:?}
+
+{USAGE}"
+                );
+                return 2;
+            }
+        }
+        index += 1;
+    }
+    if !emit {
+        eprintln!(
+            "error: solve needs --emit
+
+{USAGE}"
+        );
+        return 2;
+    }
+
+    for cfg in configs.unwrap_or_else(|| dataset::CONFIGS.to_vec()) {
+        for seed in &seeds {
+            let game = match engine::generate_game(*seed, cfg.pieces, cfg.cap) {
+                Ok(game) => game,
+                Err(error) => {
+                    eprintln!("error: seed {seed} is out of the Generator's domain ({error:?})");
+                    return 1;
+                }
+            };
+            let result = engine::solve(
+                &game.board,
+                game.sequence.as_slice(),
+                &engine::SolveConfig::new(cfg.goal, beam),
+                engine::shipped(),
+            );
+            let moves = if result.moves.is_empty() {
+                "-".to_string()
+            } else {
+                result
+                    .moves
+                    .iter()
+                    .map(|mv| format!("{:04x}", mv.packed()))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            println!("{} {} {} {}", cfg.dir, seed, result.packed(), moves);
+        }
+    }
+    let _ = std::io::stdout().flush();
+    0
+}
+
+/// `0,42,512` or `0-99`, because a gate that names a seed list by hand should not
+/// have to spell out a hundred numbers.
+fn parse_seeds(text: &str) -> Result<Vec<u32>, String> {
+    if let Some((first, last)) = text.split_once('-') {
+        let first: u32 = first
+            .trim()
+            .parse()
+            .map_err(|_| format!("--seeds range {text:?} has a first seed that is not a number"))?;
+        let last: u32 = last
+            .trim()
+            .parse()
+            .map_err(|_| format!("--seeds range {text:?} has a last seed that is not a number"))?;
+        if last < first {
+            return Err(format!("--seeds range {text:?} ends before it starts"));
+        }
+        return Ok((first..=last).collect());
+    }
+    text.split(',')
+        .map(|seed| {
+            seed.trim()
+                .parse()
+                .map_err(|_| format!("--seeds entry {seed:?} is not a number"))
+        })
+        .collect()
+}
+
+/// The probe a run recorded, if any. All-or-nothing, because a probe is evidence:
+/// a width with no sample size is a number nobody can check, and a note with no
+/// probe is prose about nothing.
+fn overshoot(args: &Args) -> Result<Option<width::Overshoot>, String> {
+    let Some((width, ms_p90)) = args.overshoot else {
+        for (given, flag) in [
+            (args.overshoot_samples.is_some(), "--overshoot-samples"),
+            (args.overshoot_substrate.is_some(), "--overshoot-substrate"),
+            (args.overshoot_note.is_some(), "--overshoot-note"),
+        ] {
+            if given {
+                return Err(format!("{flag} needs --overshoot <width>=<p90_ms>"));
+            }
+        }
+        return Ok(None);
+    };
+    let samples = args.overshoot_samples.ok_or_else(|| {
+        "--overshoot needs --overshoot-samples <n>: a p90 without a sample size is not a measurement"
+            .to_string()
+    })?;
+    Ok(Some(width::Overshoot {
+        width,
+        substrate: match args.overshoot_substrate.unwrap_or(MsSource::Native) {
+            MsSource::Native => "native".to_string(),
+            MsSource::Wasm => "wasm".to_string(),
+        },
+        samples,
+        ms_p90,
+        note: args.overshoot_note.clone().unwrap_or_default(),
+    }))
+}
+
+/// `bench width-curve --summarise <artifact>`: re-derive the summary fields of a
+/// curve that is already on disk.
+///
+/// The measured series is the expensive part and the part this command may not
+/// touch, which is why it reparses the artifact, re-derives from what it found, and
+/// writes only if every byte outside the summary block is unchanged. It is the
+/// honest repair for a file whose derived fields were computed from the wrong list.
+fn summarise_curve(path: &Path, out: &Path, probe: Option<width::Overshoot>) -> Result<(), u8> {
+    match width::summarise_file(path, out, probe) {
+        Ok(report) => {
+            println!("summarised {}", path.display());
+            for (label, summary) in [("before", &report.before), ("after ", &report.after)] {
+                println!(
+                    "  {label} width_cap {} (bound {}), complete {}, missing [{}]",
+                    summary.width_cap,
+                    match summary.cap_bound {
+                        width::CapBound::Budget => "budget",
+                        width::CapBound::Schedule => "schedule",
+                    },
+                    summary.complete,
+                    summary
+                        .missing_widths
+                        .iter()
+                        .map(|width| width.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            if !report.after.incomplete_reason.is_empty() {
+                println!("  reason: {}", report.after.incomplete_reason);
+            }
+            println!(
+                "wrote {} ({} measured points, quality fingerprint {} — all unchanged)",
+                out.display(),
+                report.artifact.points.len(),
+                report.artifact.quality_fingerprint
+            );
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            Err(2)
+        }
+    }
+}
+
+/// §9.5: measure the width curve and write the artifact the page reads.
+///
+/// The numbers are measured, not asserted: `bench width-curve` is the only thing
+/// that writes `data/measurements/width-curve.json`. The command prints every
+/// point as it goes, so a run that is cut short leaves a partial artifact on disk
+/// that says which points it got.
+///
+/// `--summarise` is the one exception, and it is not a measurement: it re-derives
+/// the fields the artifact computes from its own evidence (which widths are
+/// missing, why the sweep stopped) and refuses to write if a measured number would
+/// move.
+fn width_curve(args: &Args) -> Result<(), u8> {
+    let probe = match overshoot(args) {
+        Ok(probe) => probe,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+    };
+
+    if let Some(path) = &args.summarise {
+        // Writing back over the artifact it was given is the point: a copied file
+        // is a different artifact, and the caller can still say `--out`.
+        let out = args.out.clone().unwrap_or_else(|| path.clone());
+        return summarise_curve(path, &out, probe);
+    }
+
+    let out = args.out.clone().unwrap_or_else(measurements_path);
+    let options = WidthOptions {
+        data: args.data.clone(),
+        out: out.clone(),
+        widths: args.widths.clone(),
+        trials: args.trials,
+        trial_seeds: args.seeds_per_trial,
+        quality_games: args.quality_games,
+        ms_source: args.ms,
+        engine_commit: engine_commit(),
+        machine: args.machine.clone().unwrap_or_else(machine_label),
+        runtime: runtime_label(),
+        reason: args
+            .reason
+            .clone()
+            .unwrap_or_else(|| "initial measurement for ticket 06 (§9.5)".to_string()),
+        quiet: false,
+        now_secs: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0),
+        overshoot: probe,
+    };
+
+    println!(
+        "width-curve: {} doubling points, {} trials x {} seeds, {} quality games, {} ms",
+        options.widths.len(),
+        options.trials,
+        options.trial_seeds,
+        options.quality_games,
+        match options.ms_source {
+            MsSource::Native => "native",
+            MsSource::Wasm => "wasm",
+        }
+    );
+    match width::run(&options) {
+        Ok(artifact) => {
+            println!(
+                "default_beam {} ({}, basis {}), width_cap {} (bound {}), quality axis {}",
+                artifact.default_beam,
+                match artifact.default_beam_source {
+                    width::DefaultSource::Tied => "tie",
+                    width::DefaultSource::SelfTie => "self",
+                },
+                artifact.default_beam_basis.as_str(),
+                artifact.width_cap,
+                match artifact.cap_bound {
+                    width::CapBound::Budget => "budget",
+                    width::CapBound::Schedule => "schedule",
+                },
+                artifact.quality_axis.as_str()
+            );
+            println!(
+                "wrote {} (quality fingerprint {})",
+                out.display(),
+                artifact.quality_fingerprint
+            );
+            println!(
+                "coverage: complete {}, missing [{}] — {}",
+                artifact.complete,
+                artifact
+                    .missing_widths
+                    .iter()
+                    .map(|width| width.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                if artifact.incomplete_reason.is_empty() {
+                    "every pre-registered doubling point was measured"
+                } else {
+                    &artifact.incomplete_reason
+                }
+            );
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            Err(2)
+        }
+    }
+}
+
+/// The commit the curve is measured against: `git rev-parse --short HEAD`, or a
+/// word that says the lookup failed rather than a lie.
+fn engine_commit() -> String {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+        _ => "unknown (git rev-parse failed)".to_string(),
+    }
+}
+
+/// §9.3: a p90 without a box is not a measurement, so the label travels with it.
+fn machine_label() -> String {
+    // §9.3: "a p90 without a box is not a measurement". Ask the operating system
+    // once, and say so plainly if it will not answer.
+    let script = "$c=Get-CimInstance Win32_Processor|Select-Object -First 1;$s=Get-CimInstance Win32_ComputerSystem;$o=Get-CimInstance Win32_OperatingSystem;'{0}|{1}|{2}|{3}|{4}' -f $c.Name.Trim(),$c.NumberOfCores,$c.NumberOfLogicalProcessors,[math]::Round($s.TotalPhysicalMemory/1GB,1),$o.Caption.Trim()";
+    if let Some(probe) = powershell(script) {
+        let fields: Vec<&str> = probe.split('|').collect();
+        if fields.len() == 5 {
+            return format!(
+                "{} ({}C/{}T), {} GB, {}",
+                fields[0], fields[1], fields[2], fields[3], fields[4]
+            );
+        }
+    }
+    let logical = std::thread::available_parallelism()
+        .map(|count| count.get().to_string())
+        .unwrap_or_else(|_| "?".to_string());
+    format!(
+        "unknown CPU ({} logical cores), {} {}",
+        logical,
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
+}
+
+fn powershell(script: &str) -> Option<String> {
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// What produced the numbers, on the box's own terms: the wasm path runs the
+/// artifact through V8 (node), which is the engine headless Chrome runs, without
+/// the DOM.
+fn runtime_label() -> String {
+    let node = std::process::Command::new("node").arg("--version").output();
+    let node = match node {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+        _ => "node (version unknown)".to_string(),
+    };
+    format!(
+        "{node} (V8: the engine headless Chrome runs, without the DOM); rustc 1.99.1 release bench",
+    )
+}
+
+// ------------------------------------------------------------------- tune
+
+/// `bench tune [flags]` and `bench tune --replay [<record>]` -- ticket 07.
+///
+/// Its own flag loop, like `gate` and `solve`, so the trainer cannot grow the
+/// Dataset commands' argument surface and the two cannot drift.
+fn tune_command(argv: &[String]) -> u8 {
+    let mut options = tuning::Options::defaults();
+    options.now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let mut replay: Option<Option<PathBuf>> = None;
+    let mut index = 0;
+    while index < argv.len() {
+        let flag = argv[index].to_string();
+        let outcome: Result<(), String> = (|| {
+            match flag.as_str() {
+                "--seed" => {
+                    let value =
+                        flag_value(argv, &mut index, &flag, "a u64 seed, decimal or 0x-hex")?;
+                    options.tune_seed = parse_u64(&value)
+                        .ok_or_else(|| format!("--seed: {value:?} is not a u64"))?;
+                }
+                "--bed" => {
+                    let value =
+                        flag_value(argv, &mut index, &flag, "a bed name like goal12-p100-cap7")?;
+                    options.bed = bed_from_name(&value)
+                        .ok_or_else(|| format!("--bed: unknown bed {value:?}"))?;
+                }
+                "--candidates" => {
+                    let value = flag_value(argv, &mut index, &flag, "a candidate count")?;
+                    options.params.candidates = value
+                        .parse()
+                        .map_err(|_| format!("--candidates must be a number, found {value:?}"))?;
+                }
+                "--games" => {
+                    let value = flag_value(argv, &mut index, &flag, "a games-per-candidate count")?;
+                    options.params.games_per_candidate = value
+                        .parse()
+                        .map_err(|_| format!("--games must be a number, found {value:?}"))?;
+                }
+                "--iterations" => {
+                    let value = flag_value(argv, &mut index, &flag, "an iteration count")?;
+                    options.params.iterations = value
+                        .parse()
+                        .map_err(|_| format!("--iterations must be a number, found {value:?}"))?;
+                }
+                "--data" => {
+                    options.data =
+                        PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?)
+                }
+                "--out" => {
+                    options.out = Some(PathBuf::from(flag_value(
+                        argv, &mut index, &flag, "a file",
+                    )?))
+                }
+                "--rows" => {
+                    options.rows_out = Some(PathBuf::from(flag_value(
+                        argv, &mut index, &flag, "a file",
+                    )?))
+                }
+                "--quiet" => options.quiet = true,
+                "--replay" => {
+                    // `--replay` takes an optional path; the committed record is
+                    // the default, which is the only case that matters.
+                    let path = argv
+                        .get(index + 1)
+                        .filter(|next| !next.starts_with("--"))
+                        .map(PathBuf::from);
+                    if path.is_some() {
+                        index += 1;
+                    }
+                    replay = Some(path);
+                }
+                other => return Err(format!("unknown argument {other:?}")),
+            }
+            Ok(())
+        })();
+        if let Err(message) = outcome {
+            eprintln!(
+                "error: {message}
+
+{USAGE}"
+            );
+            return 2;
+        }
+        index += 1;
+    }
+
+    if let Some(path) = replay {
+        let path = path.unwrap_or_else(tuning::record::record_path);
+        println!("tune --replay {}", path.display());
+        return match tuning::replay(&path, &options.data) {
+            Ok((committed, replayed, same)) => {
+                println!("committed table {committed}");
+                println!("replayed  table {replayed}");
+                if same {
+                    println!("reproducible: the committed seed draws the committed table");
+                    0
+                } else {
+                    eprintln!(
+                        "REPLAY MISMATCH: the committed seed does not draw the committed table"
+                    );
+                    1
+                }
+            }
+            Err(message) => {
+                eprintln!("error: {message}");
+                2
+            }
+        };
+    }
+
+    println!(
+        "tune: seed 0x{:016x}, bed {}, N={} G={} K={}, tuning Split only",
+        options.tune_seed,
+        options.bed.name(),
+        options.params.candidates,
+        options.params.games_per_candidate,
+        options.params.iterations
+    );
+    match tuning::run(&options) {
+        Ok(outcome) => {
+            println!(
+                "run {} {}: iterations {} ({}), table {}",
+                outcome.run,
+                outcome.decision,
+                outcome.iterations_run,
+                outcome.stop_reason,
+                outcome.table_fnv
+            );
+            for (name, stats) in &outcome.stats {
+                println!(
+                    "  {:<5} win {:.4} [{:.4}, {:.4}]  lines {:.4}  evals p50 {:.0} p90 {:.0}",
+                    name,
+                    stats.win_rate,
+                    stats.win_rate_ci95[0],
+                    stats.win_rate_ci95[1],
+                    stats.mean_lines,
+                    stats.evals_median,
+                    stats.evals_p90
+                );
+            }
+            println!(
+                "  e2 vs e1: b={} c={} p={:.3e}, lines delta {:+.4} [{:+.4}, {:+.4}], win-rate axis {}",
+                outcome.comparison.b,
+                outcome.comparison.c,
+                outcome.comparison.mcnemar_p,
+                outcome.comparison.mean_lines_delta,
+                outcome.comparison.mean_lines_ci95[0],
+                outcome.comparison.mean_lines_ci95[1],
+                outcome.win_rate_axis
+            );
+            println!(
+                "  wrote {} and {} ({} s)",
+                outcome.record_path.display(),
+                outcome.rows_path.display(),
+                outcome.wall_clock_seconds
+            );
+            if outcome.decision == "accepted" {
+                0
+            } else {
+                eprintln!(
+                    "REJECTED run {}: {} - {}",
+                    outcome.run,
+                    outcome.rejection_kind.clone().unwrap_or_default(),
+                    outcome.rejection_reason.clone().unwrap_or_default()
+                );
+                1
+            }
+        }
+        Err(message) => {
+            eprintln!("error: {message}");
+            2
+        }
+    }
+}
+
+/// Ticket 08's ladder: the goal scan, the paired statistics, the cascade that
+/// names the shipped Evaluator and the one-at-a-time toggles — all written to
+/// `data/measurements/ablation-ladder.json`, its per-seed rows and the rendered
+/// table in `docs/measurements/`.
+///
+/// `DEFAULT_BEAM`, the width cap and §9.1's saturation result are **read** from
+/// `data/measurements/width-curve.json`, never passed as a flag: the ladder cannot
+/// run at a width the curve did not choose, and it cannot re-decide a saturation
+/// check the curve already made.
+fn ladder_command(argv: &[String]) -> u8 {
+    match ladder_run(argv) {
+        Ok(()) => 0,
+        Err(code) => code,
+    }
+}
+
+fn ladder_run(argv: &[String]) -> Result<(), u8> {
+    let mut options = ladder::Options::defaults();
+    options.engine_commit = engine_commit();
+    options.machine = machine_label();
+    options.date = {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0);
+        width::iso_utc(seconds)
+    };
+    let mut width_curve_path = measurements_path();
+    let mut width_override: Option<u32> = None;
+    let mut index = 0;
+    while index < argv.len() {
+        let flag = argv[index].to_string();
+        let outcome: Result<(), String> = (|| {
+            match flag.as_str() {
+                "--width-curve" => {
+                    width_curve_path = PathBuf::from(flag_value(
+                        argv,
+                        &mut index,
+                        &flag,
+                        "the width-curve artifact",
+                    )?);
+                }
+                "--width" => {
+                    let value = flag_value(argv, &mut index, &flag, "a beam width")?;
+                    width_override = Some(
+                        value
+                            .parse()
+                            .map_err(|_| format!("--width must be a number, found {value:?}"))?,
+                    );
+                }
+                "--seeds" => {
+                    let value = flag_value(argv, &mut index, &flag, "a seed range like 1000-1999")?;
+                    let seeds = parse_seeds(&value)?;
+                    let first = *seeds.first().ok_or("--seeds is empty")?;
+                    let last = *seeds.last().ok_or("--seeds is empty")?;
+                    options.seeds = (first, last);
+                }
+                "--bed" => {
+                    let value = flag_value(argv, &mut index, &flag, "a bed name")?;
+                    options.bed = Some(parse_bed(&value)?);
+                }
+                "--scan-pieces" => {
+                    let value = flag_value(argv, &mut index, &flag, "a piece count")?;
+                    options.scan_pieces = value
+                        .parse()
+                        .map_err(|_| format!("--scan-pieces must be a number, found {value:?}"))?;
+                }
+                "--scan-cap" => {
+                    let value = flag_value(argv, &mut index, &flag, "a height cap")?;
+                    options.scan_cap = value
+                        .parse()
+                        .map_err(|_| format!("--scan-cap must be a number, found {value:?}"))?;
+                }
+                "--out" => {
+                    options.out =
+                        PathBuf::from(flag_value(argv, &mut index, &flag, "the artifact file")?);
+                }
+                "--rows" => {
+                    options.rows_path = PathBuf::from(flag_value(
+                        argv,
+                        &mut index,
+                        &flag,
+                        "the per-seed rows file",
+                    )?);
+                }
+                "--docs" => {
+                    options.docs_path =
+                        PathBuf::from(flag_value(argv, &mut index, &flag, "the rendered table")?);
+                }
+                "--machine" => {
+                    options.machine = flag_value(argv, &mut index, &flag, "a machine label")?;
+                }
+                other => return Err(format!("unknown argument {other:?}")),
+            }
+            Ok(())
+        })();
+        if let Err(message) = outcome {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+        index += 1;
+    }
+
+    let curve = match read_width_curve(&width_curve_path) {
+        Ok(curve) => curve,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+    };
+    options.width = width_override.unwrap_or(curve.default_beam);
+    options.width_cap = curve.width_cap;
+    options.quality_fingerprint = curve.quality_fingerprint;
+    options.saturation = curve.saturation;
+
+    println!(
+        "ladder: bed {}, DEFAULT_BEAM {}, Split {}-{}, {} resamples",
+        options.bed.map(|bed| bed.name()).unwrap_or_else(|| format!(
+            "derived at {} pieces and cap {}",
+            options.scan_pieces, options.scan_cap
+        )),
+        options.width,
+        options.seeds.0,
+        options.seeds.1,
+        ladder::BOOTSTRAP_RESAMPLES
+    );
+    match ladder::run(&options) {
+        Ok(outcome) => {
+            let artifact = &outcome.artifact;
+            for row in &artifact.scan {
+                println!(
+                    "  scan goal {:>3}: E0 {}/{} wins{}{}",
+                    row.goal,
+                    row.wins,
+                    row.games,
+                    if row.saturated() {
+                        ""
+                    } else {
+                        "  <-- below 99 %"
+                    },
+                    if row.wins == 0 { "  (unreachable)" } else { "" }
+                );
+            }
+            for row in &artifact.rows {
+                println!(
+                    "  {:<14} {:<14} {}/{} wins  lines {:.3}  evals p50 {:.0}  ms p50 {:.2}",
+                    row.id,
+                    row.table,
+                    row.stats.wins,
+                    row.stats.games,
+                    row.stats.mean_lines,
+                    row.stats.evals_median,
+                    row.stats.ms_median
+                );
+            }
+            for pair in artifact.pairs.iter().chain(artifact.toggle_pairs.iter()) {
+                println!(
+                    "  {} vs {}: b={} c={} n={} {}  lines delta {:+.4} [{:+.4}, {:+.4}]",
+                    pair.judged,
+                    pair.reference,
+                    pair.only_judged,
+                    pair.only_reference,
+                    pair.discordant.n(),
+                    if pair.rejects { "p<0.01" } else { "p>=0.01" },
+                    pair.delta_mean_lines,
+                    pair.ci95[0],
+                    pair.ci95[1]
+                );
+            }
+            for step in &artifact.verdict.steps {
+                println!("  cascade: {step}");
+            }
+            println!(
+                "  SHIPPED {} ({}) by {}; toggles deleted: [{}]",
+                artifact.verdict.winner,
+                artifact.row(artifact.verdict.winner).table,
+                artifact.verdict.leg.as_str(),
+                artifact
+                    .deleted_toggles()
+                    .iter()
+                    .map(|id| id.trim_end_matches("-off"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!(
+                "  wrote {}, {} and {}",
+                options.out.display(),
+                options.rows_path.display(),
+                options.docs_path.display()
+            );
+            Ok(())
+        }
+        Err(message) => {
+            eprintln!("error: {message}");
+            Err(2)
+        }
+    }
+}
+
+/// The parts of `data/measurements/width-curve.json` the ladder is not allowed to
+/// re-decide: `DEFAULT_BEAM`, the width cap, and §9.1's saturation pilot.
+struct CurveRef {
+    default_beam: u32,
+    width_cap: u32,
+    quality_fingerprint: String,
+    saturation: ladder::SatSummary,
+}
+
+fn read_width_curve(path: &Path) -> Result<CurveRef, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    let value = bench::json::parse(&text)?;
+    let number = |key: &str| -> Result<u32, String> {
+        value
+            .get(key)
+            .and_then(bench::json::Value::as_u32)
+            .ok_or_else(|| format!("{}: {key} is missing", path.display()))
+    };
+    let default_beam = number("default_beam")?;
+    let width_cap = number("width_cap")?;
+    let quality_fingerprint = value
+        .get("quality_fingerprint")
+        .and_then(bench::json::Value::as_str)
+        .unwrap_or("unrecorded")
+        .to_string();
+
+    let saturation = value
+        .get("saturation")
+        .ok_or_else(|| format!("{}: saturation is missing", path.display()))?;
+    let checked_at_width = saturation
+        .get("checked_at_width")
+        .and_then(bench::json::Value::as_u32)
+        .unwrap_or(0);
+    let mut beds = Vec::new();
+    if let Some(entries) = saturation
+        .get("beds")
+        .and_then(bench::json::Value::as_object)
+    {
+        for (name, entry) in entries {
+            let wins = entry
+                .get("wins")
+                .and_then(bench::json::Value::as_u32)
+                .unwrap_or(0);
+            let games = entry
+                .get("games")
+                .and_then(bench::json::Value::as_u32)
+                .unwrap_or(0);
+            beds.push((name.clone(), wins, games));
+        }
+    }
+    Ok(CurveRef {
+        default_beam,
+        width_cap,
+        quality_fingerprint,
+        saturation: ladder::SatSummary {
+            checked_at_width,
+            beds,
+            source: format!(
+                "{} (§9.1's pilot: both shipped beds, run at the width cap)",
+                path.display()
+            ),
+        },
+    })
+}
+
+/// `goal65-p160-cap7` as a bed. Not restricted to the two committed
+/// configurations: the ladder's bed is derived and is not one of them.
+fn parse_bed(name: &str) -> Result<width::Bed, String> {
+    let mut goal = None;
+    let mut pieces = None;
+    let mut cap = None;
+    for field in name.split('-') {
+        let split = field
+            .find(|c: char| c.is_ascii_digit())
+            .ok_or_else(|| format!("--bed: {field:?} has no number"))?;
+        let (prefix, value) = field.split_at(split);
+        let number: u32 = value
+            .parse()
+            .map_err(|_| format!("--bed: {field:?} is not a count"))?;
+        match prefix {
+            "goal" => goal = Some(number),
+            "p" => pieces = Some(number),
+            "cap" => cap = Some(number),
+            other => return Err(format!("--bed: unknown field {other:?}")),
+        }
+    }
+    match (goal, pieces, cap) {
+        (Some(goal), Some(pieces), Some(cap)) => Ok(width::Bed { goal, pieces, cap }),
+        _ => Err(format!(
+            "--bed: {name:?} is not a bed; the shape is goal<goal>-p<pieces>-cap<cap>"
+        )),
+    }
+}
+
+/// One flag's value: `argv[index + 1]`, with the flag named in the error.
+fn flag_value(
+    argv: &[String],
+    index: &mut usize,
+    flag: &str,
+    what: &str,
+) -> Result<String, String> {
+    *index += 1;
+    argv.get(*index)
+        .cloned()
+        .ok_or_else(|| format!("{flag} needs a value ({what})"))
+}
+
+fn parse_u64(text: &str) -> Option<u64> {
+    let trimmed = text.trim();
+    match trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        Some(hex) => u64::from_str_radix(hex, 16).ok(),
+        None => trimmed.parse().ok(),
+    }
+}
+
+fn bed_from_name(name: &str) -> Option<width::Bed> {
+    [width::Bed::GOAL8, width::Bed::GOAL12, width::Bed::GOAL16]
+        .into_iter()
+        .find(|bed| bed.name() == name)
+}
+
+// ------------------------------------------------ reference (ticket 09, §9.6)
+
+/// `bench reference [flags]` — §9.6's Reference run, measured, labelled and appended.
+///
+/// Its own flag loop, like `gate`, `solve`, `tune` and `ladder`, so the Dataset
+/// commands cannot grow an argument surface that writes a measured row.
+fn reference_command(argv: &[String]) -> u8 {
+    reference_run(argv).unwrap_or_else(|code| code)
+}
+
+fn reference_run(argv: &[String]) -> Result<u8, u8> {
+    let mut selected: Option<Vec<Config>> = None;
+    let mut data = dataset::root();
+    let mut split = reference::Split::TEST;
+    let mut width: Option<u32> = None;
+    let mut substrate = reference::Substrate::Wasm;
+    let mut wasm = reference::root().join(reference::WASM_ARTIFACT);
+    let mut cal = reference::CAL_DEFAULT;
+    let mut reason: Option<String> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut append = false;
+    let mut json = false;
+
+    let mut index = 0;
+    while index < argv.len() {
+        let flag = argv[index].to_string();
+        let outcome: Result<(), String> = (|| {
+            match flag.as_str() {
+                "--config" => {
+                    let value = flag_value(argv, &mut index, &flag, "a configuration name or all")?;
+                    if value == "all" {
+                        selected = Some(dataset::CONFIGS.to_vec());
+                    } else {
+                        let config = Config::from_name(&value).ok_or_else(|| {
+                            format!(
+                                "unknown configuration {value:?}; known: {}",
+                                dataset::CONFIGS
+                                    .iter()
+                                    .map(|config| config.dir)
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        })?;
+                        selected.get_or_insert_with(Vec::new).push(config);
+                    }
+                }
+                "--data" => {
+                    data = PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?)
+                }
+                "--split" => {
+                    let value = flag_value(argv, &mut index, &flag, "test or tuning")?;
+                    split = reference::Split::from_text(&value)?;
+                }
+                "--width" => {
+                    let value = flag_value(argv, &mut index, &flag, "a beam width")?;
+                    width = Some(
+                        value
+                            .parse()
+                            .map_err(|_| format!("--width must be a number, found {value:?}"))?,
+                    );
+                }
+                "--ms" => {
+                    let value = flag_value(argv, &mut index, &flag, "wasm or native")?;
+                    substrate = reference::Substrate::from_text(&value)?;
+                }
+                "--wasm" => {
+                    wasm = PathBuf::from(flag_value(argv, &mut index, &flag, "the wasm artifact")?)
+                }
+                "--cal" => {
+                    let value = flag_value(argv, &mut index, &flag, "a repeat count")?;
+                    cal = value
+                        .parse()
+                        .map_err(|_| format!("--cal must be a number, found {value:?}"))?;
+                }
+                "--reason" => {
+                    reason = Some(flag_value(argv, &mut index, &flag, "a one-line reason")?)
+                }
+                "--out" => {
+                    out = Some(PathBuf::from(flag_value(
+                        argv, &mut index, &flag, "a file",
+                    )?))
+                }
+                "--append" => append = true,
+                "--json" => json = true,
+                other => return Err(format!("unknown argument {other:?}")),
+            }
+            Ok(())
+        })();
+        if let Err(message) = outcome {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+        index += 1;
+    }
+    let configs = selected.unwrap_or_else(|| dataset::CONFIGS.to_vec());
+
+    // §9.6: "a re-measurement adds a dated entry with its reason". A row with no
+    // reason, or with a placeholder one, is a row nobody can review.
+    if append {
+        let reason_text = reason.as_deref().unwrap_or("").trim().to_string();
+        if reason_text.len() < 8 {
+            eprintln!(
+                "error: --append needs --reason \"<one line reason>\": every row says why it exists \
+                 (§9.6), and a re-measurement says what changed"
+            );
+            return Err(2);
+        }
+    }
+
+    // 1. The identity first: a row measured on games that are not the committed ones
+    //    would be a labelled lie.
+    let datasets = match reference::dataset_ids(&data) {
+        Ok(datasets) => datasets,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+    };
+
+    // 2. The width, from the artifact §9.5 makes the only authority.
+    let run_width = match width {
+        Some(width) => width,
+        None => match reference::width_from_curve(&reference::width_curve_path()) {
+            Ok(width) => width,
+            Err(message) => {
+                eprintln!("error: {message}");
+                return Err(2);
+            }
+        },
+    };
+    let engine = reference::engine_label(&wasm);
+    if engine.wasm_sha256.is_empty() || !wasm.exists() {
+        eprintln!(
+            "error: {} is missing; build it with `npm --prefix web run build:wasm` (or pass --wasm)",
+            wasm.display()
+        );
+        return Err(2);
+    }
+    let machine = reference::machine_label(substrate);
+    let measured_at = reference::now_iso();
+
+    println!(
+        "reference: {} configuration(s), Split {}, width {} ({}), {}, {}, {}{}",
+        configs.len(),
+        split.label(),
+        run_width,
+        if width.is_some() {
+            "flag"
+        } else {
+            "width-curve.json"
+        },
+        engine.short,
+        substrate.as_str(),
+        measured_at,
+        if engine.dirty {
+            " — WARNING: the engine tree is dirty, so the labelled commit does not describe this build"
+        } else {
+            ""
+        }
+    );
+
+    // 3. One configuration at a time: the two logs are separate files, so each row
+    //    joins its own chain.
+    let mut produced: Vec<reference::Row> = Vec::new();
+    for config in &configs {
+        let options = reference::MeasureOptions {
+            config: *config,
+            split,
+            width: Some(run_width),
+            substrate,
+            cal,
+            wasm: &wasm,
+        };
+        let measurement = match reference::measure(&options) {
+            Ok(measurement) => measurement,
+            Err(message) => {
+                eprintln!("error: {}: {message}", config.dir);
+                return Err(2);
+            }
+        };
+        let path = dataset::reference_path(&data, config);
+        let (next, previous) = match reference::next_index(&path) {
+            Ok(chain) => chain,
+            Err(message) => {
+                eprintln!("error: {message}");
+                return Err(2);
+            }
+        };
+        let labels = reference::RunLabels {
+            engine: engine.clone(),
+            machine: machine.clone(),
+            datasets: datasets.clone(),
+            measured_at: measured_at.clone(),
+            reason: reason
+                .clone()
+                .unwrap_or_else(|| "candidate Reference row (not appended)".to_string()),
+            first_index: next,
+            first_supersedes: previous,
+        };
+        let mut rows = reference::rows(&[measurement], &labels);
+        let row = rows.remove(0);
+        if json {
+            println!("{}", row.render());
+        } else {
+            println!(
+                "  {:<18} {}/{} wins, Wilson {:.6}–{:.6}, {} failure(s), evals p50 {} / p90 {}, \
+                 ms p50 {:.3} / p90 {:.3}, batch {:.0} ms",
+                config.dir,
+                row.stats.wins,
+                row.stats.n,
+                row.stats.wilson95[0],
+                row.stats.wilson95[1],
+                row.stats.n_fail,
+                row.stats.evals_p50,
+                row.stats.evals_p90,
+                row.stats.ms_p50,
+                row.stats.ms_p90,
+                row.stats.batch_ms
+            );
+        }
+
+        if append {
+            if let Err(message) = reference::append(&path, &row) {
+                eprintln!("error: {message}");
+                return Err(1);
+            }
+            println!("  appended index {} to {}", row.index, path.display());
+        }
+        produced.push(row);
+    }
+
+    if let Some(out) = out {
+        let mut text = String::new();
+        for row in &produced {
+            text.push_str(&row.render());
+            text.push('\n');
+        }
+        if let Err(error) = std::fs::write(&out, text) {
+            eprintln!("error: write {}: {error}", out.display());
+            return Err(2);
+        }
+        println!("  rows written to {}", out.display());
+    }
+
+    Ok(0)
+}
+
+// --------------------------------------------------- golden (ticket 09, §9.2)
+
+/// `bench golden check|update [flags]` — §9.2 gate 6's second half, and the one
+/// deliberate way to move it.
+fn golden_command(argv: &[String]) -> u8 {
+    golden_run(argv).unwrap_or_else(|code| code)
+}
+
+fn golden_run(argv: &[String]) -> Result<u8, u8> {
+    let Some(action) = argv.first().cloned() else {
+        eprintln!("error: bench golden wants `check` or `update`");
+        return Err(2);
+    };
+    if action != "check" && action != "update" {
+        eprintln!("error: bench golden wants `check` or `update`, found {action:?}");
+        return Err(2);
+    }
+    let mut data = dataset::root();
+    let mut substrate = reference::Substrate::Wasm;
+    let mut wasm = reference::root().join(reference::WASM_ARTIFACT);
+    let mut cal = reference::CAL_DEFAULT;
+    let mut reason: Option<String> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut json = false;
+
+    let mut index = 1;
+    while index < argv.len() {
+        let flag = argv[index].to_string();
+        let outcome: Result<(), String> = (|| {
+            match flag.as_str() {
+                "--data" => {
+                    data = PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?)
+                }
+                "--ms" => {
+                    let value = flag_value(argv, &mut index, &flag, "wasm or native")?;
+                    substrate = reference::Substrate::from_text(&value)?;
+                }
+                "--wasm" => {
+                    wasm = PathBuf::from(flag_value(argv, &mut index, &flag, "the wasm artifact")?)
+                }
+                "--cal" => {
+                    let value = flag_value(argv, &mut index, &flag, "a repeat count")?;
+                    cal = value
+                        .parse()
+                        .map_err(|_| format!("--cal must be a number, found {value:?}"))?;
+                }
+                "--reason" => {
+                    reason = Some(flag_value(argv, &mut index, &flag, "a one-line reason")?)
+                }
+                "--out" => {
+                    out = Some(PathBuf::from(flag_value(
+                        argv, &mut index, &flag, "a file",
+                    )?))
+                }
+                "--json" => json = true,
+                other => return Err(format!("unknown argument {other:?}")),
+            }
+            Ok(())
+        })();
+        if let Err(message) = outcome {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+        index += 1;
+    }
+
+    let datasets = match reference::dataset_ids(&data) {
+        Ok(datasets) => datasets,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+    };
+    let width = match reference::width_from_curve(&reference::width_curve_path()) {
+        Ok(width) => width,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+    };
+    let engine = reference::engine_label(&wasm);
+    let machine = reference::machine_label(substrate);
+    let identity = golden::identity(engine.clone(), machine.clone(), datasets.clone(), width);
+
+    // The same code path the Reference run takes, so the gate and a row cannot
+    // disagree about what "the evaluations-to-solve vector" is.
+    let mut measurements = Vec::new();
+    for config in dataset::CONFIGS {
+        let options = reference::MeasureOptions {
+            config,
+            split: reference::Split::TEST,
+            width: Some(width),
+            substrate,
+            cal,
+            wasm: &wasm,
+        };
+        match reference::measure(&options) {
+            Ok(measurement) => measurements.push(measurement),
+            Err(message) => {
+                eprintln!("error: {}: {message}", config.dir);
+                return Err(2);
+            }
+        }
+    }
+
+    let path = reference::golden_path();
+    if action == "check" {
+        let checks = match golden::load(&path) {
+            Ok(golden) => golden::checks(&golden, &identity, &measurements),
+            Err(message) => vec![gate::Check::fail("golden evaluations")
+                .subject(message)
+                .hint(
+                "pin the golden with `bench golden update --reason \"…\"` after a Reference run \
+                     has been appended (§9.6)",
+            )],
+        };
+        let mut report = gate::Report::new(
+            6,
+            "evaluations-to-solve fingerprint",
+            format!(
+                "split {}, width {}, {}, {}",
+                reference::Split::TEST.label(),
+                width,
+                engine.short,
+                substrate.as_str()
+            ),
+        );
+        for check in checks {
+            report.push(check);
+        }
+        println!("{}", report.render_with(std::io::stdout().is_terminal()));
+        return Ok(report.exit_code());
+    }
+
+    // `update`: pinned from a committed row, never from an unrecorded run.
+    let reason_text = reason.as_deref().unwrap_or("").trim().to_string();
+    if reason_text.len() < 8 {
+        eprintln!(
+            "error: --reason \"<one line reason>\" is required: the golden's diff is the reason"
+        );
+        return Err(2);
+    }
+    let previous = golden::load(&path).ok();
+    let mut reference_rows: Vec<(String, String)> = Vec::new();
+    for config in dataset::CONFIGS {
+        let log = dataset::reference_path(&data, &config);
+        let rows = match reference::read(&log) {
+            Ok(rows) => rows,
+            Err(message) => {
+                eprintln!("error: {message}");
+                return Err(2);
+            }
+        };
+        let dataset_id = datasets
+            .iter()
+            .find(|(name, _)| name == config.dir)
+            .map(|(_, id)| id.clone())
+            .unwrap_or(reference::DatasetId {
+                fingerprint: String::new(),
+                generator_version: 0,
+            });
+        let row = rows.iter().rev().find(|row| {
+            row.behaviour.width == width
+                && row.dataset.fingerprint == dataset_id.fingerprint
+                && row.engine.wasm_sha256 == engine.wasm_sha256
+        });
+        let Some(row) = row else {
+            eprintln!(
+                "error: {}: no committed Reference row at width {width} on this Dataset and engine — \
+                 the golden is pinned *from* a recorded measurement, so run `bench reference \
+                 --append --reason \"…\"` first (§9.6)",
+                config.dir
+            );
+            return Err(1);
+        };
+        let measurement = measurements
+            .iter()
+            .find(|measurement| measurement.config.dir == config.dir)
+            .expect("a measurement per configuration");
+        if row.fingerprints.evals_fnv1a64 != measurement.evals_fingerprint()
+            || row.fingerprints.lines_fnv1a64 != measurement.lines_fingerprint()
+        {
+            eprintln!(
+                "error: {}: the committed row {} does not carry this run's vectors (digest {} vs \
+                 {}); append a fresh row before re-pinning the golden",
+                config.dir,
+                row.index,
+                row.fingerprints.evals_fnv1a64,
+                measurement.evals_fingerprint()
+            );
+            return Err(1);
+        }
+        reference_rows.push((config.dir.to_string(), row.run_id.clone()));
+    }
+
+    let generated_at = reference::now_iso();
+    let build_labels = reference::RunLabels {
+        engine: engine.clone(),
+        machine: machine.clone(),
+        datasets: datasets.clone(),
+        measured_at: generated_at.clone(),
+        reason: reason_text.clone(),
+        first_index: 0,
+        first_supersedes: None,
+    };
+    let mut next = golden::from_measurements(
+        &measurements,
+        &build_labels,
+        &reference_rows,
+        &generated_at,
+        &reason_text,
+        previous.as_ref().map(|golden| golden.generated_at.clone()),
+    );
+    next.refresh();
+    let text = golden::render(&next);
+    let target = out.unwrap_or(path);
+    if let Err(error) = std::fs::write(&target, &text) {
+        eprintln!("error: write {}: {error}", target.display());
+        return Err(2);
+    }
+
+    let mut moved = 0usize;
+    if let Some(previous) = &previous {
+        for config in dataset::CONFIGS {
+            if let (Some((before, _)), Some((after, _))) =
+                (previous.vectors(config.dir), next.vectors(config.dir))
+            {
+                moved += before
+                    .iter()
+                    .zip(after.iter())
+                    .filter(|(left, right)| left != right)
+                    .count();
+            }
+        }
+    }
+    for entry in &next.configs {
+        println!(
+            "  {:<18} evals {}  lines {}",
+            entry.config.dir, entry.evals_fnv1a64, entry.lines_fnv1a64
+        );
+    }
+    println!(
+        "golden written to {}{} (reason: {reason_text})",
+        target.display(),
+        if previous.is_some() {
+            format!(", {moved} seed(s) moved from the previous golden")
+        } else {
+            String::new()
+        }
+    );
+    if json {
+        println!("{}", text.len());
+    }
+    Ok(0)
+}

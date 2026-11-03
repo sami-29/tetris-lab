@@ -1,0 +1,1688 @@
+/* The workbench shell: five regions, no page scroll, growing into the viewport.
+ *
+ * The grid is notes/14 §1.1's contract, and every number in it is load-bearing:
+ *
+ *   columns  236px · minmax(0,1fr) · clamp(420px, 24vw, 620px)
+ *   rows      48px · minmax(0,1fr) · 28px
+ *
+ * The rail is 236 because the Playground's four fields and the Engine's eight Weights
+ * fit it; the inspector is 420–620 and **not** the mockup's 326 because at 326 the
+ * per-layer pitch falls to 13.6 px, under the 14 px floor ticket 12 sets, which would
+ * force the default game into a Layer window at 1440×900. The rows are 48/28 rather
+ * than the mockup's 42/24 because tickets 11 and 12 both measured their own vertical
+ * arithmetic against 48/28 and re-deriving it would be re-opening ticket 12.
+ *
+ * No page scroll is arithmetic, not a hope: the row tracks sum to 100vh, the column
+ * tracks to 100vw, `html, body` are `overflow: hidden`, and every flexible child
+ * carries `min-height: 0; min-width: 0` — which is why `[data-region]` sets both.
+ * A region that overflows scrolls *inside itself* and says so with a mask; the
+ * document never moves.
+ */
+
+#app {
+  display: grid;
+  height: 100vh;
+  grid-template-columns: 236px minmax(0, 1fr) clamp(420px, 24vw, 620px);
+  grid-template-rows: 48px minmax(0, 1fr) 28px;
+  grid-template-areas:
+    "bar bar bar"
+    "rail stage inspect"
+    "status status status";
+  background: var(--line);
+  /* No gap: the three row tracks must sum to 100vh exactly (48 + 1fr + 28) and the
+     three column tracks to 100vw, because that is the arithmetic that makes
+     "no page scroll" a property of the layout rather than a hope (notes/14 §1.1).
+     The 1 px separators are borders on the regions, which do not consume a track. */
+  gap: 0;
+}
+
+[data-region="rail"] {
+  border-right: 1px solid var(--line);
+}
+
+[data-region="inspector"] {
+  border-left: 1px solid var(--line);
+}
+
+[data-region] {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+[data-region="toolbar"] {
+  grid-area: bar;
+}
+
+[data-region="rail"] {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+[data-region="centre"] {
+  grid-area: stage;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 1px;
+  overflow: hidden;
+}
+
+[data-region="inspector"] {
+  grid-area: inspect;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+[data-region="status"] {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--bar);
+  border-top: 1px solid var(--line);
+  font: var(--fs-chip) / 1 var(--mono);
+  color: var(--ink4);
+  white-space: nowrap;
+}
+
+/* ══ toolbar ══════════════════════════════════════════════════════════════ */
+
+.bar {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  background: var(--bar);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 0 12px;
+  border-right: 1px solid var(--line);
+}
+
+.brandtext {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.brandtext span {
+  font: var(--fs-micro) / 1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink4);
+}
+
+.bar .fields {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.bar .field {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 11px;
+  border-right: 1px solid var(--line);
+  transition: background var(--t-hover) linear;
+}
+
+.bar .field:hover {
+  background: var(--panel2);
+}
+
+.bar .field .fig {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.bar .field .fig .num {
+  min-width: 0;
+  font-size: var(--fs-body);
+}
+
+.bar .field .fig .unit {
+  display: none;
+}
+
+.baractions {
+  margin-left: auto;
+  display: flex;
+  align-items: stretch;
+}
+
+.tbtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 13px;
+  border-left: 1px solid var(--line);
+  font: 500 var(--fs-data) / 1 var(--sans);
+  color: var(--ink2);
+  transition: background var(--t-hover) linear, color var(--t-hover) linear;
+}
+
+.tbtn:hover {
+  background: var(--panel2);
+  color: var(--ink);
+}
+
+.tbtn.go {
+  color: var(--on-amber);
+  background: var(--amber);
+  font-weight: 600;
+}
+
+.tbtn.go:hover {
+  background: var(--amber-hi);
+}
+
+.tbtn:disabled {
+  color: var(--ink4);
+  cursor: default;
+}
+
+.tbtn:disabled:hover {
+  background: none;
+  color: var(--ink4);
+}
+
+.clock {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 14px;
+  border-left: 1px solid var(--line);
+  min-width: 0;
+  max-width: 34%;
+}
+
+.clock p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#outcome {
+  font: 500 var(--fs-data) / 1.2 var(--mono);
+  color: var(--ink);
+}
+
+#outcome[data-outcome="lost"] {
+  color: var(--ink2);
+}
+
+#outcome[data-outcome="solving"] {
+  color: var(--ink2);
+}
+
+#status {
+  font: var(--fs-chip) / 1.2 var(--mono);
+  color: var(--ink4);
+}
+
+#status[data-tone="error"] {
+  color: var(--amber);
+}
+
+.dot {
+  display: none;
+}
+
+.clock {
+  position: relative;
+}
+
+.clock::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--teal2);
+}
+
+#outcome[data-outcome="solved"] ~ * {
+  color: inherit;
+}
+
+#app[data-solving="false"] .clock::before {
+  background: var(--ink4);
+}
+
+/* ══ left rail ════════════════════════════════════════════════════════════ */
+
+#panel-playground {
+  flex: 0 0 auto;
+}
+
+#panel-engine {
+  flex: 0 0 auto;
+}
+
+#panel-run {
+  flex: 1 1 auto;
+  min-height: 170px;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 9px 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+.rows .fig {
+  white-space: normal;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 18px;
+}
+
+.row .fig {
+  flex: 1;
+  justify-content: space-between;
+}
+
+.row .fig .flabel {
+  color: var(--ink3);
+  white-space: normal;
+}
+
+.row .fig .num {
+  color: var(--ink);
+}
+
+.rows .note {
+  margin: 4px 0 0;
+  font: var(--fs-chip) / 1.45 var(--sans);
+  color: var(--ink4);
+}
+
+#engine-weights[hidden] {
+  display: none;
+}
+
+#expert .chev {
+  transition: transform var(--t-hover) linear;
+}
+
+#expert[aria-expanded="true"] .chev {
+  transform: rotate(180deg);
+}
+
+/* Ticket 13's Playground, re-skinned. Its behaviour — commit, clamp, re-solve — is
+   untouched; only the geometry inside this 236 px rail is ours. */
+#playground {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 9px 9px;
+  min-height: 0;
+}
+
+#playground .legend {
+  margin: 0;
+  font: 600 var(--fs-micro) / 1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink4);
+}
+
+#playground .presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--line);
+}
+
+#playground .presets .presets-label {
+  display: none;
+}
+
+#playground .presets button {
+  padding: 6px 0;
+  background: var(--panel2);
+  border: 0;
+  border-radius: 0;
+  font: 500 var(--fs-data) / 1 var(--sans);
+  color: var(--ink2);
+  transition: background var(--t-hover) linear, color var(--t-hover) linear;
+}
+
+#playground .presets button:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+#playground .presets button[aria-pressed="true"],
+#playground .presets button[data-current="true"] {
+  background: rgba(224, 163, 62, 0.14);
+  color: var(--amber);
+  box-shadow: inset 0 -1px 0 var(--amber);
+}
+
+#playground .fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 9px;
+  align-items: end;
+}
+
+#playground .fields label {
+  grid-column: 1 / -1;
+  font: var(--fs-chip) / 1.2 var(--mono);
+  letter-spacing: 0.06em;
+  color: var(--ink3);
+  display: block;
+  margin-bottom: 2px;
+}
+
+#playground .fields input[type="number"] {
+  width: 100%;
+  grid-column: 1 / -1;
+}
+
+/* One field per row, label above the control, in the rail's width. */
+#playground .fields > * {
+  min-width: 0;
+}
+
+#playground .fields label + input[type="number"] {
+  grid-column: 1 / -1;
+}
+
+#playground label {
+  color: var(--ink3);
+}
+
+#playground .beam {
+  grid-column: 1 / -1;
+  position: relative;
+  display: block;
+  padding-bottom: 7px;
+}
+
+#playground #beam {
+  width: 100%;
+  display: block;
+}
+
+#playground .beam .tick {
+  position: absolute;
+  top: 4px;
+  bottom: 11px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--amber);
+  pointer-events: none;
+  /* The tick is a 2 px mark; its words are the readout's ("default 25") and its
+     title's. A 2 px box cannot hold them, so they are not painted. */
+  font-size: 0;
+  color: transparent;
+}
+
+#beam-readout {
+  grid-column: 1 / -1;
+  font: var(--fs-chip) / 1.2 var(--mono);
+  color: var(--ink4);
+}
+
+/* ══ centre ═══════════════════════════════════════════════════════════════ */
+
+.boardpanel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.boardpanel .phead {
+  flex: 0 0 30px;
+  height: 30px;
+}
+
+#layer-line {
+  color: var(--ink2);
+  font: var(--fs-chip) / 1 var(--mono);
+}
+
+.piece-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--teal2);
+}
+
+.piece-now .word {
+  font: 500 var(--fs-micro) / 1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink4);
+}
+
+.boardbody {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) clamp(380px, calc(100% - 620px), 1040px);
+  gap: 8px;
+  padding: 8px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.gutter {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 1px 2px 1px 0;
+  font: var(--fs-micro) / 1 var(--mono);
+  color: var(--ink4);
+  pointer-events: none;
+  user-select: none;
+}
+
+.gutter i {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.cvwrap {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  min-width: 0;
+}
+
+#board {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--board);
+  border: 1px solid var(--line2);
+  border-radius: 2px;
+}
+
+/* ── the readout ───────────────────────────────────────────────────────── */
+
+.readout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 0 18px;
+  border-left: 1px solid var(--line);
+  padding-left: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* Above the readout's 560 px break the six panes are two columns of three, so a
+   1040 px column of labels is never a label at the left edge and its value at the
+   right. This is the difference between "deliberate at 2560" and "loose" (notes/14
+   §1.3); at 1440×900 the readout is 380 and stays one column. */
+@media (min-width: 1800px) {
+  .readout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    /* Three rows that share the column's height, so 1040 × 1240 is composed rather
+       than a stack that stopped. The picture panes take the slack. */
+    grid-auto-rows: minmax(min-content, 1fr);
+  }
+
+  .readout .ro-body {
+    flex: 1 1 auto;
+  }
+
+  .readout .fig-picture,
+  .readout .spark {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 44px;
+  }
+}
+
+.ro-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ro-sec {
+  margin: 12px 0 5px;
+}
+
+.ro-sec:first-child {
+  margin-top: 0;
+}
+
+.ro-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.ro-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font: var(--fs-chip) / 1.45 var(--mono);
+  color: var(--ink3);
+}
+
+.ro-line .fig {
+  flex: 1;
+  justify-content: space-between;
+}
+
+.ro-line .fig .flabel {
+  white-space: normal;
+}
+
+.ro-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  margin-top: 3px;
+  padding-top: 6px;
+}
+
+.ro-total .fig .num {
+  color: var(--amber);
+  font-size: var(--fs-body);
+}
+
+.ro-empty {
+  margin: 0;
+  font: var(--fs-chip) / 1.5 var(--sans);
+  color: var(--ink4);
+}
+
+/* the ten-column profile */
+.cols {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 3px;
+  height: 72px;
+  align-items: end;
+}
+
+.cols .c {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 100%;
+  gap: 1px;
+}
+
+.cols .c b {
+  display: block;
+  background: var(--teal);
+  border-radius: 1px;
+  min-height: 0;
+  transition: height var(--t-bar) var(--ease-bar);
+}
+
+.cols .c u {
+  display: block;
+  height: 2px;
+  background: var(--amber);
+  border-radius: 1px;
+}
+
+.caps {
+  margin-top: 2px;
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 3px;
+  font: var(--fs-micro) / 1 var(--mono);
+  color: var(--ink4);
+  text-align: center;
+  margin-top: 3px;
+}
+
+/* this placement */
+.place {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 1px 10px;
+}
+
+.place .fig {
+  display: contents;
+}
+
+.place .fig .flabel {
+  font: var(--fs-chip) / 1.5 var(--mono);
+  color: var(--ink3);
+}
+
+.place .fig .num {
+  text-align: right;
+}
+
+/* next four */
+.nxt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.nxt .seq {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--panel2);
+  color: var(--teal2);
+}
+
+.nxt .seq .glyph {
+  opacity: 0.85;
+}
+
+/* this layer's counts: label left, value right */
+.ro-layer {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ro-layer .fig {
+  display: flex;
+  justify-content: space-between;
+}
+
+/* score across layers */
+.spark {
+  height: 44px;
+  min-height: 0;
+}
+
+.spark svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.spark .axis {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.spark .line {
+  fill: none;
+  stroke: var(--teal2);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.spark .dot {
+  display: block;
+  fill: var(--amber);
+}
+
+/* ── move strip and transport ──────────────────────────────────────────── */
+
+.stagepanel {
+  flex: 0 0 auto;
+}
+
+.stripwrap {
+  position: relative;
+  height: 34px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  overflow: hidden;
+}
+
+#strip {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line);
+  cursor: pointer;
+  touch-action: none;
+}
+
+#strip:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: -1px;
+}
+
+#strip i {
+  position: relative;
+  display: block;
+  background: var(--panel2);
+  transition: background var(--t-hover) linear;
+}
+
+#strip i[data-played="true"] {
+  background: var(--played);
+}
+
+#strip i[data-current="true"] {
+  background: rgba(224, 163, 62, 0.18);
+  box-shadow: inset 0 -2px 0 var(--amber);
+}
+
+#strip i[data-clears="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--amber);
+}
+
+#strip i[data-empty="true"] {
+  grid-column: 1 / -1;
+  font: var(--fs-chip) / 34px var(--mono);
+  color: var(--ink4);
+  text-align: center;
+  background: var(--panel2);
+}
+
+#caret {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+  pointer-events: none;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 9px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+
+.transport .tbtn {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line2);
+  border-radius: 2px;
+  font: 500 var(--fs-chip) / 1 var(--sans);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.transport .tbtn.play {
+  color: var(--on-amber);
+  background: var(--amber);
+  border-color: var(--amber-edge);
+}
+
+.transport .tbtn.play:hover {
+  background: var(--amber-hi);
+}
+
+.spd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.spd label {
+  font: var(--fs-chip) / 1 var(--mono);
+  color: var(--ink3);
+}
+
+#speed {
+  width: 150px;
+}
+
+#speed-readout {
+  font: var(--fs-chip) / 1 var(--mono);
+  color: var(--ink2);
+  white-space: nowrap;
+}
+
+#progress {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  font: var(--fs-chip) / 1 var(--mono);
+  color: var(--ink3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ══ inspector ════════════════════════════════════════════════════════════ */
+
+.bandpanel {
+  flex: 0 0 auto;
+  min-height: 140px;
+}
+
+#band {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+#band-caption {
+  margin: 0;
+  padding: 3px 9px 4px;
+  font: var(--fs-micro) / 1.35 var(--sans);
+  color: var(--ink4);
+  /* One line: the whole sentence is in the element's tooltip, and the band needs the
+     height more than the caption does. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 4px 9px;
+  border-top: 1px solid var(--line);
+  font: var(--fs-micro) / 1 var(--mono);
+  color: var(--ink4);
+}
+
+.legend i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+
+.legend .ln {
+  color: var(--amber);
+}
+
+.legend .ln i {
+  background: var(--amber);
+}
+
+.legend .t3 i {
+  background: var(--tier3);
+}
+
+.legend .t2 i {
+  background: var(--ink4);
+}
+
+.legend .t1 i {
+  background: var(--ink2);
+}
+
+#band-counts {
+  margin: 0;
+  padding: 4px 9px 6px;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 0 10px;
+  font: var(--fs-micro) / 1.6 var(--mono);
+  color: var(--ink4);
+  /* One row of Layers at a time: the band above it is the picture, and the per-layer
+     table is where the whole list belongs. */
+  max-height: 44px;
+  overflow: auto;
+}
+
+#band-counts li[data-lineage="true"] {
+  color: var(--amber);
+}
+
+/* The inspector's two views. Ticket 12's `ui/tree-panel.ts` owns the switch, so it
+   sits above both panels and stays visible whichever view is on screen: the band is
+   the default and the tree is the drill-down, and the band *is* the beam, so neither
+   button says "band" (notes/12 §1.2). */
+#views {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bar);
+}
+
+#views button {
+  font: var(--fs-chip) / 1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  color: var(--ink3);
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  cursor: pointer;
+  transition:
+    background var(--t-hover) linear,
+    color var(--t-hover) linear,
+    border-color var(--t-hover) linear;
+}
+
+#views button:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+#views button[data-selected="true"] {
+  color: var(--ink);
+  border-color: var(--teal);
+  background: var(--panel3);
+}
+
+/* The tree takes the inspector while it is open, rather than a slice of it: at 24
+   states per Layer the pitch is the legibility budget (notes/12 §3.2), and stacking
+   it under the band would put the rows below the floor. So while the tree is the
+   view, the per-layer table keeps a few rows instead of half the column. */
+.treepanel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* While the tree is the view it *is* the inspector's picture, and at 1440×900 the
+   row pitch is the budget (notes/12 §3.2: 24 states need the pane, not a slice of
+   it), so the per-layer table yields to it — it lists the same Layers, and the band
+   view has it back the moment the view switches. The log stays: it is the record of
+   what happened, not a second list of Layers. */
+.inspector:has(#band-panel[hidden]) .layerpanel {
+  display: none;
+}
+
+/* `hidden` must win over a panel's own `display: flex`, or the hidden view keeps its
+   half of the inspector and squeezes the visible one to nothing. */
+.bandpanel[hidden],
+.treepanel[hidden] {
+  display: none;
+}
+
+#tree-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  font: var(--fs-chip) / 1 var(--mono);
+  color: var(--ink4);
+}
+
+#tree-bound {
+  flex: 1 1 auto;
+  min-width: 80px;
+  accent-color: var(--teal2);
+}
+
+#tree-bound-readout {
+  font: var(--fs-data) / 1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink2);
+  white-space: nowrap;
+}
+
+#tree-caption {
+  margin: 0;
+  padding: 0 9px 4px;
+  font: var(--fs-micro) / 1.35 var(--sans);
+  color: var(--ink4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#tree {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  cursor: crosshair;
+  background: radial-gradient(120% 90% at 50% 0%, var(--panel3), rgba(18, 21, 23, 0));
+}
+
+#tree-legend {
+  margin: 0;
+  padding: 4px 9px;
+  flex: 0 0 auto;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  border-top: 1px solid var(--line);
+  font: var(--fs-micro) / 1 var(--mono);
+  color: var(--ink4);
+}
+
+/* The selected state's card: the Board, then its facts. It yields height first, so
+   the tree keeps its rows (notes/12 §3.2). */
+#tree-state {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 4px 9px 6px;
+  min-height: 0;
+}
+
+#tree-board {
+  display: block;
+  flex: 0 0 auto;
+  background: var(--board);
+  border: 1px solid var(--line);
+}
+
+#tree-board[hidden] {
+  display: none;
+}
+
+#tree-facts {
+  margin: 0;
+  font: var(--fs-micro) / 1.5 var(--sans);
+  color: var(--ink3);
+}
+
+.layerpanel {
+  flex: 1 1 auto;
+  min-height: 96px;
+}
+
+.tablewrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+#layers {
+  width: 100%;
+  border-collapse: collapse;
+  font: var(--fs-data) / 1.3 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tablewrap {
+  overflow-x: hidden;
+}
+
+#layers thead th {
+  padding: 4px 6px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  text-align: right;
+  border-bottom: 1px solid var(--line);
+  font: 600 var(--fs-micro) / 1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink4);
+  white-space: nowrap;
+}
+
+#layers thead th:first-child,
+#layers thead th:nth-child(2) {
+  text-align: left;
+}
+
+#layers tbody td {
+  padding: 2px 6px;
+  text-align: right;
+  border-bottom: 1px solid var(--rowline);
+  color: var(--ink2);
+}
+
+#layers tbody td:first-child {
+  text-align: left;
+  color: var(--ink3);
+}
+
+#layers tbody td.piece {
+  text-align: left;
+  color: var(--teal2);
+}
+
+#layers tbody tr[data-current="true"] td {
+  background: rgba(224, 163, 62, 0.12);
+  color: var(--ink);
+}
+
+#layers tbody tr {
+  animation: rowIn 160ms ease-out;
+}
+
+#layers tbody td.empty {
+  text-align: left;
+  color: var(--ink4);
+  font: var(--fs-chip) / 1.5 var(--sans);
+  padding: 6px 9px;
+}
+
+@keyframes rowIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.logpanel {
+  flex: 0 0 auto;
+  height: 96px;
+  min-height: 96px;
+}
+
+#log {
+  margin: 0;
+  padding: 5px 9px 6px;
+  list-style: none;
+  font: var(--fs-chip) / 1.7 var(--mono);
+  color: var(--ink3);
+  overflow: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+#log li {
+  display: flex;
+  gap: 7px;
+}
+
+#log li time {
+  color: var(--ink4);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#log li[data-tone="error"] {
+  color: var(--amber);
+}
+
+#log li[data-current="true"] {
+  color: var(--ink);
+}
+
+/* ══ status bar ═══════════════════════════════════════════════════════════ */
+
+.statusbar .grp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  height: 100%;
+  border-right: 1px solid var(--line);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.statusbar .right {
+  margin-left: auto;
+  border-right: 0;
+  border-left: 1px solid var(--line);
+  color: var(--ink3);
+}
+
+.statusbar .kbdmap {
+  gap: 10px;
+  color: var(--ink4);
+}
+
+.statusbar .kbdmap span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.statusbar .fig .flabel {
+  font: var(--fs-micro) / 1 var(--mono);
+  color: var(--ink3);
+}
+
+.statusbar .fig .num {
+  font: 500 var(--fs-data) / 1 var(--mono);
+  color: var(--ink2);
+}
+
+.statusbar .fig .unit {
+  font: var(--fs-micro) / 1 var(--mono);
+  color: var(--ink4);
+}
+
+/* ══ the Explainer drawer, its scrim, and the keyboard sheet ══════════════ */
+
+#scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 6, 7, 0.6);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-scrim) ease;
+  z-index: 40;
+}
+
+#scrim[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(520px, 46vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--drawer);
+  border-left: 1px solid var(--line2);
+  transform: translateX(100%);
+  transition: transform var(--t-drawer) var(--ease-drawer);
+  z-index: 50;
+  box-shadow: -24px 0 48px rgba(0, 0, 0, 0.35);
+}
+
+#drawer[data-open="true"] {
+  transform: none;
+}
+
+.dhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 42px;
+  height: 42px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dhead .t {
+  font: 600 var(--fs-chip) / 1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink2);
+}
+
+.dhead .close {
+  margin-left: auto;
+}
+
+.dbody {
+  padding: 14px 16px 18px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.dbody h3 {
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+
+.dbody h3:not(:first-child) {
+  margin-top: 18px;
+}
+
+.dbody p {
+  margin: 0 0 8px;
+  color: var(--ink2);
+}
+
+/* Ticket 16's prose: a bold run-in lead instead of an <h3> block (a heading costs
+   two lines each in a fixed-height panel), a dotted-underline fact whose tooltip
+   names the artifact it came from, and the Weight block as two columns of four. */
+.dbody p > b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.dbody .fig {
+  color: var(--ink);
+  border-bottom: 1px dotted var(--line2);
+  cursor: help;
+}
+
+.dbody .weights {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 12px;
+  margin-top: 2px;
+  font: var(--fs-chip) / 1.4 var(--mono);
+  color: var(--ink2);
+}
+
+.dbody .weights .wpair {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: help;
+}
+
+.dbody .weights .wname {
+  color: var(--ink3);
+}
+
+.dbody .weights .num {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.dbody .note {
+  border-left: 2px solid var(--amber-dim);
+  padding-left: 9px;
+  color: var(--ink3);
+  font: var(--fs-body) / 1.6 var(--sans);
+}
+
+.dbody code {
+  font: var(--fs-data) / 1 var(--mono);
+  color: var(--teal2);
+  background: var(--code);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+#sheet[data-open="false"] {
+  display: none;
+}
+
+#sheet dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 14px;
+  font: var(--fs-body) / 1.45 var(--sans);
+}
+
+#sheet dt {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  color: var(--amber);
+}
+
+#sheet dd {
+  margin: 0;
+  color: var(--ink2);
+}
+
+/* ══ the tooltip: one element, fixed, never clipped by a scrolling region ══ */
+
+#tip {
+  position: fixed;
+  z-index: 60;
+  max-width: 300px;
+  padding: 5px 8px;
+  background: var(--tipbg);
+  border: 1px solid var(--line2);
+  border-radius: 2px;
+  color: var(--ink);
+  font: 500 var(--fs-chip) / 1.4 var(--sans);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity var(--t-tip) ease-out, transform var(--t-tip) ease-out;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+#tip[data-open="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+#tip:empty {
+  display: none;
+}
+
+/* ══ below the design floor: panels scroll inside themselves, never the page ══ */
+
+@media (max-height: 860px) {
+  .readout {
+    gap: 0;
+  }
+
+  .cols {
+    height: 72px;
+  }
+
+  .spark {
+    height: 40px;
+  }
+
+  .boardbody {
+    padding: 6px;
+    gap: 6px;
+  }
+}
+
+@media (max-width: 1500px) {
+  .clock {
+    max-width: 30%;
+  }
+
+  #speed {
+    width: 110px;
+  }
+
+  #progress {
+    display: none;
+  }
+}
+
+/* A figure whose slot holds a picture — a bar row, a sparkline, four glyphs. The
+   words label and the unit stay above it, because "Column profile · 10 columns" is
+   the sentence that makes the bars readable. */
+.fig-picture {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  white-space: normal;
+}
+
+/* Where the region's own heading is already the words — "PER-LAYER · 20 of 20
+   Layers", the legend's swatches, the Run table's first column — the figure's label
+   is not printed twice. It is still on the element (`data-figure-label`) and still
+   first in the tooltip. */
+.fig.nolabel .flabel {
+  display: none;
+}
+
+/* ── the Run panel's table: figure, yours, reference ───────────────────── */
+.run-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 0 6px;
+}
+
+.rtable {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font: var(--fs-chip) / 1.35 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.rtable thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  text-align: right;
+  padding: 3px 6px 4px;
+  border-bottom: 1px solid var(--line);
+  font: 500 var(--fs-micro) / 1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink4);
+}
+
+.rtable thead th:first-child,
+.rtable tbody td:first-child {
+  text-align: left;
+}
+
+.rtable thead th:first-child {
+  width: 30%;
+}
+
+/* Three columns since ticket 15: figure | yours | reference. The two value columns
+   are equal so the eye compares them down the page, and the reference column is
+   dimmed — it is the yardstick, not the answer. The label column takes what is left:
+   its words wrap to two lines, which costs no width the numbers need. */
+.rtable thead th:last-child {
+  width: 35%;
+}
+
+.rtable thead th:nth-child(2) {
+  width: 35%;
+}
+
+.rtable tbody td {
+  padding: 3px 5px;
+  border-bottom: 1px solid var(--rowline);
+  color: var(--ink3);
+  overflow-wrap: normal;
+}
+
+.rtable tbody td + td {
+  text-align: right;
+  color: var(--ink2);
+}
+
+/* A value may wrap inside its cell, but only at its spaces — `9,670/11,414` is one
+   word and stays on one line. At 236 px a rail has ~75 px per value column, so
+   `100.0 % of 1,000` is two lines and `no failures` is one; the alternative measured
+   on this box was a clipped reference column. */
+.rtable tbody .fig {
+  white-space: normal;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.rtable .fig .num {
+  min-width: 0;
+  color: var(--ink4);
+}
+
+.refnote {
+  margin: 0;
+  padding: 6px 9px 7px;
+  border-top: 1px solid var(--line);
+  font: var(--fs-micro) / 1.5 var(--sans);
+  color: var(--ink4);
+}
+
+.refnote .fig .num {
+  min-width: 0;
+}
+
+#panel-run .phead .s {
+  color: var(--ink4);
+}
+
+/* One block per committed configuration: its behaviour, its seven rows, and the two
+   machine labels. `gap` and a hairline are the whole separation — the rail has no
+   room for cards. */
+.run-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 6px;
+  border-bottom: 1px solid var(--rowline);
+}
+
+.run-cfg {
+  margin: 0;
+  padding: 2px 9px 3px;
+  font: var(--fs-micro) / 1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  border-bottom: 1px solid var(--line);
+}
+
+/* The sentence under the table — what the 5 s budget is measured on, a partial Run's
+   note, or why a Run failed. A fixed line, not a tooltip: it qualifies the numbers. */
+.run-note {
+  margin: 0;
+  padding: 6px 9px 8px;
+  font: var(--fs-body) / 1.45 var(--sans);
+  color: var(--ink3);
+}
+
+.run-note:empty {
+  display: none;
+}
+
+.run-reference,
+.rtable td.run-reference .fig .num {
+  color: var(--ink4);
+}
+
+/* The strip's cells and the columns' bars are the two pictures that carry a
+   transition; both are sized by the data, so nothing reflows when a value changes. */
+#strip i,
+.cols .c b,
+.spark .line,
+.spark .dot {
+  will-change: auto;
+}

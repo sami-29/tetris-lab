@@ -1,0 +1,363 @@
+/* The Lab's ink, type and spacing — the whole visual system in one place.
+ *
+ * The palette is the mockup's (ticket 10's prototype, `:root`), because it is the
+ * direction the operator approved: a five-step ink ramp on three near-black panels,
+ * and exactly **two accents**. Amber (`--amber`) means the winning lineage and the
+ * primary action; teal (`--teal`, `--teal2`) means data — band marks, profile bars,
+ * the score series. Nothing else is a colour. A third tone system would make the
+ * band's amber stop meaning "the answer" (notes/11 §3.2).
+ *
+ * The type scale is six steps and no more (notes/14 §4.1): the mockup's 9 / 10.5 / 11
+ * / 12 / 13 snapped to integers so nothing is 10.5, two system families so nothing is
+ * fetched, and `tabular-nums` on the root so a number never moves the layout when it
+ * changes. A unit is part of the label, never of the numeral: `16.6 ms` renders as
+ * `<b class="num">16.6</b><i class="unit">ms</i>`.
+ *
+ * No stock furniture: panels are 1 px rectangles with a 2 px radius at most, no drop
+ * shadows except on the drawer and the tooltip (the two things that float over the
+ * page), and the only gradient is the four-value ink step on a panel head.
+ */
+
+:root {
+  /* ink ramp */
+  --bg: #0e1012;
+  --panel: #15181b;
+  --panel2: #191d21;
+  --bar: #101315;
+  --line: #23282d;
+  --line2: #2c3238;
+  --ink: #c6ccd3;
+  --ink2: #8b959f;
+  --ink3: #5e6873;
+  --ink4: #454e57;
+
+  /* the two accents, and the board's own background */
+  --amber: #e0a33e;
+  --amber-dim: #8a6524;
+  --amber-hi: #f0b659;
+  --amber-edge: #3a2c12;
+  --teal: #3d8f8a;
+  --teal2: #5fc0b8;
+  --board: #0b0f14;
+
+  /* the ink step a panel head is made of, and the surfaces that step past --panel2 */
+  --panel3: #171b1f;
+  --panel4: #141820;
+  --drawer: #14181b;
+  --code: #1b2126;
+  --hover: #1f242a;
+  --played: #20262c;
+  --rowline: #1b2024;
+  --tier3: #3a4249;
+  --tipbg: #080a0b;
+  --on-amber: #14100a;
+
+  /* six steps of type */
+  --fs-micro: 9px;
+  --fs-chip: 10px;
+  --fs-data: 11px;
+  --fs-body: 12px;
+  --fs-title: 13px;
+  --fs-brand: 12px;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Inter, Roboto, sans-serif;
+
+  /* the one place a duration lives, so `prefers-reduced-motion` is one switch */
+  --t-drawer: 280ms;
+  --t-scrim: 220ms;
+  --t-tip: 120ms;
+  --t-hover: 120ms;
+  --t-bar: 220ms;
+  --ease-drawer: cubic-bezier(0.22, 0.61, 0.24, 1);
+  --ease-bar: cubic-bezier(0.25, 0.7, 0.3, 1);
+
+  color-scheme: dark;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font: var(--fs-body) / 1.45 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+output,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: 2px;
+  transition: outline-color var(--t-hover) ease;
+}
+
+/* ── the six steps, named once ─────────────────────────────────────────── */
+.micro,
+.phead .t,
+.ro-sec,
+th {
+  font: 600 var(--fs-micro) / 1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+
+.chip {
+  font: var(--fs-chip) / 1.2 var(--mono);
+  color: var(--ink3);
+}
+
+.data,
+.num {
+  font: var(--fs-data) / 1.35 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.body,
+p {
+  font: var(--fs-body) / 1.45 var(--sans);
+}
+
+h3 {
+  font: 500 var(--fs-title) / 1.3 var(--sans);
+  margin: 0;
+}
+
+.brand b {
+  font: 600 var(--fs-brand) / 1 var(--sans);
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+/* ── a figure: words label, tabular numeral, unit ──────────────────────── */
+.fig {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.fig .flabel {
+  font: var(--fs-chip) / 1.2 var(--mono);
+  letter-spacing: 0.06em;
+  color: var(--ink3);
+}
+
+.fig .num {
+  font: 500 var(--fs-data) / 1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  text-align: right;
+  /* A cell as wide as the widest value the figure's unit allows, so a value
+   * changing never reflows the row it sits in (notes/14 §4.2). */
+  min-width: 5.2ch;
+}
+
+.fig .unit {
+  font: var(--fs-chip) / 1.2 var(--mono);
+  font-style: normal;
+  color: var(--ink3);
+}
+
+.fig[data-figure-kind="word"] .num {
+  min-width: 0;
+  color: var(--ink2);
+}
+
+.fig[data-figure-kind="picture"] .num {
+  color: var(--ink2);
+}
+
+/* ── panels ────────────────────────────────────────────────────────────── */
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+
+.phead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 26px;
+  height: 26px;
+  padding: 0 9px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(#171b1f, #141820);
+}
+
+.phead .s {
+  font: var(--fs-chip) / 1 var(--mono);
+  color: var(--ink4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phead .sp {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── controls ──────────────────────────────────────────────────────────── */
+.iconbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--line2);
+  border-radius: 2px;
+  color: var(--ink2);
+  transition: background var(--t-hover) linear, color var(--t-hover) linear, border-color var(--t-hover) linear;
+}
+
+.iconbtn:hover {
+  background: var(--panel2);
+  color: var(--ink);
+  border-color: var(--ink4);
+}
+
+.iconbtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.iconbtn:disabled:hover {
+  background: none;
+  color: var(--ink2);
+  border-color: var(--line2);
+}
+
+.iconbtn[aria-pressed="true"] {
+  color: var(--amber);
+  border-color: var(--amber-dim);
+  background: rgba(224, 163, 62, 0.1);
+}
+
+.primary {
+  color: #14100a;
+  background: var(--amber);
+  border-color: #3a2c12;
+  font-weight: 600;
+}
+
+.primary:hover {
+  background: #f0b659;
+  color: #14100a;
+}
+
+.primary:disabled {
+  background: var(--line2);
+  border-color: var(--line);
+  color: var(--ink4);
+}
+
+/* A range control, in the same family as everything else. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px;
+  background: var(--line2);
+  border-radius: 2px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 9px;
+  height: 14px;
+  margin-top: -6px;
+  border-radius: 1px;
+  background: var(--amber);
+  border: 1px solid #3a2c12;
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  background: #f0b659;
+}
+
+input[type="number"] {
+  width: 6.2em;
+  font: var(--fs-data) / 1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line2);
+  border-radius: 2px;
+  padding: 2px 5px;
+}
+
+input[type="number"]:focus {
+  border-color: var(--amber-dim);
+  outline: none;
+}
+
+/* ── keyboard chips, in all three places the map appears ───────────────── */
+.kbd {
+  display: inline-block;
+  font: var(--fs-chip) / 1.3 var(--mono);
+  color: var(--ink2);
+  border: 1px solid var(--line2);
+  border-bottom-width: 2px;
+  border-radius: 2px;
+  padding: 0 4px;
+  background: var(--panel);
+}
+
+/* ── motion, and the one switch that turns it off ──────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-drawer: 0ms;
+    --t-scrim: 0ms;
+    --t-tip: 0ms;
+    --t-hover: 0ms;
+    --t-bar: 0ms;
+  }
+
+  * {
+    animation-duration: 0ms !important;
+    transition-duration: 0ms !important;
+  }
+}
+
+/* A number that is a measurement does not tween: it changes once (notes/14 §7). */
+.num {
+  transition: none;
+}

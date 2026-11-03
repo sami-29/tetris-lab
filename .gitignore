@@ -1,5 +1,61 @@
-__pycache__/
-*.pyc
-tetris_solver.db
-winnable_games.csv
-log.txt
+# .gitignore -- Tetris Lab.
+#
+# The rules are ordered: git takes the LAST matching pattern, so the Dataset guard
+# is the final block and nothing may be appended below it (see the block's comment).
+
+# ---- Rust build output -------------------------------------------------------
+# `target/` with no leading slash matches at any depth: the workspace root, every
+# member, and `web/scripts/gen-replay-vectors/` (its own workspace).
+target/
+
+# ---- Node / Vite build output ------------------------------------------------
+web/node_modules/
+web/dist/
+# build-wasm.mjs copies the cargo artifact here
+web/pkg/
+web/.vite/
+
+# ---- Wrangler local state (ticket 17) ---------------------------------------
+# `wrangler dev` writes Miniflare state and a local secret file; neither is source.
+web/.wrangler/
+web/.dev.vars
+
+# ---- Editor / OS noise -------------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# ---- AI agent / scratch (local only, never committed) ------------------------
+# The design spec, the ticket corpus and every research draft live here; they are
+# the operator's working notes, not repository content. The committed evidence is
+# docs/research/ and docs/adr/.
+.scratch/
+docs/agents/
+AGENTS.md
+CLAUDE.md
+CONTEXT.md
+CONTEXT-MAP.md
+GLOSSARY-MAP.md
+.pi/
+.claude/
+.cursor/
+.aider*
+# GLOSSARY.md is NOT listed, on purpose: it is a committed domain doc, and the
+# old `GLOSSARY.md` + `!/GLOSSARY.md` pair it shipped with was a trap -- delete the
+# negation alone and the file silently becomes untracked on the next clone.
+
+# ---- The Dataset is a build gate: nothing under it may ever be ignored ---------
+# Ordering is the whole guard. `!data/` must come first, because git never descends
+# into an excluded directory, so a `data/`-wide rule above these three lines would
+# hide every Dataset file and no later negation could bring them back.
+# Then `!data/dataset/` un-excludes the directory itself, and `!data/dataset/**`
+# every file inside it (including a future `<config>/archive/<fingerprint>.txt`).
+# These three lines beat anything ABOVE them and lose to anything BELOW them -- so
+# never append a pattern after this block, never add a `.gitignore` inside
+# data/dataset/ (a nested file's patterns take precedence over this one), and never
+# `git add -f` a Dataset file: it hides the pattern that will eat the next archive.
+# The rule is enforced by a test, not by hope:
+#   cargo test -p bench nothing_under_the_dataset_can_be_ignored
+# and by `cargo run -p bench --release -- verify` (gate 1).
+!data/
+!data/dataset/
+!data/dataset/**
