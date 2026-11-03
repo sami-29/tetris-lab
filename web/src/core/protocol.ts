@@ -35,7 +35,75 @@ export interface SolveRequest extends GameInput {
   band?: number;
 }
 
-export type ToWorker = BootRequest | SolveRequest;
+// ── the Run: one chunk of the split per message ──────────────────────────────
+//
+// §7's rule for this channel is "typed messages, explicit transfer lists, batch
+// results as one `Uint32Array` of fixed-stride summaries". So a chunk request names
+// an interval of Seeds and the behaviour to solve it at, and the answer is the raw
+// §4.3 words plus one `u32` of measured time per game — no per-game objects, and no
+// JSON, at any point.
+
+/** One chunk: `count` consecutive Seeds from `firstSeed`, in one configuration. */
+export interface RunChunkRequest {
+  type: "run-chunk";
+  /** Epoch: a stopped Run's late answers are dropped by comparing this. */
+  runId: number;
+  /** Unique per chunk, echoed back so an answer is matched to its work. */
+  chunkId: number;
+  /** 0 or 1: which committed configuration. */
+  configId: 0 | 1;
+  firstSeed: number;
+  count: number;
+  goal: number;
+  pieces: number;
+  heightCap: number;
+  beamWidth: number;
+}
+
+/** A chunk finished: §4.3's summaries and this machine's per-game clock. */
+export interface ChunkMessage {
+  type: "chunk";
+  runId: number;
+  chunkId: number;
+  configId: 0 | 1;
+  firstSeed: number;
+  count: number;
+  /** `4 * count` words: won, lines, evaluations, status per game. Transferred. */
+  summaries: Uint32Array;
+  /** `count` microseconds of wall clock per game, measured here. Transferred. */
+  micros: Uint32Array;
+  /** The chunk's own work time in ms, which is what the progress object's `ms` sums. */
+  chunkMs: number;
+}
+
+/** Liveness inside a chunk, so a slow machine is distinguishable from a stuck one. */
+export interface RunProgressMessage {
+  type: "run-progress";
+  runId: number;
+  chunkId: number;
+  configId: 0 | 1;
+  /** Games finished inside this chunk so far. */
+  games: number;
+  /** Σ `evaluations` of those games (`status` 0 only). */
+  evals: number;
+  /** This chunk's work time so far, in ms. */
+  ms: number;
+}
+
+/** A chunk that produced no answer. `wasm-trap` is a dead instance, not a result. */
+export interface ChunkFailedMessage {
+  type: "chunk-failed";
+  runId: number;
+  chunkId: number;
+  configId: 0 | 1;
+  firstSeed: number;
+  count: number;
+  /** `wasm-trap` (respawn and retry once) or `short-write` (bad parameters: stop). */
+  code: "wasm-trap" | "short-write" | "not-booted";
+  message: string;
+}
+
+export type ToWorker = BootRequest | SolveRequest | RunChunkRequest;
 
 /** The handshake passed and the worker is ready for requests. */
 export interface ReadyMessage {
@@ -77,4 +145,10 @@ export interface FailureMessage {
   message: string;
 }
 
-export type FromWorker = ReadyMessage | GameMessage | FailureMessage;
+export type FromWorker =
+  | ReadyMessage
+  | GameMessage
+  | FailureMessage
+  | ChunkMessage
+  | RunProgressMessage
+  | ChunkFailedMessage;

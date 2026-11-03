@@ -138,7 +138,8 @@ test("S4: a non-zero status is a missing game, never a loss and never a sample",
   assert.equal(stats.missing, 2, "two produced no measurement");
   assert.equal(stats.nFail, 1, "one loss — the two status rows are not losses");
   assert.equal(stats.failLinesMean, 3, "the loss is the only failure sample");
-  assert.equal(stats.evalsP50, 1250, "the percentiles are over the six measured games");
+  // Six measured games, nearest rank: k = ceil(0.5 * 6) = 3, so p50 is the third.
+  assert.equal(stats.evalsP50, 1200, "the percentiles are over the six measured games");
 
   const cells = formatCells(stats, { partial: true });
   assert.match(cells.gamesWon, /^5 of 6 · 2 missing$/, cells.gamesWon);

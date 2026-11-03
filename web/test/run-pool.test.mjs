@@ -63,10 +63,6 @@ function fakeSpawner({ mode = "real", perGameMs = null, trapFirst = null } = {})
       onmessage: null,
       postMessage(message) {
         record.received.push(message);
-        if (message.type === "boot") {
-          queueMicrotask(() => worker.onmessage?.({ data: { type: "ready", abiVersion: 2, scratchOffset: 0 } }));
-          return;
-        }
         if (message.type !== "run-chunk") return;
         dispatched.push({ configId: message.configId, firstSeed: message.firstSeed, count: message.count });
         const key = `${message.configId}:${message.firstSeed}`;
@@ -90,6 +86,10 @@ function fakeSpawner({ mode = "real", perGameMs = null, trapFirst = null } = {})
           return;
         }
         void (async () => {
+          // A real worker is another thread: its answer arrives on a later task, not
+          // in the middle of this one. Yielding here is what lets `stop()` land
+          // between two chunks in the test, as it does in a browser.
+          await new Promise((resolve) => setTimeout(resolve, 0));
           if (mode === "synthetic") {
             const summaries = new Uint32Array(message.count * 4);
             const micros = new Uint32Array(message.count);
@@ -152,6 +152,10 @@ function fakeSpawner({ mode = "real", perGameMs = null, trapFirst = null } = {})
       },
     };
     spawned.push({ worker, record });
+    // The `spawn` contract is "create one worker and start it booting", so the fake
+    // hands back a worker that is already booting and reports `ready` on the next
+    // microtask — after the pool has attached its handler, and never re-entrantly.
+    queueMicrotask(() => worker.onmessage?.({ data: { type: "ready", abiVersion: 2, scratchOffset: 0 } }));
     return worker;
   };
 
@@ -260,19 +264,35 @@ test("P3: stop terminates every worker, applies nothing afterwards, and respawns
 });
 
 test("P4: a trap costs one worker — terminated, logged, retried once, the pool keeps serving", async () => {
-  const fakes = fakeSpawner({ trapFirst: (message, seen) => message.firstSeed === 8 && seen === 1 });
+  // The chunk boundaries are the scheduler's business (they follow the measured cost),
+  // so the trap is scripted on the first chunk whose *interval* contains seed 8 —
+  // whether that chunk starts at 8 or spans it.
+  let trapped = null;
+  const fakes = fakeSpawner({
+    trapFirst: (message) => {
+      if (trapped !== null) return false;
+      if (message.firstSeed > 8 || message.firstSeed + message.count <= 8) return false;
+      trapped = { configId: message.configId, firstSeed: message.firstSeed, count: message.count };
+      return true;
+    },
+  });
   const { pool, applied, lines } = poolOf(fakes, { workers: 3 });
   const outcome = await pool.start();
 
   assert.equal(outcome.status, "complete", "the Run finishes");
   assert.equal(outcome.traps, 1, "one trap");
+  assert.ok(trapped !== null, "a chunk containing seed 8 was dispatched");
   assert.equal(fakes.spawned.filter(({ record }) => record.terminated > 0).length, 1, "exactly one worker died");
   assert.equal(fakes.spawned.reduce((sum, { record }) => sum + record.terminated, 0), 1, "one terminate()");
 
-  const retried = fakes.dispatched.filter((chunk) => chunk.firstSeed === 8);
+  const retried = fakes.dispatched.filter(
+    (chunk) => chunk.configId === trapped.configId && chunk.firstSeed === trapped.firstSeed,
+  );
   assert.equal(retried.length, 2, "the trapped chunk was dispatched twice — the retry");
-  const at8 = applied.filter((message) => message.firstSeed === 8);
-  assert.equal(at8.length, 2, "and applied once per configuration");
+  const appliedOnce = applied.filter(
+    (message) => message.configId === trapped.configId && message.firstSeed === trapped.firstSeed,
+  );
+  assert.equal(appliedOnce.length, 1, "and applied once: a retried chunk is not counted twice");
   assert.equal(
     applied.reduce((sum, message) => sum + message.count, 0),
     SPLIT * 2,
