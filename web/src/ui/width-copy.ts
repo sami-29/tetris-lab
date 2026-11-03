@@ -54,7 +54,7 @@ export const SHIPPED_WIDTH_STORY: WidthStory = {
 /** What stopped the sweep, in the words the field can support. */
 function whyItEnded(story: WidthStory): string {
   return story.capBound === "budget"
-    ? "the analysis time budget stopped the sweep"
+    ? "the analysis time budget stopped the width curve"
     : "the pre-registered doubling schedule ran out";
 }
 
