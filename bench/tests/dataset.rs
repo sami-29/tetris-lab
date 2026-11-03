@@ -485,15 +485,13 @@ fn changing_one_game_moves_the_fingerprint() {
 
 #[test]
 fn every_board_respects_the_cap() {
-    // §5.7 and ADR 0003 say every committed board's tallest column equals the
-    // cap *exactly*. That is false and this test records the correction
-    // (ticket 02, operator decision; the spec amendment is tickets 06/18):
-    // the pre-fill loop breaks on the first draw whose resting top would exceed
-    // the cap, and the crossing piece can overshoot by more than one row (a
-    // pre-fill line clear lowers the stack further), so a board may be shorter
-    // than the cap. Measured over seeds 0-1999 at cap 7: 1074/2000 reach exactly
-    // 7, 926 are shorter, 0 exceed it. So: `tallest <= cap` per game, and
-    // `max over the configuration == cap` -- never per-game equality.
+    // §5.7 and ADR 0003, as corrected (ticket 02, operator decision; the spec
+    // amendment is ticket 18): `tallest <= cap` per game, and `== cap` only for
+    // the maximum over a configuration. The pre-fill loop breaks on the first
+    // draw whose resting top would exceed the cap, and the crossing piece can
+    // overshoot by more than one row (a pre-fill line clear lowers the stack
+    // further), so a board may be shorter than the cap. Measured over seeds
+    // 0-1999 at cap 7: 1074/2000 reach exactly 7, 926 are shorter, 0 exceed it.
     for cfg in dataset::CONFIGS {
         let parsed = load(&cfg);
         let mut tallest_over_set = 0;
