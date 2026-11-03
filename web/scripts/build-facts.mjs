@@ -152,7 +152,20 @@ function referenceFromRows(names) {
           "the Explainer will not quote a machine it cannot name.",
       );
     }
-    rows.push(labels);
+    // Ticket 15's Run panel shows the Reference row's own statistics, not a copy typed
+    // into the page: the latest row ships whole, in the file's own field names, so
+    // `core/reference.ts` parses the generated object with the same code that parses a
+    // line (one implementation of the field names, and no constant to go stale).
+    //
+    // One value is edited, and only its keyword: the page's glossary bans `target`
+    // (Goal's avoided near-synonym), so the build label ships the architecture and
+    // every flag — `wasm32-unknown-unknown`, lto, panic, strip — without the Rust word
+    // in front of it. `run-stats.test.mjs` asserts that this is the only difference.
+    const row = structuredClone(latest);
+    if (row.engine && typeof row.engine.profile === "string") {
+      row.engine.profile = row.engine.profile.replace(/\btarget\s+/gi, "");
+    }
+    rows.push({ ...labels, row });
   }
   return {
     status: rows.length === 0 ? "pending" : "measured",
@@ -202,6 +215,8 @@ export interface ReferenceRowFact {
   readonly runtime: string;
   readonly date: string;
   readonly commit: string;
+  /** The latest row verbatim (its engine.profile without the Rust "target" keyword). */
+  readonly row: Readonly<Record<string, unknown>>;
 }
 
 export interface EngineFacts {

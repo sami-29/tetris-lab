@@ -9,12 +9,22 @@
 // A trap is not a result. If a call throws, the instance is dropped, the failure is
 // reported as `wasm-trap`, and the next request boots a fresh instance: §4.2's
 // "respawn and log it", at the smallest possible scale.
+//
+// Two request kinds, one instance: an interactive `solve` (one game, traced) and a
+// Run's `run-chunk` (many games, untraced, summaries only). They share the instance
+// safely because `solve_batch` writes only the buffer the caller allocated — it never
+// touches the board, the sequence or the moves — so a chunk and a queued interactive
+// solve cannot corrupt each other (§4.1, notes/15 §0.4). A chunk is a synchronous
+// loop inside one message handler, which is why **stop is `terminate()`** on this
+// side: no message can interrupt it.
 
 import { AbiMismatchError, loadEngineFromUrl, statusName, type Engine } from "../core/loader.ts";
-import type { FromWorker, ToWorker } from "../core/protocol.ts";
+import { runChunkWith } from "../core/pool.ts";
+import type { FromWorker, RunChunkRequest, ToWorker } from "../core/protocol.ts";
 
 interface WorkerScope {
-  postMessage(message: FromWorker): void;
+  /** `transfer` is how a chunk's two typed arrays move instead of being copied. */
+  postMessage(message: FromWorker, transfer?: Transferable[]): void;
   onmessage: ((event: MessageEvent<ToWorker>) => void) | null;
 }
 
@@ -55,6 +65,62 @@ function drop(): void {
   enginePromise = null;
 }
 
+/**
+ * One chunk of a Run: solve `count` games, post the summaries and the per-game clock.
+ *
+ * Progress is posted from inside the loop, so the page's `{chunkDone, gamesDone,
+ * evals, ms}` keeps moving on a slow machine and a frozen counter means what it says.
+ * The two typed arrays are transferred, not cloned.
+ */
+async function runChunk(message: RunChunkRequest): Promise<void> {
+  if (engineUrl === null) {
+    post({
+      type: "chunk-failed",
+      runId: message.runId,
+      chunkId: message.chunkId,
+      configId: message.configId,
+      firstSeed: message.firstSeed,
+      count: message.count,
+      code: "not-booted",
+      message: "the worker got a chunk before boot",
+    });
+    return;
+  }
+  try {
+    const loaded = await engine(engineUrl);
+    const answer = runChunkWith(loaded, message, (games, evaluations, ms) => {
+      post({
+        type: "run-progress",
+        runId: message.runId,
+        chunkId: message.chunkId,
+        configId: message.configId,
+        games,
+        evals: evaluations,
+        ms,
+      });
+    });
+    if (answer.type === "chunk") {
+      scope.postMessage(answer, [answer.summaries.buffer, answer.micros.buffer]);
+    } else {
+      post(answer);
+    }
+  } catch (error) {
+    // A wasm `RuntimeError` means this instance is dead: drop it so the next request
+    // boots a fresh one, and let the page respawn the worker (§4.2).
+    drop();
+    post({
+      type: "chunk-failed",
+      runId: message.runId,
+      chunkId: message.chunkId,
+      configId: message.configId,
+      firstSeed: message.firstSeed,
+      count: message.count,
+      code: "wasm-trap",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 scope.onmessage = async (event: MessageEvent<ToWorker>): Promise<void> => {
   const message = event.data;
 
@@ -70,6 +136,11 @@ scope.onmessage = async (event: MessageEvent<ToWorker>): Promise<void> => {
         post(failure(0, "boot-failed", error));
       }
     }
+    return;
+  }
+
+  if (message.type === "run-chunk") {
+    await runChunk(message);
     return;
   }
 

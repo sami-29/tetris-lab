@@ -1581,19 +1581,41 @@
 }
 
 .rtable thead th:first-child {
-  width: 52%;
+  width: 30%;
+}
+
+/* Three columns since ticket 15: figure | yours | reference. The two value columns
+   are equal so the eye compares them down the page, and the reference column is
+   dimmed — it is the yardstick, not the answer. The label column takes what is left:
+   its words wrap to two lines, which costs no width the numbers need. */
+.rtable thead th:last-child {
+  width: 35%;
+}
+
+.rtable thead th:nth-child(2) {
+  width: 35%;
 }
 
 .rtable tbody td {
-  padding: 3px 6px;
+  padding: 3px 5px;
   border-bottom: 1px solid var(--rowline);
   color: var(--ink3);
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
 }
 
 .rtable tbody td + td {
   text-align: right;
   color: var(--ink2);
+}
+
+/* A value may wrap inside its cell, but only at its spaces — `9,670/11,414` is one
+   word and stays on one line. At 236 px a rail has ~75 px per value column, so
+   `100.0 % of 1,000` is two lines and `no failures` is one; the alternative measured
+   on this box was a clipped reference column. */
+.rtable tbody .fig {
+  white-space: normal;
+  justify-content: flex-end;
+  max-width: 100%;
 }
 
 .rtable .fig .num {
@@ -1614,6 +1636,45 @@
 }
 
 #panel-run .phead .s {
+  color: var(--ink4);
+}
+
+/* One block per committed configuration: its behaviour, its seven rows, and the two
+   machine labels. `gap` and a hairline are the whole separation — the rail has no
+   room for cards. */
+.run-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 6px;
+  border-bottom: 1px solid var(--rowline);
+}
+
+.run-cfg {
+  margin: 0;
+  padding: 2px 9px 3px;
+  font: var(--fs-micro) / 1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  border-bottom: 1px solid var(--line);
+}
+
+/* The sentence under the table — what the 5 s budget is measured on, a partial Run's
+   note, or why a Run failed. A fixed line, not a tooltip: it qualifies the numbers. */
+.run-note {
+  margin: 0;
+  padding: 6px 9px 8px;
+  font: var(--fs-body) / 1.45 var(--sans);
+  color: var(--ink3);
+}
+
+.run-note:empty {
+  display: none;
+}
+
+.run-reference,
+.rtable td.run-reference .fig .num {
   color: var(--ink4);
 }
 

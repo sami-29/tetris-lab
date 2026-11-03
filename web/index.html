@@ -85,9 +85,15 @@
             class="tbtn"
             type="button"
             id="run-dataset"
+            data-tip="Run the Dataset in this tab: solve the test Split of both configurations — 2,000 games — in a pool of workers, and report the result beside the committed Reference run. Nothing is measured until you press it; the rail's Run panel says so rather than showing a figure."
+          ><span data-icon="play"></span>Run dataset</button>
+          <button
+            class="tbtn"
+            type="button"
+            id="run-stop"
             disabled
-            data-tip="Run the Dataset in this tab and report it beside the Reference run. Arrives with the Run ticket: nothing is measured here yet, so the rail's Run panel says so rather than showing a figure."
-          ><span data-icon="stop"></span>Run dataset</button>
+            data-tip="Stop the Run immediately: every worker is terminated, and what was measured so far is labelled partial rather than shown as the whole Split."
+          ><span data-icon="stop"></span>Stop</button>
           <button
             class="tbtn go"
             type="button"
@@ -131,19 +137,23 @@
           <div class="rows" id="engine-weights" hidden></div>
         </section>
 
+        <!-- The Run: one block per committed configuration, each with the seven rows
+             and two columns — `yours`, measured in this tab, beside `reference`, read
+             from `data/dataset/<config>/reference.jsonl`. `src/ui/run-panel.ts` builds
+             the skeleton (column heads, figure labels, label slots) at boot and fills
+             only the value slots afterwards, so the panel is never empty and never
+             rebuilt. -->
         <section class="panel" id="panel-run" aria-label="Run">
           <div class="phead">
             <span class="t">Run</span>
-            <span class="s" id="run-state">no Run in this tab yet</span>
+            <span class="s" id="run-state" data-run-status="idle">no Run in this tab yet</span>
           </div>
-          <div class="run-body">
-            <table class="rtable" id="run-table">
-              <thead>
-                <tr><th>figure</th><th>yours</th></tr>
-              </thead>
-              <tbody id="run-rows"></tbody>
-            </table>
-            <p class="refnote" id="reference-labels">no Reference row is committed yet</p>
+          <div class="run-body" id="run-body">
+            <p class="run-note" id="run-assumption">
+              A Run solves the test Split of both configurations in this tab — 2,000 games across a
+              pool of workers — and reports the seven rows below beside the committed Reference run,
+              each column labelled with the machine that produced it.
+            </p>
           </div>
         </section>
       </aside>
