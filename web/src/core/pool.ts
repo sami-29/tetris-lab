@@ -529,6 +529,20 @@ export function createRunPool(options: RunPoolOptions): RunPool {
       slots = [];
       requeue.length = 0;
       status = "stopped";
+      // The in-flight chunks were terminated, so the games they had counted inside
+      // themselves were never applied and are not in the table. Rebuild the counters
+      // from the applied totals: a stopped Run reports the games the cells hold, not
+      // the ones it threw away (the monotone `max` above is for a Run still moving).
+      progress = {
+        chunkDone: chunksApplied,
+        gamesDone: totals.reduce((sum, config) => sum + config.n + config.missing, 0),
+        evals: totals.reduce(
+          (sum, config) => sum + config.evals.reduce((acc, value) => acc + value, 0),
+          0,
+        ),
+        ms: totals.reduce((sum, config) => sum + config.workMs, 0),
+      };
+      options.onProgress?.({ ...progress });
       const done = finish;
       finish = null;
       log(`Run stopped at ${progress.gamesDone} of ${options.configs.reduce((sum, shape) => sum + (shape.last - shape.first + 1), 0)} games`);

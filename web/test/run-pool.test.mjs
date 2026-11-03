@@ -52,7 +52,7 @@ function artifact() {
  * trap, and `perGameMs` swaps the engine for a synthetic summary so the chunk-size
  * arithmetic can be tested without solving a thousand games.
  */
-function fakeSpawner({ mode = "real", perGameMs = null, trapFirst = null } = {}) {
+function fakeSpawner({ mode = "real", perGameMs = null, trapFirst = null, drip = false } = {}) {
   const spawned = [];
   const dispatched = [];
   const traps = new Map();
@@ -90,6 +90,24 @@ function fakeSpawner({ mode = "real", perGameMs = null, trapFirst = null } = {})
           // in the middle of this one. Yielding here is what lets `stop()` land
           // between two chunks in the test, as it does in a browser.
           await new Promise((resolve) => setTimeout(resolve, 0));
+          // `drip` posts the in-chunk progress a real worker posts, on real tasks, so a
+          // test can stop a Run *inside* a chunk rather than between two of them.
+          if (drip) {
+            for (let games = 1; games <= message.count; games += 1) {
+              await new Promise((resolve) => setTimeout(resolve, 1));
+              worker.onmessage?.({
+                data: {
+                  type: "run-progress",
+                  runId: message.runId,
+                  chunkId: message.chunkId,
+                  configId: message.configId,
+                  games,
+                  evals: games * 10,
+                  ms: games,
+                },
+              });
+            }
+          }
           if (mode === "synthetic") {
             const summaries = new Uint32Array(message.count * 4);
             const micros = new Uint32Array(message.count);
@@ -302,6 +320,38 @@ test("P4: a trap costs one worker — terminated, logged, retried once, the pool
     lines.some((line) => /wasm-trap/.test(line) && /respawn/.test(line)),
     `the trap is in the log: ${lines.join(" | ")}`,
   );
+});
+
+test("P3b: a stop inside a chunk reports the games it actually applied, not the ones in flight", async () => {
+  // A real worker posts progress while a chunk is still solving, and `terminate()`
+  // throws that chunk's games away. So the stopped Run's `gamesDone` must fall back to
+  // the applied chunks — the count the cells' `n` is built from — or the rail claims
+  // games the table does not have.
+  const fakes = fakeSpawner({ mode: "synthetic", perGameMs: 2.8, drip: true });
+  const { pool, progress, applied } = poolOf(fakes, { workers: 2 });
+  const running = pool.start();
+  await until(
+    () => {
+      const appliedGames = applied.reduce((sum, chunk) => sum + chunk.count, 0);
+      return applied.length >= 1 && (progress.at(-1)?.gamesDone ?? 0) > appliedGames;
+    },
+    "a chunk in flight with progress of its own",
+  );
+  const inFlight = progress.at(-1)?.gamesDone ?? 0;
+  pool.stop();
+  const outcome = await running;
+
+  const appliedGames = applied.reduce((sum, chunk) => sum + chunk.count, 0);
+  assert.ok(inFlight > appliedGames, `progress ran ahead of the applied chunks (${inFlight} > ${appliedGames})`);
+  assert.equal(
+    outcome.progress.gamesDone,
+    pool.totals().reduce((sum, config) => sum + config.n + config.missing, 0),
+    "the stopped count is the games the table holds",
+  );
+  assert.equal(progress.at(-1).gamesDone, outcome.progress.gamesDone, "and the last thing the rail was told");
+  assert.equal(outcome.progress.gamesDone, appliedGames, "which is exactly the chunks that came back");
+  assert.equal(outcome.progress.chunkDone, applied.length, "and the chunks applied");
+  assert.ok(outcome.progress.gamesDone < 50, "a stopped Run is partial");
 });
 
 test("P5: a Run's totals equal a plain gen_game + solve loop over the same seeds", async () => {
