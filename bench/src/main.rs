@@ -1539,7 +1539,9 @@ fn reference_run(argv: &[String]) -> Result<u8, u8> {
                         selected.get_or_insert_with(Vec::new).push(config);
                     }
                 }
-                "--data" => data = PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?),
+                "--data" => {
+                    data = PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?)
+                }
                 "--split" => {
                     let value = flag_value(argv, &mut index, &flag, "test or tuning")?;
                     split = reference::Split::from_text(&value)?;
@@ -1568,7 +1570,11 @@ fn reference_run(argv: &[String]) -> Result<u8, u8> {
                 "--reason" => {
                     reason = Some(flag_value(argv, &mut index, &flag, "a one-line reason")?)
                 }
-                "--out" => out = Some(PathBuf::from(flag_value(argv, &mut index, &flag, "a file")?)),
+                "--out" => {
+                    out = Some(PathBuf::from(flag_value(
+                        argv, &mut index, &flag, "a file",
+                    )?))
+                }
                 "--append" => append = true,
                 "--json" => json = true,
                 other => return Err(format!("unknown argument {other:?}")),
@@ -1633,7 +1639,11 @@ fn reference_run(argv: &[String]) -> Result<u8, u8> {
         configs.len(),
         split.label(),
         run_width,
-        if width.is_some() { "flag" } else { "width-curve.json" },
+        if width.is_some() {
+            "flag"
+        } else {
+            "width-curve.json"
+        },
         engine.short,
         substrate.as_str(),
         measured_at,
@@ -1760,7 +1770,9 @@ fn golden_run(argv: &[String]) -> Result<u8, u8> {
         let flag = argv[index].to_string();
         let outcome: Result<(), String> = (|| {
             match flag.as_str() {
-                "--data" => data = PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?),
+                "--data" => {
+                    data = PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?)
+                }
                 "--ms" => {
                     let value = flag_value(argv, &mut index, &flag, "wasm or native")?;
                     substrate = reference::Substrate::from_text(&value)?;
@@ -1777,7 +1789,11 @@ fn golden_run(argv: &[String]) -> Result<u8, u8> {
                 "--reason" => {
                     reason = Some(flag_value(argv, &mut index, &flag, "a one-line reason")?)
                 }
-                "--out" => out = Some(PathBuf::from(flag_value(argv, &mut index, &flag, "a file")?)),
+                "--out" => {
+                    out = Some(PathBuf::from(flag_value(
+                        argv, &mut index, &flag, "a file",
+                    )?))
+                }
                 "--json" => json = true,
                 other => return Err(format!("unknown argument {other:?}")),
             }
@@ -1836,9 +1852,9 @@ fn golden_run(argv: &[String]) -> Result<u8, u8> {
             Err(message) => vec![gate::Check::fail("golden evaluations")
                 .subject(message)
                 .hint(
-                    "pin the golden with `bench golden update --reason \"…\"` after a Reference run \
+                "pin the golden with `bench golden update --reason \"…\"` after a Reference run \
                      has been appended (§9.6)",
-                )],
+            )],
         };
         let mut report = gate::Report::new(
             6,
@@ -1861,7 +1877,9 @@ fn golden_run(argv: &[String]) -> Result<u8, u8> {
     // `update`: pinned from a committed row, never from an unrecorded run.
     let reason_text = reason.as_deref().unwrap_or("").trim().to_string();
     if reason_text.len() < 8 {
-        eprintln!("error: --reason \"<one line reason>\" is required: the golden's diff is the reason");
+        eprintln!(
+            "error: --reason \"<one line reason>\" is required: the golden's diff is the reason"
+        );
         return Err(2);
     }
     let previous = golden::load(&path).ok();
