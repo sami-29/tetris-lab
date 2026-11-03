@@ -45,11 +45,14 @@ so there is no Worker script and no Cloudflare-side build. `deploy.yml` deploys
 it after a green `gates` run on `main`, and uploads the exact `web/dist` tree that
 run measured, so there is no second build (`README.md`).
 
-It is not live yet. The deploy, the domain move and the teardown of the previous
-host are the seven steps of [`docs/runbook.md`](runbook.md), and none of them has
-been run. Until they are, the URL still answers with the earlier probe Worker
-(`README.md`) and `docs/measurements/delivery.md` records the consequences, under
-"Not observed".
+It is live, and it went up on 2026-11-03 as Worker version
+`2dc6de11-eefa-46ed-91a8-61adeca51af4`, deployed by hand from `b76cfdf` on
+`rewrite` and verified against the custom domain: `verify.sh` PASS 45 checks, the
+browser check PASS with the Run at 1.96 s. From the first green push to `main`,
+`deploy.yml` owns the deploy instead. The probe Worker `browser-tetris-lab-probe`
+still exists but no longer serves the domain; the teardown, the repo rename, the
+`main` replacement merge and branch protection are steps 2–7 of
+[`docs/runbook.md`](runbook.md), and none of them has run.
 
 ## The map
 
@@ -262,13 +265,18 @@ default-configuration budget at 203.46 ms on native. The cap is therefore 800, a
 configurations win 1,000 of 1,000 games at width 800, so no width could be
 separated on the quality axis at all.
 
-### Two rows have no number on purpose
+### What the deploy settled, and what it did not
 
-The six gate results on the deployed commit, and the live smoke test, are both
-"not yet measured", because nothing is deployed. `docs/measurements/delivery.md` carries them as labelled statuses rather
-than blanks, and lists the ten things that were not observed, including the edge
-headers, the preview URL, rollback, and whether a Workers Scripts token can attach
-a new custom domain on a first deploy.
+The six gate results on the deployed commit are measured (`b76cfdf`, CI run
+41682733864, all six PASS), and so is the live smoke test (`verify.sh` 45 checks,
+browser check PASS, 1.96 s). `docs/measurements/delivery.md` carries both numbers
+with their machine label rather than blanks.
+
+`deploy.yml` has still never run on a runner: this deploy was manual, so the CI
+deploy path, its concurrency group and its preview input are unexercised. The
+preview URL and rollback are equally unexercised, and the Render name and the probe
+Worker are still standing. Those are listed, with the rest, under "Still not
+observed" in `docs/measurements/delivery.md`.
 
 ### Cross-machine rebuilds are unverified
 

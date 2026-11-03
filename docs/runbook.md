@@ -18,10 +18,11 @@ condition is what the ticket asks for, not a feeling that it worked.
   that has never completed), and the two repository secrets below exist.
 - `npx wrangler login` has been done once; `npx wrangler whoami` answers.
 
-## 1. Deploy the Lab, before moving the domain
+## 1. Deploy the Lab, before moving the domain — **run 2026-11-03**
 
-The custom domain currently fronts the ticket-09 probe Worker, so deploying the Lab
-first means there is no window where the URL answers nothing.
+The custom domain fronted the ticket-09 probe Worker until this step moved it, which
+is why the Lab went up first: there was no window in which the URL answered nothing.
+The commands are kept as they were run.
 
 ```bash
 cd web
@@ -37,6 +38,18 @@ If the token is scoped to Workers Scripts:Edit only, attaching
 `lab.samibentaleb.com` to the new Worker is a dashboard action (Workers & Pages →
 `tetris-lab` → Settings → Domains & Routes). Do that here, while the probe still
 exists, and only then re-run both checks against the custom domain.
+
+**What this step produced, 2026-11-03.** Run by an agent at the maintainer's
+explicit instruction, from `b76cfdf`, after `npm run build` in `web/`. Wrangler was
+authenticated by the interactive OAuth token, which carries `workers_routes (write)`,
+so the domain attach needed no dashboard step: the deploy created Worker
+`tetris-lab`, uploaded 8 assets, attached `lab.samibentaleb.com`, and reported
+version `2dc6de11-eefa-46ed-91a8-61adeca51af4` (workers.dev URL
+`https://tetris-lab.sami-bentaleb-dev.workers.dev`). Both checks were then run
+against the custom domain and both passed: `verify.sh` **PASS 45 checks**,
+`browser-check.mjs` **PASS** with the Run at 1.96 s click-to-last-game. Full detail
+is in `docs/measurements/delivery.md` under "Observed against the live edge". The
+probe Worker was **not** deleted, which is step 2.
 
 **Close when:** `verify.sh` prints `PASS n checks` with 0 failed and
 `browser-check.mjs` prints `PASS the page solves, plays back, and can be driven`.
@@ -154,6 +167,8 @@ the assets.
 
 ## What was deliberately not run by an agent
 
-No `git push`, no `gh repo rename`, no `wrangler deploy` or `delete`, no Render
-command, no DNS or domain change, and no merge into `main`. The cutover was built
-and verified in a branch; everything above is unexecuted.
+Step 1 of this runbook has since run, at the maintainer's explicit instruction, and
+its results are recorded in `docs/measurements/delivery.md` and in step 1 above.
+Everything else here is unexecuted: no `gh repo rename`, no `wrangler delete`, no
+Render command, no branch protection, and no merge into `main` — `main` is still the
+old Flask history, and `rewrite` is the tree that is deployed.

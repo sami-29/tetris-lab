@@ -6,11 +6,13 @@ compiled to `wasm32-unknown-unknown`, solved inside a visitor's tab. There is no
 server compute, no database and no account: everything on the page came out of the
 wasm build in this repository.
 
-**Live:** https://lab.samibentaleb.com, deployed from `main` by
-`.github/workflows/deploy.yml` after a green gate run, as the Cloudflare Worker
-`tetris-lab` (static assets only, no Worker script). The steps that first put it
-there are the maintainer's, in [`docs/runbook.md`](docs/runbook.md); until they
-have run, the URL still answers with the ticket-09 probe.
+**Live:** https://lab.samibentaleb.com, served by the Cloudflare Worker
+`tetris-lab` as static assets only (no Worker script). It went up on 2026-11-03 as
+version `2dc6de11-eefa-46ed-91a8-61adeca51af4`, deployed by hand from `rewrite`;
+from the first green push to `main`, `.github/workflows/deploy.yml` deploys it
+after a gate run. The maintainer steps that remain — Render, the repo rename, the
+`main` replacement merge, branch protection — are in
+[`docs/runbook.md`](docs/runbook.md).
 
 What the engine does is explained on the site itself, in the Explainer drawer, for
 the engine that actually ships. This README is the developer entry.

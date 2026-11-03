@@ -37,8 +37,8 @@ in `docs/runbook.md`).
 | Solve p90, default configuration | **4.536 ms** at beam 25, wasm (budget 200 ms) | Reference row index 3's machine | the `goal8-p40-cap7` reference row's `stats` |
 | Solve p90, harder configuration | **6.547 ms** at beam 25, wasm (budget 1,000 ms) | same | the `goal12-p100-cap7` reference row's `stats` |
 | First solve p75 | **5.824 ms** over 50 trials, covering compile, instantiate, `gen_game` and `solve`, with network fetch and Worker spawn excluded (budget 1,000 ms) | same box; node 24.21.0 V8 | `node bench/tools/first-solve.mjs --trials 50 --json` |
-| Run wall time | **1.73 s** click-to-last-game-applied (the script's own budget check, 5 s), and **12.3 s** as the page's Run readout prints it for the same 2,000 games on 8 workers, because the readout includes Worker start-up. §9.3's budget is written against a Run; the script's budget check is the one that gates, and the readout is recorded beside it rather than adjusted | headless Chrome on the same box, 2026-11-03 | `node web/scripts/browser-check.mjs` |
-| The six gate results on the deployed commit | **not yet measured**: nothing is deployed. Locally all six pass and gate 6 is 9 checks, 0 skipped | the CI runner (`windows-2025`) | the release note, after `docs/runbook.md`'s deploy |
+| Run wall time | **1.73 s** click-to-last-game-applied (the script's own budget check, 5 s), and **12.3 s** as the page's Run readout prints it for the same 2,000 games on 8 workers, because the readout includes Worker start-up. §9.3's budget is written against a Run; the script's budget check is the one that gates, and the readout is recorded beside it rather than adjusted. Against the deployed URL the same two numbers are **1.96 s** and **13.2 s** | headless Chrome on the same box, 2026-11-03, locally and against `https://lab.samibentaleb.com/` | `node web/scripts/browser-check.mjs` |
+| The six gate results on the deployed commit | **all six PASS** on `b76cfdf`, gate 6 = 9 checks, 0 skipped (CI run 41682733864). The deployed artifact is that build: wasm `4bfa56b5…`-era `engine.wasm`, 58,852 B, uploaded as Worker version `2dc6de11-eefa-46ed-91a8-61adeca51af4` | the CI runner (`windows-2025`) | `.github/workflows/gates.yml`; `npx wrangler deployments list` |
 | A frozen trace fixture | `web/test/fixtures/trace-seed0-goal8-p40-cap7-band25.json`: 444 records over 20 Layers at band 25 | `solve_traced` on the default game | the committed fixture; regenerate with `web/scripts/gen-trace-fixture.mjs` |
 
 Per file, so a regression is attributable:
@@ -91,34 +91,42 @@ Observed, on this box, with no network and no credentials:
   worker chunk;
 - the two sizes above, and the two-build hash reproducibility.
 
-**Not observed.** No claim in this repository should imply otherwise:
+**Observed against the live edge, 2026-11-03.** `wrangler deploy` from `web/` at
+`b76cfdf` created Worker `tetris-lab`, version
+`2dc6de11-eefa-46ed-91a8-61adeca51af4`, uploaded 8 assets, and attached
+`lab.samibentaleb.com` on the first try — no dashboard step. Total upload 0.35 KiB
+(0.25 KiB gzip); the assets themselves are served from the edge cache.
 
-1. **The deploy.** No `wrangler deploy` ran against Cloudflare, no version exists, no
-   version id, no rollout, no timing.
-2. **The live headers.** Edge compression (zstd/gzip), live ETag values,
-   `cf-cache-status: HIT`, and the `/` and `/index.html` `_headers` patterns at the
-   edge. All of it was verified against `wrangler dev` (Miniflare), which is the same
-   rule engine but not the same server.
-3. **`/index.html`'s redirect at the edge.** Locally it answers 307 to `/`; the edge
-   is documented to do the same and is unproven here.
-4. **The live smoke test.** `verify.sh` and `browser-check.mjs` have never been
-   pointed at `https://lab.samibentaleb.com`, because nothing is deployed there for
-   the Lab.
-5. **The preview URL.** `wrangler versions upload --preview-alias` has never run, so
+- `bash web/scripts/verify.sh --url https://lab.samibentaleb.com` → **PASS 45
+  checks**: the document's headers and `must-revalidate`, the wasm's
+  `application/wasm` and `public, max-age=31536000, immutable`, a live `ETag`, the
+  `7 assets, same hashes` identity check, the SPA fallback (200 `text/html`
+  identical to `/`), `/index.html` answering 307 to `/` at the edge, and the
+  deployed module's `abi_version = 2` with `alloc`/`gen_game`/`solve` present.
+- `node web/scripts/browser-check.mjs --url https://lab.samibentaleb.com/` →
+  **PASS**, Run 2,000/2,000 games, 1.96 s click-to-last-game (5 s budget).
+- Edge `content-encoding: zstd` and `cf-cache-status: HIT` were read from the same
+  responses.
+- The deploy was **manual**. `.github/workflows/deploy.yml` has still never run on
+  a runner, so the CI-deploy path, its concurrency group and its preview input are
+  unexercised; the next green push to `main` is what tests them.
+
+**Still not observed.** No claim in this repository should imply otherwise:
+
+1. **The preview URL.** `wrangler versions upload --preview-alias` has never run, so
    no preview URL exists and the dispatch path is unexercised.
-6. **Rollback.** Never exercised. The command, the 100-version window and the
+2. **Rollback.** Never exercised. The command, the 100-version window and the
    `<version-id>` argument come from `wrangler rollback --help` and the docs.
-7. **The GitHub Actions runs.** Neither `gates.yml` nor `deploy.yml` has run on a
-   runner: no run id, no artifact, no `windows-2025` timing. The workflow YAML is
-   asserted by `web/test/deploy.test.mjs` (triggers, secrets, no rollback, the smoke
-   invocation), which is a static check.
-8. **Token sufficiency.** The token has never been created. `Workers Scripts:Edit`
-   is the documented permission group for uploading a script version; whether it can
-   also attach a *new* custom domain on first deploy is **unverified**; see
-   README.md's note about attaching `lab.samibentaleb.com` once out of band.
-9. **The custom domain.** `lab.samibentaleb.com` currently fronts the ticket 09 probe
-   Worker. Re-pointing it at `tetris-lab`, and whether the zone needs a DNS record
-   created, is unrun.
-10. **The Worker's request count under Workers Free.** Static-asset requests are
-    documented as free and unmetered, so the 100 k/day cap should be inert; no live
-    request was counted.
+3. **A scoped API token.** The deploy used the interactive OAuth token, which
+   carries `workers_routes (write)`. Whether a `Workers Scripts:Edit` API token can
+   also attach a *new* custom domain on a first deploy is still **unverified**.
+4. **Render retirement.** The old host has not been torn down. The URL is served by
+   `tetris-lab`, and the old service's hostname is untouched; runbook step 3 is the
+   one that proves it dead.
+5. **The probe Worker.** `browser-tetris-lab-probe` still exists; it no longer fronts
+   `lab.samibentaleb.com`, but nothing has deleted it.
+6. **The repository rename, the `main` merge and branch protection.** Runbook steps
+   4–6, none run.
+7. **The Worker's request count under Workers Free.** Static-asset requests are
+   documented as free and unmetered, so the 100 k/day cap should be inert; no live
+   request was counted.
