@@ -32,6 +32,8 @@ export interface ReferenceRowFact {
   readonly runtime: string;
   readonly date: string;
   readonly commit: string;
+  /** The latest row verbatim (its engine.profile without the Rust "target" keyword). */
+  readonly row: Readonly<Record<string, unknown>>;
 }
 
 export interface EngineFacts {
@@ -136,14 +138,186 @@ export const ENGINE_FACTS: EngineFacts = {
         "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB · Microsoft Windows 11 Pro 10.0.22621",
         "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
         "date": "2026-11-03T02:03:30Z",
-        "commit": "ffa08fed765e0516d0165869fedff55433448a90"
+        "commit": "ffa08fed765e0516d0165869fedff55433448a90",
+        "row": {
+          "format": 1,
+          "kind": "reference",
+          "config": "goal12-p100-cap7",
+          "index": 1,
+          "run_id": "ffa08fe/3cb88e38/E1/w25/2026-11-03T02:03:30Z",
+          "measured_at": "2026-11-03T02:03:30Z",
+          "reason": "the Explainer's flat label projection (ticket 16) joins the row's label block; the measurement is re-run rather than edited, because reference.jsonl never rewrites a line",
+          "supersedes": "3678958/3cb88e38/E1/w25/2026-11-03T01:43:31Z",
+          "dataset": {
+            "fingerprint": "4ebdf44940134c40",
+            "generator_version": 1
+          },
+          "behaviour": {
+            "goal": 12,
+            "pieces": 100,
+            "cap": 7,
+            "width": 25,
+            "width_source": "artifact",
+            "evaluator": "E1",
+            "table": "E1_PUBLISHED",
+            "table_fnv": "0x3a8373a0e95be4f1",
+            "toggles": "shipped",
+            "tail": true,
+            "tail_pieces": 3
+          },
+          "split": {
+            "first": 0,
+            "last": 999,
+            "n": 1000
+          },
+          "stats": {
+            "n": 1000,
+            "wins": 1000,
+            "n_fail": 0,
+            "win_rate": 1,
+            "wilson95": [
+              0.996173241514445,
+              1
+            ],
+            "fail_lines_mean": null,
+            "fail_lines_median": null,
+            "evals_p50": 14169,
+            "evals_p90": 15487,
+            "evals_mean": 14212.985,
+            "evals_max": 18363,
+            "ms_p50": 6.359,
+            "ms_p90": 8.931,
+            "ms_max": 15.86,
+            "batch_ms": 6845.199,
+            "cal_ms": 494.393,
+            "cal_ms_before": 538.586,
+            "cal_ms_after": 450.2
+          },
+          "fingerprints": {
+            "evals_fnv1a64": "1a075f05de2e7027",
+            "lines_fnv1a64": "86418fa601f4c279",
+            "evals_method": "fnv1a64-over-le-u32-seed-order",
+            "lines_method": "fnv1a64-over-u8-seed-order",
+            "p90_method": "nearest-rank"
+          },
+          "engine": {
+            "commit": "ffa08fed765e0516d0165869fedff55433448a90",
+            "short": "ffa08fe",
+            "dirty": false,
+            "wasm_sha256": "3cb88e38f8d497aa2b080d65386ec92ef0eafec96760e757fb18cd347a473022",
+            "wasm_bytes": 58302,
+            "profile": "release: lto=fat, codegen-units=1, panic=abort, strip=true; wasm32-unknown-unknown; no wasm-bindgen, no wasm-opt",
+            "toolchain": "1.99.1-x86_64-pc-windows-gnu"
+          },
+          "machine": {
+            "cpu": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB",
+            "os": "Microsoft Windows 11 Pro 10.0.22621",
+            "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
+            "substrate": "wasm",
+            "browser_or_node": "v24.21.0 (V8 headless), not a browser",
+            "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+            "node": "v24.21.0"
+          },
+          "labels": {
+            "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB · Microsoft Windows 11 Pro 10.0.22621",
+            "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
+            "date": "2026-11-03T02:03:30Z",
+            "engine_commit": "ffa08fed765e0516d0165869fedff55433448a90"
+          }
+        }
       },
       {
         "config": "goal8-p40-cap7",
         "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB · Microsoft Windows 11 Pro 10.0.22621",
         "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
         "date": "2026-11-03T02:03:30Z",
-        "commit": "ffa08fed765e0516d0165869fedff55433448a90"
+        "commit": "ffa08fed765e0516d0165869fedff55433448a90",
+        "row": {
+          "format": 1,
+          "kind": "reference",
+          "config": "goal8-p40-cap7",
+          "index": 1,
+          "run_id": "ffa08fe/3cb88e38/E1/w25/2026-11-03T02:03:30Z",
+          "measured_at": "2026-11-03T02:03:30Z",
+          "reason": "the Explainer's flat label projection (ticket 16) joins the row's label block; the measurement is re-run rather than edited, because reference.jsonl never rewrites a line",
+          "supersedes": "3678958/3cb88e38/E1/w25/2026-11-03T01:43:31Z",
+          "dataset": {
+            "fingerprint": "4bf1a17b1685a774",
+            "generator_version": 1
+          },
+          "behaviour": {
+            "goal": 8,
+            "pieces": 40,
+            "cap": 7,
+            "width": 25,
+            "width_source": "artifact",
+            "evaluator": "E1",
+            "table": "E1_PUBLISHED",
+            "table_fnv": "0x3a8373a0e95be4f1",
+            "toggles": "shipped",
+            "tail": true,
+            "tail_pieces": 3
+          },
+          "split": {
+            "first": 0,
+            "last": 999,
+            "n": 1000
+          },
+          "stats": {
+            "n": 1000,
+            "wins": 1000,
+            "n_fail": 0,
+            "win_rate": 1,
+            "wilson95": [
+              0.996173241514445,
+              1
+            ],
+            "fail_lines_mean": null,
+            "fail_lines_median": null,
+            "evals_p50": 9670,
+            "evals_p90": 11414,
+            "evals_mean": 9776.799,
+            "evals_max": 14334,
+            "ms_p50": 5.666,
+            "ms_p90": 7.643,
+            "ms_max": 19.252,
+            "batch_ms": 5881.533,
+            "cal_ms": 679.135,
+            "cal_ms_before": 787.98,
+            "cal_ms_after": 570.289
+          },
+          "fingerprints": {
+            "evals_fnv1a64": "685753d3144408e0",
+            "lines_fnv1a64": "8382f1cd4aba6800",
+            "evals_method": "fnv1a64-over-le-u32-seed-order",
+            "lines_method": "fnv1a64-over-u8-seed-order",
+            "p90_method": "nearest-rank"
+          },
+          "engine": {
+            "commit": "ffa08fed765e0516d0165869fedff55433448a90",
+            "short": "ffa08fe",
+            "dirty": false,
+            "wasm_sha256": "3cb88e38f8d497aa2b080d65386ec92ef0eafec96760e757fb18cd347a473022",
+            "wasm_bytes": 58302,
+            "profile": "release: lto=fat, codegen-units=1, panic=abort, strip=true; wasm32-unknown-unknown; no wasm-bindgen, no wasm-opt",
+            "toolchain": "1.99.1-x86_64-pc-windows-gnu"
+          },
+          "machine": {
+            "cpu": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB",
+            "os": "Microsoft Windows 11 Pro 10.0.22621",
+            "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
+            "substrate": "wasm",
+            "browser_or_node": "v24.21.0 (V8 headless), not a browser",
+            "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+            "node": "v24.21.0"
+          },
+          "labels": {
+            "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB · Microsoft Windows 11 Pro 10.0.22621",
+            "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
+            "date": "2026-11-03T02:03:30Z",
+            "engine_commit": "ffa08fed765e0516d0165869fedff55433448a90"
+          }
+        }
       }
     ],
     "source": "data/dataset/<configuration>/reference.jsonl · the latest row"

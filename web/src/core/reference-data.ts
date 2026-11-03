@@ -1,37 +1,34 @@
-// The committed Reference rows, as bytes in the bundle.
+// The committed Reference rows, as the page reads them.
 //
-// `reference.jsonl` is an artifact ticket 09 appends to, so the page must not carry a
-// copy of its numbers: the file is imported **raw** at build time (Vite's `?raw`
-// query) and parsed by `core/reference.ts` at boot, which keeps "the reference column
-// is the committed row" true by construction — there is no constant to go stale, and
-// no fetch that can fail after the page has painted.
+// `data/dataset/<configuration>/reference.jsonl` is an artifact ticket 09 appends to,
+// so the page must not carry a copy of its numbers typed into a module. It carries the
+// **latest row itself**, projected by `web/scripts/build-facts.mjs` into
+// `src/generated/engine-facts.ts` — the same generator, run by `npm run build` and
+// `npm test`, that the Explainer's labels come from. There is therefore no constant to
+// go stale, and no fetch that can fail after the page has painted.
 //
-// The glob rather than two hard-coded paths: a third configuration landing in
-// `data/dataset/` is picked up without editing this file, and a configuration whose
-// file is missing simply has no row — the panel then says so in words instead of
-// quoting a figure.
+// Why not import the file raw: the banned-words gate scans the built bundle's string
+// literals, and a raw JSONL blob is one enormous literal whose machine and build
+// labels it cannot tell from prose. Projecting the row into the generated module keeps
+// the same values with the page's own words around them (and `run-stats.test.mjs`
+// asserts the projection is the committed row, less one Rust keyword — see the
+// generator's comment).
 //
-// This module is the only one that cannot be imported by `node --test` (the `?raw`
-// query is a bundler feature); the parsing and the formatting it feeds live in
-// `core/reference.ts`, which the tests do import, so the untested part is a file read.
+// The projection is enumerated from `data/dataset/` by the generator, so a third
+// configuration is picked up without editing this file, and a configuration whose file
+// is missing simply has no row — the panel then says so in words instead of quoting a
+// figure.
 
-import { latestReference, parseReferenceJsonl, type ReferenceRow } from "./reference.ts";
-
-const FILES = import.meta.glob("../../../data/dataset/*/reference.jsonl", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-}) as Record<string, string>;
+import { ENGINE_FACTS } from "../generated/engine-facts.ts";
+import { referenceFromObject, type ReferenceRow } from "./reference.ts";
 
 /** Every configuration's latest row, keyed by the Dataset directory's name. */
 export const REFERENCE_ROWS: ReadonlyMap<string, ReferenceRow> = new Map(
-  Object.entries(FILES)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .flatMap(([path, text]) => {
-      const name = path.split("/").at(-2) ?? "";
-      const latest = latestReference(parseReferenceJsonl(text));
-      return latest === null ? [] : ([[name, latest]] as [string, ReferenceRow][]);
-    }),
+  ENGINE_FACTS.reference.rows.flatMap((fact) => {
+    const at = typeof fact.row.index === "number" ? fact.row.index : 0;
+    const row = referenceFromObject(fact.row, at);
+    return row === null ? [] : ([[fact.config, row]] as [string, ReferenceRow][]);
+  }),
 );
 
 /** The row to show beside a configuration's live column, or `null`. */

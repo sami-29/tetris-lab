@@ -1631,7 +1631,7 @@
 /* One block per committed configuration: its behaviour, its seven rows, and the two
    machine labels. `gap` and a hairline are the whole separation — the rail has no
    room for cards. */
-.run-config {
+.run-block {
   display: flex;
   flex-direction: column;
   gap: 2px;

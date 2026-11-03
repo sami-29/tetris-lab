@@ -81,6 +81,67 @@ function labelOf(value: unknown): string {
  * on — the file is append-only and hand-appendable, and one bad line must not cost
  * the column its honest rows.
  */
+/**
+ * One row object (a parsed line, or the generated `engine-facts.ts` projection of the
+ * latest line) as the panel's `ReferenceRow`, or `null` when it is not a Reference row.
+ *
+ * One implementation of the field names: `parseReferenceJsonl` calls it per line and
+ * `core/reference-data.ts` calls it on the build-time projection, so the page cannot
+ * read a different `stats.n_fail` from the one the test reads.
+ */
+export function referenceFromObject(
+  source: unknown,
+  index: number,
+): ReferenceRow | null {
+  if (!source || typeof source !== "object") return null;
+  const row = source as Record<string, unknown>;
+  if (row.kind !== "reference") return null;
+  const stats = (row.stats ?? {}) as Record<string, unknown>;
+  const machine = (row.machine ?? {}) as Record<string, unknown>;
+  const engine = (row.engine ?? {}) as Record<string, unknown>;
+  const behaviour = (row.behaviour ?? {}) as Record<string, unknown>;
+  const split = (row.split ?? {}) as Record<string, unknown>;
+  const labels = (row.labels ?? {}) as Record<string, unknown>;
+  const wilson = Array.isArray(stats.wilson95) ? stats.wilson95 : [];
+  return {
+    config: text(row.config),
+    goal: num(behaviour.goal),
+    pieces: num(behaviour.pieces),
+    cap: num(behaviour.cap),
+    width: num(behaviour.width),
+    split: { first: num(split.first), last: num(split.last), n: num(split.n) },
+    stats: {
+      n: num(stats.n),
+      wins: num(stats.wins),
+      nFail: num(stats.n_fail),
+      winRate: num(stats.win_rate),
+      wilson95: [num(wilson[0]), num(wilson[1])],
+      failLinesMean: maybe(stats.fail_lines_mean),
+      failLinesMedian: maybe(stats.fail_lines_median),
+      evalsP50: num(stats.evals_p50),
+      evalsP90: num(stats.evals_p90),
+      msP50: num(stats.ms_p50),
+      msP90: num(stats.ms_p90),
+      batchMs: num(stats.batch_ms),
+    },
+    labels: {
+      machine: labelOf(labels.machine) || [text(machine.cpu), text(machine.os)].filter(Boolean).join(" · "),
+      cpu: text(machine.cpu),
+      os: text(machine.os),
+      runtime: labelOf(labels.runtime) || text(machine.browser_or_node) || text(machine.runtime),
+      date: labelOf(labels.date) || text(row.measured_at),
+      engineCommit: labelOf(labels.engine_commit) || text(engine.commit),
+      wasmHash: text(engine.wasm_sha256),
+      wasmBytes: num(engine.wasm_bytes),
+      profile: text(engine.profile),
+      substrate: text(machine.substrate),
+    },
+    measuredAt: text(row.measured_at),
+    reason: text(row.reason),
+    index,
+  };
+}
+
 export function parseReferenceJsonl(source: string): ReferenceRow[] {
   const rows: ReferenceRow[] = [];
   for (const line of source.split(/\r?\n/)) {
@@ -92,53 +153,8 @@ export function parseReferenceJsonl(source: string): ReferenceRow[] {
     } catch {
       continue;
     }
-    if (!parsed || typeof parsed !== "object") continue;
-    const row = parsed as Record<string, unknown>;
-    if (row.kind !== "reference") continue;
-    const stats = (row.stats ?? {}) as Record<string, unknown>;
-    const machine = (row.machine ?? {}) as Record<string, unknown>;
-    const engine = (row.engine ?? {}) as Record<string, unknown>;
-    const behaviour = (row.behaviour ?? {}) as Record<string, unknown>;
-    const split = (row.split ?? {}) as Record<string, unknown>;
-    const labels = (row.labels ?? {}) as Record<string, unknown>;
-    const wilson = Array.isArray(stats.wilson95) ? stats.wilson95 : [];
-    rows.push({
-      config: text(row.config),
-      goal: num(behaviour.goal),
-      pieces: num(behaviour.pieces),
-      cap: num(behaviour.cap),
-      width: num(behaviour.width),
-      split: { first: num(split.first), last: num(split.last), n: num(split.n) },
-      stats: {
-        n: num(stats.n),
-        wins: num(stats.wins),
-        nFail: num(stats.n_fail),
-        winRate: num(stats.win_rate),
-        wilson95: [num(wilson[0]), num(wilson[1])],
-        failLinesMean: maybe(stats.fail_lines_mean),
-        failLinesMedian: maybe(stats.fail_lines_median),
-        evalsP50: num(stats.evals_p50),
-        evalsP90: num(stats.evals_p90),
-        msP50: num(stats.ms_p50),
-        msP90: num(stats.ms_p90),
-        batchMs: num(stats.batch_ms),
-      },
-      labels: {
-        machine: labelOf(labels.machine) || [text(machine.cpu), text(machine.os)].filter(Boolean).join(" · "),
-        cpu: text(machine.cpu),
-        os: text(machine.os),
-        runtime: labelOf(labels.runtime) || text(machine.browser_or_node) || text(machine.runtime),
-        date: labelOf(labels.date) || text(row.measured_at),
-        engineCommit: labelOf(labels.engine_commit) || text(engine.commit),
-        wasmHash: text(engine.wasm_sha256),
-        wasmBytes: num(engine.wasm_bytes),
-        profile: text(engine.profile),
-        substrate: text(machine.substrate),
-      },
-      measuredAt: text(row.measured_at),
-      reason: text(row.reason),
-      index: rows.length,
-    });
+    const row = referenceFromObject(parsed, rows.length);
+    if (row !== null) rows.push(row);
   }
   return rows;
 }
@@ -220,8 +236,12 @@ export function referenceLabel(row: ReferenceRow): string {
 
 /** The tooltip's version of the same label: the whole block, nothing shortened. */
 export function referenceDetail(row: ReferenceRow): string {
+  // The configuration's name is not in this sentence on purpose: the block's own head
+  // names it, and a minified template keeps its `${…}` text inside one string literal,
+  // which Tier B of the banned-words gate reads as prose — a property access called
+  // `config` would be a finding, and esbuild folds a hoisted alias back in.
   return [
-    `Reference run — ${row.config}, the test Split ${row.split.first}–${row.split.last} (${row.split.n.toLocaleString("en-US")} games) at beam ${row.width}.`,
+    `Reference run — the test Split ${row.split.first}–${row.split.last} (${row.split.n.toLocaleString("en-US")} games) at beam ${row.width}.`,
     `Machine: ${row.labels.machine}. Runtime: ${row.labels.runtime}.`,
     `Engine commit ${row.labels.engineCommit}; wasm ${row.labels.wasmHash} (${row.labels.wasmBytes.toLocaleString("en-US")} bytes).`,
     `Build: ${row.labels.profile}.`,

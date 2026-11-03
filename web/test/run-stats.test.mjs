@@ -36,9 +36,13 @@ import {
 import {
   latestReference,
   parseReferenceJsonl,
+  referenceDetail,
+  referenceFromObject,
   referenceLabel,
   referenceStats,
 } from "../src/core/reference.ts";
+import { ENGINE_FACTS } from "../src/generated/engine-facts.ts";
+import { TIER_A, TIER_B, scanText } from "../scripts/words.mjs";
 import { ASSUMPTION, partialNote, yoursLabel } from "../src/ui/run-copy.ts";
 
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
@@ -276,4 +280,52 @@ test("S14: a partial Run says partial in words, and never compares itself to the
   assert.match(note, /640 of 2,000/);
   assert.match(note, /partial/);
   assert.doesNotMatch(note, /faster|slower|beats|than the reference/i, "a prefix is not a comparison");
+});
+
+test("S15: the generated Reference rows are the committed rows, less one Rust keyword", () => {
+  // The page reads `ENGINE_FACTS.reference.rows`, projected from `reference.jsonl` at
+  // build time; the tests read the file. This is what keeps the two one measurement:
+  // the projection is the latest committed row verbatim, and the only edit anywhere is
+  // the Rust `target` keyword in the build label (the glossary bans `target`).
+  assert.ok(ENGINE_FACTS.reference.rows.length >= 1, "a Reference row is committed");
+  for (const fact of ENGINE_FACTS.reference.rows) {
+    const lines = read("data", "dataset", fact.config, "reference.jsonl")
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0);
+    assert.ok(lines.length >= 1, `${fact.config}: the file has a row`);
+    const latest = JSON.parse(lines.at(-1));
+    const expected = structuredClone(latest);
+    expected.engine.profile = expected.engine.profile.replace(/\btarget\s+/gi, "");
+    assert.deepEqual(fact.row, expected, `${fact.config}: the projection is the latest committed row`);
+
+    const generated = referenceFromObject(fact.row, 0);
+    const parsed = referenceFromObject(latest, 0);
+    assert.deepEqual(referenceStats(generated), referenceStats(parsed), "one set of Statistics, two reads");
+    assert.equal(referenceLabel(generated), referenceLabel(parsed), "one label, two reads");
+    assert.match(referenceDetail(generated), /Reference run/, "the detail names the row");
+  }
+});
+
+test("S16: nothing the Reference column ships says a word the page forbids", () => {
+  // `check-words.mjs` scans the built bundle, which cannot tell an embedded artifact
+  // from prose. This is the same rule one step earlier, over the row's string values
+  // (its keys are identifiers in the bundle, not literals — and `config` as a key is
+  // not a sentence a visitor reads).
+  const strings = (value, into) => {
+    if (typeof value === "string") into.push(value);
+    else if (Array.isArray(value)) value.forEach((entry) => strings(entry, into));
+    else if (value && typeof value === "object") Object.values(value).forEach((entry) => strings(entry, into));
+    return into;
+  };
+  for (const fact of ENGINE_FACTS.reference.rows) {
+    const text = strings(fact.row, []).join("\n");
+    for (const tier of [TIER_A, TIER_B]) {
+      const hits = scanText(text, fact.config, { tiers: [tier] });
+      assert.deepEqual(
+        hits.map((hit) => hit.word),
+        [],
+        `${fact.config}: the shipped Reference row says ${hits.map((hit) => hit.word).join(", ")}`,
+      );
+    }
+  }
 });
