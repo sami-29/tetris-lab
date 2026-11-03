@@ -56,6 +56,7 @@ import { moveToX, stripMode, xToMove } from "./ui/seek.ts";
 import { createFigure, adoptFigure, type FigureId, type FigureView } from "./ui/figure.ts";
 import { pieceGlyph, svgIcon, type IconName } from "./ui/icons.ts";
 import { adoptTitles, installTooltips } from "./ui/tooltip.ts";
+import { mountExplainer } from "./ui/explainer.ts";
 import { columnProfile, profileScale, profileTip } from "./ui/readout.ts";
 import { layerRows, logStamp, sparkline } from "./ui/inspector.ts";
 // Ticket 12's drill-down, mounted rather than re-implemented: the same decoded trace
@@ -118,6 +119,7 @@ const sheetList = must<HTMLElement>("#sheet-list");
 const drawer = must<HTMLElement>("#drawer");
 const scrim = must<HTMLElement>("#scrim");
 const drawerClose = must<HTMLButtonElement>("#drawer-close");
+const explainerBody = must<HTMLElement>("#explainer-body");
 const playgroundRoot = must<HTMLElement>("#playground");
 const presetName = must<HTMLElement>("#preset-name");
 const bandCanvas = must<HTMLCanvasElement>("#band");
@@ -1060,15 +1062,36 @@ function run(action: Action): void {
  * The Explainer drawer.
  *
  * It opens over the page rather than pushing it: a no-scroll page has nowhere else to
- * put 500 words, and a drawer that reflowed the grid would move the Board — which is
- * the one thing §2 says must not happen.
+ * put the Explainer's words, and a drawer that reflowed the grid would move the Board —
+ * which is the one thing §2 says must not happen.
+ *
+ * Focus moves into the drawer on open and back to whatever opened it on close, so
+ * `How it works`, `E`, the close button and `Esc` are one state (`data-open`) with one
+ * owner — and `E` still closes a drawer the button opened, because `resolveKey` lets
+ * `E` past a focused button (the button owns Space and the arrows, not the drawer's
+ * keys).
  */
+let drawerReturn: HTMLElement | null = null;
+
 function setDrawer(open: boolean): void {
+  const wasOpen = drawer.dataset.open === "true";
+  if (open && !wasOpen) {
+    const active = document.activeElement;
+    drawerReturn = active instanceof HTMLElement && active !== document.body ? active : null;
+  }
   drawer.dataset.open = String(open);
   drawer.setAttribute("aria-hidden", String(!open));
   scrim.dataset.open = String(open);
-  if (!open) setSheet(false);
-  else drawer.focus();
+  if (!open) {
+    setSheet(false);
+    const back = drawerReturn;
+    drawerReturn = null;
+    if (back?.isConnected) back.focus();
+  } else {
+    // `#drawer` carries `tabindex="-1"`, so the panel — not its close button — takes
+    // focus and the screen reader announces the title, not the first control.
+    drawer.focus();
+  }
 }
 
 function setSheet(open: boolean): void {
@@ -1092,6 +1115,11 @@ for (const { keys: chord, does } of KEY_MAP) {
   detail.textContent = does;
   sheetList.append(term, detail);
 }
+
+// Ticket 16's prose: nine sections, every figure resolved from the artifact that
+// owns it, mounted once before the first paint. The sheet above is a sibling and is
+// never replaced.
+mountExplainer(explainerBody);
 
 /* ---- the move strip is the seek bar ------------------------------------ */
 strip.addEventListener("pointerdown", (event) => {
