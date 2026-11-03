@@ -1,8 +1,9 @@
-# Cutover runbook — the steps only a maintainer can run
+# Cutover runbook: the steps only a maintainer can run
 
 Ticket 18 is built and verified in the tree. This file is the other half: the
-external steps an agent must not execute (no push, no rename, no deploy, no Render
-command, no domain change, no merge into `main`). **None of it has been run.**
+external steps an agent must not execute, which means no push, no rename, no
+deploy, no Render command, no domain change and no merge into `main`. None of it
+has been run.
 
 Each step has a command where one exists, and a verifiable outcome. The close
 condition is what the ticket asks for, not a feeling that it worked.
@@ -42,11 +43,11 @@ exists, and only then re-run both checks against the custom domain.
 That PASS is the script's own assertions: the live win rate and Evaluations equal
 the Reference row's, the millisecond rows differ from it (this machine's own, and
 say so), and the Run completes inside the script's 5 s budget. The script times
-that budget from the click to the last game applied — 1.73 s on the maintainer box
-on 2026-11-03 — while the page's own readout for the same 2,000 games reads 12.3 s
-because it includes Worker start-up. `docs/measurements/delivery.md` records both
-numbers, and labels which is which; do not compare the readout against the
-script's budget.
+that budget from the click to the last game applied, which was 1.73 s on the
+maintainer box on 2026-11-03, while the page's own readout for the same 2,000
+games reads 12.3 s because it includes Worker start-up.
+`docs/measurements/delivery.md` records both numbers and labels which is which; do
+not compare the readout against the script's budget.
 
 ## 2. Delete the probe Worker
 
@@ -58,9 +59,9 @@ npx wrangler delete --name browser-tetris-lab-probe
 ```
 
 **Close when:** the probe Worker is gone from the dashboard and
-`https://lab.samibentaleb.com` still passes both checks from step 1.
+https://lab.samibentaleb.com still passes both checks from step 1.
 
-## 3. Retire Render — no redirect, no tombstone
+## 3. Retire Render: no redirect, no tombstone
 
 Dashboard: Render → the service → **Settings** → **Delete Web Service** → type the
 service name to confirm. Do not add a redirect, a tombstone page or a second host.
@@ -72,7 +73,7 @@ curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://<service>.onre
 ```
 
 **Close when:** the `curl` fails with a DNS error (curl exit code 6) and prints no
-HTTP status line — the name is dead, nothing answers, and there is no redirect to
+HTTP status line. The name is dead, nothing answers, and there is no redirect to
 record. A *suspended* service can still answer; a parked hostname would need a
 support request, and the fact belongs in the release note.
 
@@ -85,7 +86,7 @@ git remote -v
 ```
 
 GitHub redirects web, clone, fetch and push traffic from the old name, so the old
-repository URL keeps working — unlike the Render URL, which must die. Two
+repository URL keeps working, unlike the Render URL, which must die. Two
 consequences to remember: no new repository may be created as `tetris-algo`, or the
 redirect stops working; and a project-site URL is the one thing GitHub does not
 redirect.
@@ -93,7 +94,7 @@ redirect.
 **Close when:** `git push --dry-run` succeeds through the redirect and the
 repository's name in the browser is `tetris-lab`.
 
-## 5. Merge `rewrite` into `main` — one replacement commit
+## 5. Merge `rewrite` into `main` as one replacement commit
 
 `main` is an ancestor of `rewrite`, so this merge cannot conflict. `--no-ff` gives
 the cutover one commit on `main` whose tree is `rewrite`'s tree.
@@ -133,7 +134,7 @@ completed in the repository during the past seven days, which is why this is las
   Two edits are owed there: §5.7's cap sentence (every committed board is
   `<= the cap`, and `==` only for the maximum over a configuration) and §12
   rewritten as measurements. `docs/measurements/delivery.md` carries every row,
-  its number and its machine label; the ticket-18 report carries the exact table to
+  its number and its machine label; the ticket-18 report carries the table to
   paste.
 - If the deploy moved the sizes, update `docs/measurements/delivery.md` in the same
   commit as the new numbers.

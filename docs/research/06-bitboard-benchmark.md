@@ -79,13 +79,22 @@ Worker-restart cost, wasm u32 (was 05's open question): compile a module from by
 ## 7. Reproduce
 
 The harness is deleted at cutover, so nothing here runs on a fresh clone. Recover
-each file with `git show 4bb9354:prototype/<path>` — the `run-bench.sh` orchestrator,
-the Python baselines, the native and wasm kernels, the C++ kernel, and the exported
-games file — then run the harness's own commands. The table above is the preserved
-evidence; the commands were never re-run after the cutover.
+each file with `git show 4bb9354:prototype/<path>`: the `run-bench.sh` orchestrator,
+the Python baselines, the native and wasm kernels, the C++ kernel and the exported
+games file. Then run the harness's own commands. The table above is the preserved
+evidence, and the commands were not re-run after the cutover.
 
-Per-game rows (one JSON object per seed) landed in the spike's `data/*.jsonl`; the aggregated table was `results.md` beside them. Both were deleted with the harness; recover them with `git show 4bb9354:prototype/<path>` when they were tracked, and see the status line for the rest.
+Per-game rows, one JSON object per seed, landed in the spike's `data/*.jsonl`, and
+the aggregated table was `results.md` beside them. Both were deleted with the
+harness. Recover them with `git show 4bb9354:prototype/<path>` where they were
+tracked, and read the status line for the rest.
 
 ## 8. Answer to the ticket
 
-The rewrite buys **~1,900× in wasm and ~3,200× natively** on the default workload (66.6 ms → 0.030 ms per game; 71 s → 30 ms per 1000 games), using **u32 column words, scalar wasm, Rust**. SIMD128 loses 15%; u64 columns lose 2.1× in wasm; C++ has no speed advantage over Rust; wasm sits 1.69× below an optimally-flagged native build and ~8% behind a default-flagged one; replacing a terminated worker's instance costs 0.06 ms. Throughput is solved, so ticket 04's width/heuristic/dedup choices — not the engine — decide final quality.
+The rewrite buys ~1,900× in wasm and ~3,200× natively on the default workload
+(66.6 ms → 0.030 ms per game; 71 s → 30 ms per 1000 games), using u32 column words,
+scalar wasm and Rust. SIMD128 loses 15%; u64 columns lose 2.1× in wasm; C++ has no
+speed advantage over Rust; wasm sits 1.69× below an optimally-flagged native build
+and ~8% behind a default-flagged one; replacing a terminated worker's instance costs
+0.06 ms. Throughput is solved, so the quality that remains to be won is ticket 04's
+territory: beam width, the heuristic and dedup.

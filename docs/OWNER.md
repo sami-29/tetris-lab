@@ -25,8 +25,6 @@ it.
 
 ## Who it is for
 
-Two readers, with different needs.
-
 A visitor arrives at one page that opens on a game solving itself, can change
 that game (seed, goal, piece count, starting height), watch the beam search as a
 score band with the winning line drawn through it, drill into a bounded tree, run
@@ -41,7 +39,7 @@ that needs a human with credentials.
 
 ## The one live URL
 
-**https://lab.samibentaleb.com**, served as the Cloudflare Worker `tetris-lab`
+https://lab.samibentaleb.com is served as the Cloudflare Worker `tetris-lab`
 from static assets only: `web/wrangler.jsonc` has no `main` and no `build` key,
 so there is no Worker script and no Cloudflare-side build. `deploy.yml` deploys
 it after a green `gates` run on `main`, and uploads the exact `web/dist` tree that
@@ -76,8 +74,8 @@ generator makes of a seed. `engine-wasm/` owns the boundary and nothing else.
 `bench/` owns truth: the committed games, the gates that keep them honest, and
 every measurement. `web/` owns presentation: what a visitor sees and what a URL
 means. `engine/` never imports wasm or JS types and `engine-wasm/` holds no search
-code, which is what makes "the browser number is not a guess" structural rather
-than a promise (`README.md`, `docs/adr/0002-engine-architecture.md`).
+code, so a number the browser reports can be required to equal the one the native
+bench reports (`README.md`, `docs/adr/0002-engine-architecture.md`).
 
 So a change that moves a number the page prints is an `engine/` change and lands
 as a gate diff; a change that moves what the page says is a `web/` change.
@@ -140,27 +138,31 @@ lies about the tree breaks the build. This file is subject to it.
 
 Four groups of numbers, each with one home.
 
-**The build's size.** Gate 6 measures it and `docs/measurements/delivery.md`
-writes it down, with a per-file table. The current build: wasm 58,852 B raw and
-21,737 B gzipped, whole page 77,495 B gzipped over 234,046 B raw across 5 files.
-Against the budgets that is 57.5 KiB of wasm against a 100 KiB warn line and a
+### The build's size
+
+Gate 6 measures it and `docs/measurements/delivery.md` writes it down, with a
+per-file table. The current build is 58,852 B of wasm raw and 21,737 B gzipped,
+and a whole page of 77,495 B gzipped over 234,046 B raw across 5 files. Against
+the budgets that is 57.5 KiB of wasm against a 100 KiB warn line and a
 150 KiB fail line, and a 75.7 KiB page against a 150 KiB fail line. Regenerate the
 table with `node web/scripts/gate-artifacts.mjs sizes`, which is the same
 measurement gate 6 asserts.
 
-**The quality and cost of the search.** `data/measurements/width-curve.json` holds
-the width curve, which names `DEFAULT_BEAM` 25 and the width cap 800, and records
-that 1,600 was measured and failed the 200 ms default-configuration budget at
-203.46 ms. `data/measurements/ablation-ladder.json` and
+### The quality and cost of the search
+
+`data/measurements/width-curve.json` holds the width curve, which names
+`DEFAULT_BEAM` 25 and the width cap 800, and records that 1,600 was measured and
+failed the 200 ms default-configuration budget at 203.46 ms. `data/measurements/ablation-ladder.json` and
 `docs/measurements/ablation-ladder.md` hold the ladder that chose the shipped
 evaluator: E1 at published weights, with dedup-off and no-suicide-off deleted from
 the engine because neither moved anything beyond its confidence interval, and the
 tail search kept because it did. `data/measurements/golden-evals.json` holds the
 evaluations-to-solve fingerprint gate 6 compares against.
 
-**What a visitor is compared against.** `reference.jsonl` in each configuration
-directory, append-only, one labelled measurement per row. Index 3 is the live row
-for both configurations: 1,000 of 1,000 wins, wasm `4bfa56b5…` at 58,852 B, engine
+### What a visitor is compared against
+
+`reference.jsonl` in each configuration directory, append-only, one labelled
+measurement per row. Index 3 is the live row for both configurations: 1,000 of 1,000 wins, wasm `4bfa56b5…` at 58,852 B, engine
 commit `a773ce5`, measured 2026-11-03T03:37:10Z. From the same rows: Solve p90
 4.536 ms on the default configuration against a 200 ms budget, 6.547 ms on the
 harder one against a 1,000 ms budget, and first solve p75 5.824 ms over 50 trials
@@ -168,9 +170,11 @@ against a 1,000 ms budget. Index 2 is void and says so in its own `reason` field
 old rows are never edited, only superseded (`docs/measurements/delivery.md`,
 `data/dataset/README.md`).
 
-**The Dataset itself.** Two configurations, 2,000 seeded games each, split into a
-test split (seeds 0-999, the only split a Run or a Reference run sees) and a
-tuning split (1,000-1,999, touched only by tuning, ablations and width curves).
+### The Dataset itself
+
+Two configurations, 2,000 seeded games each, split into a test split (seeds
+0-999, the only split a Run or a Reference run sees) and a tuning split
+(1,000-1,999, touched only by tuning, ablations and width curves).
 `games.txt` is 270,949 B for the goal-8 configuration and 390,951 B for the goal-12
 one, and 926 of the 2,000 cap-7 boards are shorter than the cap
 (`data/dataset/README.md`). The trace fixture the band and the tree render from is
@@ -239,34 +243,38 @@ nothing has touched.
 
 ## Known overruns and open edges
 
-**The Run readout is over its budget.** The Run's budget is 5 s
-(`docs/runbook.md`). The page's own readout for 2,000 games on 8 workers reads
-12.3 s, because it includes Worker start-up; the browser check's own measurement,
+### The Run readout is over its budget
+
+The Run's budget is 5 s (`docs/runbook.md`). The page's own readout for 2,000
+games on 8 workers reads 12.3 s, because it includes Worker start-up; the browser check's own measurement,
 from the click to the last game applied, is 1.73 s and is the number the script's
 budget assertion is written against. Both are recorded in
 `docs/measurements/delivery.md` and neither was adjusted, and the runbook says
 plainly not to compare the readout against the script's budget. If you want the
 two measures to agree, the readout is what changes.
 
-**The width curve did not run to the top.** `data/measurements/width-curve.json`
-records `complete: false` with widths 1,600, 3,200 and 6,400 unmeasured, because
-the curve stops at the first width that fails a budget and 1,600 failed the 200 ms
+### The width curve did not run to the top
+
+`data/measurements/width-curve.json` records `complete: false` with widths 1,600,
+3,200 and 6,400 unmeasured, because the curve stops at the first width that fails a budget and 1,600 failed the 200 ms
 default-configuration budget at 203.46 ms on native. The cap is therefore 800, and
 `DEFAULT_BEAM` was named on cost rather than on quality: both shipped
 configurations win 1,000 of 1,000 games at width 800, so no width could be
 separated on the quality axis at all.
 
-**Two rows have no number on purpose.** The six gate results on the deployed
-commit, and the live smoke test, are both "not yet measured", because nothing is
-deployed. `docs/measurements/delivery.md` carries them as labelled statuses rather
+### Two rows have no number on purpose
+
+The six gate results on the deployed commit, and the live smoke test, are both
+"not yet measured", because nothing is deployed. `docs/measurements/delivery.md` carries them as labelled statuses rather
 than blanks, and lists the ten things that were not observed, including the edge
 headers, the preview URL, rollback, and whether a Workers Scripts token can attach
 a new custom domain on a first deploy.
 
-**Cross-machine rebuild reproducibility is unverified.** Two builds of the same
-tree on this box produced byte-identical output across all nine files
-(`docs/measurements/delivery.md`), and the same has to hold on the CI image, which
-it has not been checked against. The deploy ships the artifact the gates produced
+### Cross-machine rebuilds are unverified
+
+Two builds of the same tree on this box produced byte-identical output across all
+nine files (`docs/measurements/delivery.md`), and the same has to hold on the CI
+image, which it has not been checked against. The deploy ships the artifact the gates produced
 instead of rebuilding, so the question does not have to be answered for a deploy
 to be correct.
 
