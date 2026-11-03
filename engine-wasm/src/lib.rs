@@ -166,7 +166,8 @@ pub extern "C" fn solve_batch(
         let seed = first_seed.wrapping_add(index);
         let summary = match generate_game(seed, pieces, height_cap) {
             Ok(game) => {
-                let result = engine_solve(&game.board, game.sequence.as_slice(), &config, shipped());
+                let result =
+                    engine_solve(&game.board, game.sequence.as_slice(), &config, shipped());
                 match result.status {
                     Status::Ok => [
                         u32::from(result.won),

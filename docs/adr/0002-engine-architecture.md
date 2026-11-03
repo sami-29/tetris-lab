@@ -8,7 +8,7 @@ The code lives in one Rust workspace plus the web app: `engine/` (board, pieces,
 
 - **Port the shipped heuristic and stop** — rejected: the measured ceiling makes beam width nearly free (~1–3 ms for a 1,600-wide beam), while the current evaluator is the known quality limit (a dead lines term, holes weighted at 0.7 cells of height), so shipping it would leave the cheap win unused.
 - **Dedup + wide beam, skip the evaluator rewrite and tail** — rejected for the same reason from the other side: it spends the speed budget without touching the term that decides quality.
-- **UCT/MCTS** — rejected in `.scratch/browser-tetris-lab/research/04-algorithm-frontier.md`: tuned for versus play, needs seeded RNG, unclear at fixed small budgets.
+- **UCT/MCTS** — rejected in `docs/research/04-algorithm-frontier.md`: tuned for versus play, needs seeded RNG, unclear at fixed small budgets.
 - **Shipping move lists for every game** — rejected: 1000 games × a few hundred bytes is needless traffic for data no visitor replays. Summaries cross the boundary; move lists are fetched for the one game being watched.
 
 ## Consequences

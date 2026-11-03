@@ -1,6 +1,6 @@
 # Rust on wasm32, scalar u32 column bitboards, raw exports
 
-The browser rewrite needs ~10⁷ board evaluations per second inside a visitor's tab, so the language and representation were chosen against measurement rather than expectation: a throwaway spike (`prototype/`, findings in `.scratch/browser-tetris-lab/research/06-bitboard-benchmark.md`) ported the shipped solver faithfully and benchmarked it on identical games. We ship **Rust stable, `wasm32-unknown-unknown`, raw `WebAssembly` exports, ten u32 column words, scalar code, one instance per Worker** — 16.4M evals/s in Node (0.030 ms per default game), 63 KB of wasm, against 8.6k evals/s for the numpy solver.
+The browser rewrite needs ~10⁷ board evaluations per second inside a visitor's tab, so the language and representation were chosen against measurement rather than expectation: a throwaway spike (findings in `docs/research/06-bitboard-benchmark.md`) ported the shipped solver faithfully and benchmarked it on identical games. We ship **Rust stable, `wasm32-unknown-unknown`, raw `WebAssembly` exports, ten u32 column words, scalar code, one instance per Worker** — 16.4M evals/s in Node (0.030 ms per default game), 63 KB of wasm, against 8.6k evals/s for the numpy solver.
 
 ## Considered Options
 
