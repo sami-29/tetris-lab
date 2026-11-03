@@ -93,13 +93,18 @@ test("a modifier chord belongs to the browser, and typing is not a shortcut", ()
     { tagName: "INPUT" },
     { tagName: "TEXTAREA" },
     { tagName: "SELECT" },
-    { tagName: "BUTTON" },
     { tagName: "DIV", isContentEditable: true },
   ]) {
-    for (const name of [" ", "ArrowLeft", "r", "e", "?"]) {
+    for (const name of [" ", "ArrowLeft", "r", "e", "?"])
       assert.equal(resolveKey(key({ key: name, target })), null, `${target.tagName} keeps ${name}`);
-    }
   }
+  // A button owns Space and the arrows, which are its own keys. It does not own the
+  // drawer's: after a click the `How it works` control holds focus, and a focused
+  // control must not make `E` dead (ticket 16's "closes from either").
+  for (const name of [" ", "ArrowLeft", "r"])
+    assert.equal(resolveKey(key({ key: name, target: { tagName: "BUTTON" } })), null, `a button keeps ${name}`);
+  for (const name of ["e", "E", "?", "Escape"])
+    assert.notEqual(resolveKey(key({ key: name, target: { tagName: "BUTTON" } })), null, `a button does not own ${name}`);
   // A plain element, a canvas and a missing target are all fair game.
   assert.deepEqual(resolveKey(key({ key: " ", target: { tagName: "BODY" } })), { type: "toggle" });
   assert.deepEqual(resolveKey(key({ key: " ", target: null })), { type: "toggle" });
