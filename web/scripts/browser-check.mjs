@@ -901,7 +901,11 @@ try {
         await sleep(10);
         const state = await runState();
         if (state.status === "complete" || state.status === "failed") break;
-        if (/[1-9]/.test(state.state)) {
+        // Games actually measured, read off the progress line: the line also names
+        // the total, so "a digit somewhere" is not the same as "work has landed".
+        const counted = /(\d[\d,]*) of [\d,]+ games/.exec(state.state);
+        const games = counted ? Number(counted[1].replaceAll(",", "")) : 0;
+        if (state.status === "running" && games > 0) {
           await clickId("run-stop");
           break;
         }
