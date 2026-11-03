@@ -456,8 +456,9 @@ test("the build writes the manifest, and wrangler is a build-time tool", () => {
 
 test("the built page references its hashed assets, when a build is present", (t) => {
   const index = join(DIST, "index.html");
-  if (!existsSync(index)) {
-    t.skip("no dist/ yet — `npm run build` writes it, and `npm run gates` asserts it");
+  const manifestPath = join(DIST, "manifest.json");
+  if (!existsSync(index) || !existsSync(manifestPath)) {
+    t.skip("no built dist/ yet — `npm run build` writes it, and `npm run gates` asserts it");
     return;
   }
   const html = read(index);
@@ -467,7 +468,7 @@ test("the built page references its hashed assets, when a build is present", (t)
     assert.match(ref, /^\/assets\/.*-[A-Za-z0-9_-]{8}\.[a-z0-9]+$/);
     assert.ok(existsSync(join(DIST, ref)), `index.html names ${ref}, which is not in dist/`);
   }
-  const manifest = JSON.parse(read(join(DIST, "manifest.json")));
+  const manifest = JSON.parse(read(manifestPath));
   const paths = Object.values(manifest.assets).map((asset) => asset.path);
   for (const ref of refs) assert.ok(paths.includes(ref), `${ref} is not in the manifest`);
   assert.doesNotMatch(html, /[?&]v=/);
