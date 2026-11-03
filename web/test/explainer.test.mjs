@@ -155,8 +155,12 @@ test("the prose contains no digit of its own: every number is a slot", () => {
 test("the drawer is written in the glossary's words and free of the old stack", () => {
   const hits = scanText(explainerText(), "src/ui/explainer.ts", { tiers: [TIER_A, TIER_B] });
   assert.deepEqual(hits, [], formatHits(hits, 1));
-  const source = scanFile(join(WEB, "src", "ui", "explainer.ts"), { tiers: [TIER_A, TIER_B] });
-  assert.deepEqual(source, [], "and its own comments do not carry a banned word into the map either");
+  // The module's own text, at real line numbers, for Tier A only: the source ships
+  // inside `dist/assets/*.js.map`, so a hard token in a comment is delivered to the
+  // browser. Tier B is a prose rule and the module's identifiers (`config-count`, an
+  // import path) are not prose.
+  const source = scanFile(join(WEB, "src", "ui", "explainer.ts"), { tiers: [TIER_A] });
+  assert.deepEqual(source, [], "no hard token reaches the source map");
 });
 
 test("the weight block is the shipped table, all eight, in the engine's order", () => {
@@ -233,10 +237,13 @@ test("E closes the drawer from the button that opened it", () => {
 test("the word gate names the file, the line and the word", () => {
   const text = "first line\nsecond line with numpy in it\nthird line with an adaptive beam\n";
   const hits = scanText(text, "dist/assets/index-abc.js", { tiers: [TIER_A] });
-  assert.equal(hits.length, 1);
-  assert.equal(hits[0].file, "dist/assets/index-abc.js");
-  assert.equal(hits[0].line, 2);
-  assert.equal(hits[0].word, "numpy");
+  assert.deepEqual(
+    hits.map((hit) => [hit.file, hit.line, hit.word]),
+    [
+      ["dist/assets/index-abc.js", 2, "numpy"],
+      ["dist/assets/index-abc.js", 3, "adaptive beam"],
+    ],
+  );
   assert.match(formatHits(hits, 1), /dist\/assets\/index-abc\.js:2:\d+/);
 
   // A built artifact that does not exist is an error, not a silent pass.

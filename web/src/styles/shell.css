@@ -1382,6 +1382,45 @@
   color: var(--ink2);
 }
 
+/* Ticket 16's prose: a bold run-in lead instead of an <h3> block (a heading costs
+   two lines each in a fixed-height panel), a dotted-underline fact whose tooltip
+   names the artifact it came from, and the Weight block as two columns of four. */
+.dbody p > b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.dbody .fig {
+  color: var(--ink);
+  border-bottom: 1px dotted var(--line2);
+  cursor: help;
+}
+
+.dbody .weights {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 12px;
+  margin-top: 2px;
+  font: var(--fs-chip) / 1.4 var(--mono);
+  color: var(--ink2);
+}
+
+.dbody .weights .wpair {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: help;
+}
+
+.dbody .weights .wname {
+  color: var(--ink3);
+}
+
+.dbody .weights .num {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
 .dbody .note {
   border-left: 2px solid var(--amber-dim);
   padding-left: 9px;

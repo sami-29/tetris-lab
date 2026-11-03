@@ -101,7 +101,7 @@ test("a modifier chord belongs to the browser, and typing is not a shortcut", ()
   // A button owns Space and the arrows, which are its own keys. It does not own the
   // drawer's: after a click the `How it works` control holds focus, and a focused
   // control must not make `E` dead (ticket 16's "closes from either").
-  for (const name of [" ", "ArrowLeft", "r"])
+  for (const name of [" ", "ArrowLeft", "Home"])
     assert.equal(resolveKey(key({ key: name, target: { tagName: "BUTTON" } })), null, `a button keeps ${name}`);
   for (const name of ["e", "E", "?", "Escape"])
     assert.notEqual(resolveKey(key({ key: name, target: { tagName: "BUTTON" } })), null, `a button does not own ${name}`);
