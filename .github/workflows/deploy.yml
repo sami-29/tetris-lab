@@ -1,0 +1,240 @@
+# Deploy the Lab (ticket 17): one atomic Worker version, then a smoke test
+# that reports loudly.
+#
+# Three things this file must never become:
+#
+#   * a Cloudflare-side build. `web/wrangler.jsonc` has no `main` and no
+#     `build`, and there is no Workers Builds project: the Gate set would live
+#     outside the repository (§10).
+#   * a command-line-only deploy. The only path to production is a green
+#     `gates` run on `main`; a gate nobody can break is a gate that gets
+#     skipped (§10).
+#   * a rollback machine. A live-but-wrong deploy is the operator's call, and a
+#     rollback to a known-bad version is worse than a red badge -- so there is
+#     no `wrangler rollback` here and no `continue-on-error` on the smoke
+#     steps: they fail the run and never auto-roll-back (§10). The command to
+#     run by hand is in README.md.
+#
+# Why `workflow_run` and not `needs:`: `needs` is job-scoped inside one file,
+# so a separate `deploy.yml` cannot depend on `gates.yml`'s job. `workflow_run`
+# is the supported cross-workflow trigger. It has one sharp edge -- a
+# `workflow_run` job runs on the **default branch's** ref, so `github.sha` is
+# the last commit on `main`, not the commit that was gated. The checkout below
+# therefore names `github.event.workflow_run.head_sha` explicitly.
+#
+# `deploy.yml` must exist on the default branch before this can fire at all
+# (GitHub only dispatches `workflow_run` to workflow files present there),
+# which is why the cutover (ticket 18) is what turns this on.
+
+name: deploy
+
+on:
+  # The publish path: `gates` completed on `main`. The job's `if:` below narrows
+  # this to a green *push* run; a pull request cannot deploy.
+  workflow_run:
+    workflows: [gates]
+    types: [completed]
+    branches: [main]
+  # The other path, and it never deploys: upload a version and print its preview
+  # URL, for a branch that needs a real URL to judge (§10: "hand-triggered, no
+  # per-PR automatic previews").
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "commit or branch to upload as a preview version"
+        required: true
+        type: string
+      alias:
+        description: "preview alias (lowercase letters, digits, dashes)"
+        required: true
+        default: preview
+        type: string
+
+permissions:
+  contents: read
+  # `actions/download-artifact` reads the gated run's artifact with the job
+  # token; that is why `actions: read` is here.
+  actions: read
+
+concurrency:
+  group: deploy-production
+  # A deploy is never interrupted half-way: cancelling between the asset upload
+  # and the version would leave the interesting half of this file untested.
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy
+    if: >
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    # Same image as `gates.yml`, for the same reason: `rust-toolchain.toml` pins
+    # a windows-gnu host toolchain (run/log.md), so an Ubuntu runner cannot run
+    # the pinned `rustc`.
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # NOT `github.sha`: see the header. This is the gated commit.
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # The tree the gates measured, not a second build: `gates.yml` uploads
+      # `web/dist` after `npm run gates` passes, so what ships is byte-for-byte
+      # what was gated. `dist/manifest.json` (logical name -> hashed path)
+      # travels with it, which is what makes the post-deploy comparison mean
+      # something.
+      - name: the gated page
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: web/dist
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: the smoke test's tooling
+        working-directory: web
+        run: npm ci
+
+      # The upload is one operation: Workers takes the asset set and the version
+      # payload together, so no half-deploy can leave the page pointing at a
+      # file that is not there (§10). `_headers` rides in that payload, so a
+      # rollback restores the headers with the assets.
+      - name: deploy one version
+        working-directory: web
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          npx wrangler deploy 2>&1 | tee deploy.log
+
+      # The version id has to be in the log beside a failure: it is the argument
+      # to the one rollback command, and this is the only place it is recorded
+      # for free.
+      - name: record the version
+        if: always()
+        working-directory: web
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          npx wrangler deployments list 2>&1 | tee deployments.txt || true
+
+      # The smoke test. Exit 1 fails the job: no `continue-on-error`, no retry,
+      # no rollback. `set -o pipefail` so `| tee` cannot swallow the exit code.
+      - name: smoke · headers, MIME, caching, hashes, fallback, ABI
+        working-directory: web
+        shell: bash
+        env:
+          SMOKE_URL: https://lab.samibentaleb.com
+        run: |
+          set -o pipefail
+          bash scripts/verify.sh --url "$SMOKE_URL" 2>&1 | tee smoke-headers.txt
+
+      # The half curl cannot do: a real browser compiling the deployed wasm in a
+      # worker, playing the board back, and reporting the ABI handshake.
+      - name: smoke · a real browser instantiates the deployed wasm
+        working-directory: web
+        shell: bash
+        env:
+          SMOKE_URL: https://lab.samibentaleb.com
+          # Named rather than found, so a runner image change fails here loudly
+          # instead of picking a different browser from the candidate list.
+          CHROME_PATH: C:\Program Files\Google\Chrome\Application\chrome.exe
+        run: |
+          set -o pipefail
+          node scripts/browser-check.mjs --url "$SMOKE_URL/" \
+            2>&1 | tee smoke-browser.txt
+
+      # A red run has to stay diagnosable from the run page, not only the log.
+      - name: the smoke record
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## deploy smoke"
+            echo
+            echo '```'
+            for file in web/deployments.txt web/smoke-headers.txt \
+              web/smoke-browser.txt; do
+              [ -f "$file" ] && { echo "== $file"; cat "$file"; echo; }
+            done
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  # `workflow_dispatch` only. This uploads a version -- `wrangler versions
+  # upload` does not change the live deployment -- and prints the URL it can be
+  # judged at.
+  preview:
+    name: preview
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The toolchain comes from the committed pin, exactly as `gates.yml` reads
+      # it: one place names the version (§10).
+      - name: Rust toolchain from the committed pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHANNEL=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' \
+            rust-toolchain.toml)
+          if [ -z "$CHANNEL" ]; then
+            echo "::error file=rust-toolchain.toml::no channel line"
+            exit 1
+          fi
+          rustup toolchain install "$CHANNEL" --profile minimal \
+            --target wasm32-unknown-unknown
+          rustup default "$CHANNEL"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: build the page
+        working-directory: web
+        shell: bash
+        run: |
+          set -o pipefail
+          npm ci
+          npm run build
+
+      - name: upload a version with a preview alias
+        working-directory: web
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ALIAS: ${{ inputs.alias }}
+        run: |
+          set -o pipefail
+          npx wrangler versions upload \
+            --preview-alias "$ALIAS" \
+            --tag "preview-$ALIAS" \
+            --message "preview of $GITHUB_REF at $GITHUB_SHA" \
+            2>&1 | tee preview.txt
+          {
+            echo "## preview uploaded"
+            echo
+            echo "Alias \`$ALIAS\`; the URL is"
+            echo "\`https://$ALIAS-tetris-lab.<account>.workers.dev\`."
+            echo
+            echo "This run changed no deployment."
+          } >>"$GITHUB_STEP_SUMMARY"
