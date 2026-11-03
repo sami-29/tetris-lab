@@ -27,12 +27,15 @@
 //!   things Rust cannot do without a dependency (a wasm instance and gzip), and
 //!   fail with a named `cannot run` when Node or the artifact is absent.
 //!
-//! Gate 6's golden-evaluations half belongs to ticket 09. Its placeholder is
-//! fail-closed: while `data/measurements/golden-evals.json` is absent it is one
-//! `·` line that counts as no check; the moment the file exists -- in any form,
-//! including `{}` -- the Gate reports `✗ golden evaluations` and exits 1. It
-//! cannot go green by accident when ticket 09 commits a value, and the same
-//! commit must delete the stub.
+//! Gate 6's second half is ticket 09's: [`crate::golden`] compares the
+//! evaluations-to-solve and lines-to-solve vectors **exactly** against
+//! `data/measurements/golden-evals.json`, after comparing the identity the golden is
+//! keyed on (the Dataset fingerprints, the wasm hash, `DEFAULT_BEAM`, the
+//! evaluator and the toggles). Its wall clock gets one loose, calibration-normalised
+//! 4x bound and nothing else, so a slow box can only ever trip that line: §9.2's
+//! "CI guards the fingerprint, not the clock". A missing or unreadable golden is a
+//! `✗`, not a `·` — ticket 03's placeholder is gone, and a gate that cannot compare
+//! must say so.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -1534,29 +1537,100 @@ fn budgets(options: &Options) -> Report {
 
     page_gzip(&mut report, paths);
 
-    // Gate 6b: ticket 09's golden evaluations. Fail-closed on the file's
-    // existence alone, so an empty `{}` trips it too.
-    let golden = paths.golden();
-    if golden.exists() {
-        report.push(
-            Check::fail("golden evaluations")
-                .subject(format!(
-                    "{} exists but the comparisons that read it land in ticket 09; refusing to pass",
-                    golden.display()
-                ))
-                .hint("delete this placeholder in the same commit that commits the golden values (ticket 09), together with the 4x wall-clock bound"),
-        );
-    } else {
-        report.push(Check::skip(
-            "golden evaluations",
-            format!(
-                "no golden committed yet ({}); ticket 09 owns the evaluations fingerprint and the 4x wall-clock bound",
-                golden.display()
-            ),
-        ));
+    for check in golden_checks(paths) {
+        report.push(check);
     }
 
     report
+}
+
+/// Gate 6b: the exact fingerprint against the committed golden values, and the loose
+/// clock bound around it (§9.2 gate 6, §9.3).
+///
+/// The order is the argument, not an implementation detail: the golden is loaded and
+/// its identity checked *before* a single seed is compared, so a moved Dataset or a new
+/// artifact can never be reported as a behaviour drift. The measurement itself is
+/// [`crate::reference::measure`] — the same function `bench reference` appends a row
+/// from — on the wasm substrate, because that is the engine a visitor's Run uses and
+/// the golden's ms rows are wasm ones.
+fn golden_checks(paths: &Paths) -> Vec<Check> {
+    let path = paths.golden();
+    if !path.exists() {
+        return vec![Check::fail("golden evaluations")
+            .subject(format!("no golden is committed at {}", path.display()))
+            .lines([
+                "gate 6b compares the evaluations-to-solve vector exactly; without a golden there is nothing to compare against".to_string(),
+                format!(
+                    "expected: 1000 seeds per configuration, width from {} (DEFAULT_BEAM), Split 0-999",
+                    paths.measurements.join("width-curve.json").display()
+                ),
+            ])
+            .hint("measure and append the Reference run first (`bench reference --append --reason \"…\"`), then pin the golden: `bench golden update --reason \"…\"`")];
+    }
+    let golden = match crate::golden::load(&path) {
+        Ok(golden) => golden,
+        Err(message) => {
+            return vec![Check::fail("golden evaluations")
+                .subject(message)
+                .hint("the file is committed and must be readable; re-pin it with `bench golden update --reason \"…\"`")];
+        }
+    };
+
+    // The identity: what the golden was pinned on. Cheap, and it comes first.
+    let width = match crate::reference::width_from_curve(&paths.measurements.join("width-curve.json")) {
+        Ok(width) => width,
+        Err(message) => {
+            return vec![Check::cannot_run("golden identity", message)
+                .hint("DEFAULT_BEAM is a committed number (§9.5): `bench width-curve` writes it")];
+        }
+    };
+    let datasets = match crate::reference::dataset_ids(&paths.data) {
+        Ok(datasets) => datasets,
+        Err(message) => {
+            return vec![Check::cannot_run("golden identity", message)
+                .hint("run `cargo run -p bench --release -- verify` and re-export the Dataset")];
+        }
+    };
+    if !paths.wasm.exists() {
+        return vec![Check::cannot_run(
+            "golden identity",
+            format!("{} is missing", paths.wasm.display()),
+        )
+        .hint(BUILD_WASM_HINT)];
+    }
+    let engine = crate::reference::engine_label(&paths.wasm);
+    let machine = crate::reference::machine_label(crate::reference::Substrate::Wasm);
+    let identity = crate::golden::identity(engine, machine, datasets, width);
+
+    // Only after the identity holds is anything measured: a golden from another
+    // Dataset is not gate 6b's question, and saying so costs nothing.
+    let (diffs, _) = crate::golden::identity_diffs(&golden, &identity);
+    if !diffs.is_empty() {
+        return crate::golden::checks(&golden, &identity, &[]);
+    }
+
+    let mut measurements = Vec::new();
+    for config in dataset::CONFIGS {
+        let options = crate::reference::MeasureOptions {
+            config,
+            split: crate::reference::Split::TEST,
+            width: Some(width),
+            substrate: crate::reference::Substrate::Wasm,
+            cal: crate::reference::CAL_DEFAULT,
+            wasm: &paths.wasm,
+        };
+        match crate::reference::measure(&options) {
+            Ok(measurement) => measurements.push(measurement),
+            Err(message) => {
+                return vec![Check::cannot_run(
+                    format!("golden evaluations · {}", config.dir),
+                    message,
+                )
+                .hint("Node 24 loads the artifact through the page's own loader; `npm --prefix web run build:wasm` builds it")];
+            }
+        }
+    }
+    crate::golden::checks(&golden, &identity, &measurements)
 }
 
 /// §9.3's whole-page transferred gzip: every hashed asset in `web/dist`, summed

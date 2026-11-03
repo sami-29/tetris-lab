@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use bench::dataset::{self, Config, CONFIGS, GOAL12};
 use bench::gate::{self, State};
-use bench::golden::{self, Golden};
+use bench::golden::{self, Golden, Identity};
 use bench::reference::{self, DatasetId, Measurement};
 use bench::width;
 
@@ -43,16 +43,11 @@ fn measured_from_golden(golden: &Golden, config: Config) -> Measurement {
     )
 }
 
-fn identity_from_golden(golden: &Golden) -> reference::Identity {
-    reference::Identity {
-        engine: golden.engine.clone(),
-        machine: golden.machine.clone(),
-        datasets: golden.datasets.clone(),
-        behaviour: golden.behaviour.clone(),
-    }
+fn identity_from_golden(golden: &Golden) -> Identity {
+    golden.identity()
 }
 
-fn checks_for(golden: &Golden, identity: &reference::Identity, measurements: &[Measurement]) -> Vec<bench::gate::Check> {
+fn checks_for(golden: &Golden, identity: &Identity, measurements: &[Measurement]) -> Vec<bench::gate::Check> {
     golden::checks(golden, identity, measurements)
 }
 

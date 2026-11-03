@@ -32,7 +32,9 @@ use std::process::ExitCode;
 
 use bench::dataset::{self, Config};
 use bench::gate::{self, Options as GateOptions};
+use bench::golden;
 use bench::ladder;
+use bench::reference;
 use bench::tuning;
 use bench::width::{self, MsSource, Options as WidthOptions, WIDTHS};
 use bench::{export, fingerprint, show, verify};
@@ -57,6 +59,12 @@ usage:
   bench ladder      [--seeds <a-b>] [--bed <name>] [--width <n>] [--width-curve <file>]
                     [--scan-pieces <n>] [--scan-cap <n>] [--out <file>] [--rows <file>]
                     [--docs <file>] [--machine \"<label>\"]
+  bench reference   [--config <name|all>] [--split test|tuning] [--width <n>]
+                    [--ms wasm|native] [--wasm <path>] [--cal <n>] [--reason \"<one line>\"]
+                    [--out <file>] [--append] [--json] [--data <dir>]
+  bench golden      check [--cal <n>] [--ms wasm|native] [--wasm <path>] [--json]
+  bench golden      update --reason \"<one line>\" [--cal <n>] [--ms wasm|native]
+                    [--wasm <path>] [--out <file>]
 
 configurations: goal8-p40-cap7, goal12-p100-cap7
 width-curve defaults: every doubling point, 3 trials of 200 seeds, 1,000 quality
@@ -74,6 +82,17 @@ DEFAULT_BEAM read from data/measurements/width-curve.json, measures E0/E1/BCTS/E
 on all 1,000 tuning seeds and appends one run to data/measurements/e2-tuning.json
 plus its per-seed rows. --replay re-runs a committed run's seed and checks the
 table fingerprint; a rejected run exits 1.
+bench reference measures §9.6's Reference run at DEFAULT_BEAM over the test Split,
+both configurations, and labels every row with the engine commit, the wasm hash,
+the build flags, the CPU, the OS, the runtime and the date. --append is the only
+mode that writes data/dataset/<config>/reference.jsonl, and it only appends: a
+re-measurement adds a dated row carrying its reason. The rows are measured on the
+wasm artifact the page loads (--ms wasm, the default), because that is the engine a
+visitor's Run uses; --ms native is labelled native and is not what the page shows.
+bench golden check compares the evaluations-to-solve and lines-to-solve vectors
+exactly against data/measurements/golden-evals.json and the wall clock against a
+normalised 4x bound (spec 9.2 gate 6). bench golden update re-pins the file from a
+committed Reference row and refuses when there is none.
 exit codes: 0 clean, 1 Dataset drift, a failed Gate or a rejected tuning run,
 2 usage, I/O, or a Gate whose prerequisite is missing.";
 
@@ -162,6 +181,12 @@ fn main() -> ExitCode {
     }
     if command == "ladder" {
         return ExitCode::from(ladder_command(&argv[1..]));
+    }
+    if command == "reference" {
+        return ExitCode::from(reference_command(&argv[1..]));
+    }
+    if command == "golden" {
+        return ExitCode::from(golden_command(&argv[1..]));
     }
 
     let args = match parse(&argv[1..]) {
@@ -1466,4 +1491,489 @@ fn bed_from_name(name: &str) -> Option<width::Bed> {
     [width::Bed::GOAL8, width::Bed::GOAL12, width::Bed::GOAL16]
         .into_iter()
         .find(|bed| bed.name() == name)
+}
+
+// ------------------------------------------------ reference (ticket 09, §9.6)
+
+/// `bench reference [flags]` — §9.6's Reference run, measured, labelled and appended.
+///
+/// Its own flag loop, like `gate`, `solve`, `tune` and `ladder`, so the Dataset
+/// commands cannot grow an argument surface that writes a measured row.
+fn reference_command(argv: &[String]) -> u8 {
+    reference_run(argv).unwrap_or_else(|code| code)
+}
+
+fn reference_run(argv: &[String]) -> Result<u8, u8> {
+    let mut selected: Option<Vec<Config>> = None;
+    let mut data = dataset::root();
+    let mut split = reference::Split::TEST;
+    let mut width: Option<u32> = None;
+    let mut substrate = reference::Substrate::Wasm;
+    let mut wasm = reference::root().join(reference::WASM_ARTIFACT);
+    let mut cal = reference::CAL_DEFAULT;
+    let mut reason: Option<String> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut append = false;
+    let mut json = false;
+
+    let mut index = 0;
+    while index < argv.len() {
+        let flag = argv[index].to_string();
+        let outcome: Result<(), String> = (|| {
+            match flag.as_str() {
+                "--config" => {
+                    let value = flag_value(argv, &mut index, &flag, "a configuration name or all")?;
+                    if value == "all" {
+                        selected = Some(dataset::CONFIGS.to_vec());
+                    } else {
+                        let config = Config::from_name(&value).ok_or_else(|| {
+                            format!(
+                                "unknown configuration {value:?}; known: {}",
+                                dataset::CONFIGS
+                                    .iter()
+                                    .map(|config| config.dir)
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        })?;
+                        selected.get_or_insert_with(Vec::new).push(config);
+                    }
+                }
+                "--data" => data = PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?),
+                "--split" => {
+                    let value = flag_value(argv, &mut index, &flag, "test or tuning")?;
+                    split = reference::Split::from_text(&value)?;
+                }
+                "--width" => {
+                    let value = flag_value(argv, &mut index, &flag, "a beam width")?;
+                    width = Some(
+                        value
+                            .parse()
+                            .map_err(|_| format!("--width must be a number, found {value:?}"))?,
+                    );
+                }
+                "--ms" => {
+                    let value = flag_value(argv, &mut index, &flag, "wasm or native")?;
+                    substrate = reference::Substrate::from_text(&value)?;
+                }
+                "--wasm" => {
+                    wasm = PathBuf::from(flag_value(argv, &mut index, &flag, "the wasm artifact")?)
+                }
+                "--cal" => {
+                    let value = flag_value(argv, &mut index, &flag, "a repeat count")?;
+                    cal = value
+                        .parse()
+                        .map_err(|_| format!("--cal must be a number, found {value:?}"))?;
+                }
+                "--reason" => {
+                    reason = Some(flag_value(argv, &mut index, &flag, "a one-line reason")?)
+                }
+                "--out" => out = Some(PathBuf::from(flag_value(argv, &mut index, &flag, "a file")?)),
+                "--append" => append = true,
+                "--json" => json = true,
+                other => return Err(format!("unknown argument {other:?}")),
+            }
+            Ok(())
+        })();
+        if let Err(message) = outcome {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+        index += 1;
+    }
+    let configs = selected.unwrap_or_else(|| dataset::CONFIGS.to_vec());
+
+    // §9.6: "a re-measurement adds a dated entry with its reason". A row with no
+    // reason, or with a placeholder one, is a row nobody can review.
+    if append {
+        let reason_text = reason.as_deref().unwrap_or("").trim().to_string();
+        if reason_text.len() < 8 {
+            eprintln!(
+                "error: --append needs --reason \"<one line reason>\": every row says why it exists \
+                 (§9.6), and a re-measurement says what changed"
+            );
+            return Err(2);
+        }
+    }
+
+    // 1. The identity first: a row measured on games that are not the committed ones
+    //    would be a labelled lie.
+    let datasets = match reference::dataset_ids(&data) {
+        Ok(datasets) => datasets,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+    };
+
+    // 2. The width, from the artifact §9.5 makes the only authority.
+    let run_width = match width {
+        Some(width) => width,
+        None => match reference::width_from_curve(&reference::width_curve_path()) {
+            Ok(width) => width,
+            Err(message) => {
+                eprintln!("error: {message}");
+                return Err(2);
+            }
+        },
+    };
+    let engine = reference::engine_label(&wasm);
+    if engine.wasm_sha256.is_empty() || !wasm.exists() {
+        eprintln!(
+            "error: {} is missing; build it with `npm --prefix web run build:wasm` (or pass --wasm)",
+            wasm.display()
+        );
+        return Err(2);
+    }
+    let machine = reference::machine_label(substrate);
+    let measured_at = reference::now_iso();
+
+    println!(
+        "reference: {} configuration(s), Split {}, width {} ({}), {}, {}, {}{}",
+        configs.len(),
+        split.label(),
+        run_width,
+        if width.is_some() { "flag" } else { "width-curve.json" },
+        engine.short,
+        substrate.as_str(),
+        measured_at,
+        if engine.dirty {
+            " — WARNING: the engine tree is dirty, so the labelled commit does not describe this build"
+        } else {
+            ""
+        }
+    );
+
+    // 3. One configuration at a time: the two logs are separate files, so each row
+    //    joins its own chain.
+    let mut produced: Vec<reference::Row> = Vec::new();
+    for config in &configs {
+        let options = reference::MeasureOptions {
+            config: *config,
+            split,
+            width: Some(run_width),
+            substrate,
+            cal,
+            wasm: &wasm,
+        };
+        let measurement = match reference::measure(&options) {
+            Ok(measurement) => measurement,
+            Err(message) => {
+                eprintln!("error: {}: {message}", config.dir);
+                return Err(2);
+            }
+        };
+        let path = dataset::reference_path(&data, config);
+        let (next, previous) = match reference::next_index(&path) {
+            Ok(chain) => chain,
+            Err(message) => {
+                eprintln!("error: {message}");
+                return Err(2);
+            }
+        };
+        let labels = reference::RunLabels {
+            engine: engine.clone(),
+            machine: machine.clone(),
+            datasets: datasets.clone(),
+            measured_at: measured_at.clone(),
+            reason: reason
+                .clone()
+                .unwrap_or_else(|| "candidate Reference row (not appended)".to_string()),
+            first_index: next,
+            first_supersedes: previous,
+        };
+        let mut rows = reference::rows(&[measurement], &labels);
+        let row = rows.remove(0);
+        if json {
+            println!("{}", row.render());
+        } else {
+            println!(
+                "  {:<18} {}/{} wins, Wilson {:.6}–{:.6}, {} failure(s), evals p50 {} / p90 {}, \
+                 ms p50 {:.3} / p90 {:.3}, batch {:.0} ms",
+                config.dir,
+                row.stats.wins,
+                row.stats.n,
+                row.stats.wilson95[0],
+                row.stats.wilson95[1],
+                row.stats.n_fail,
+                row.stats.evals_p50,
+                row.stats.evals_p90,
+                row.stats.ms_p50,
+                row.stats.ms_p90,
+                row.stats.batch_ms
+            );
+        }
+
+        if append {
+            if let Err(message) = reference::append(&path, &row) {
+                eprintln!("error: {message}");
+                return Err(1);
+            }
+            println!("  appended index {} to {}", row.index, path.display());
+        }
+        produced.push(row);
+    }
+
+    if let Some(out) = out {
+        let mut text = String::new();
+        for row in &produced {
+            text.push_str(&row.render());
+            text.push('\n');
+        }
+        if let Err(error) = std::fs::write(&out, text) {
+            eprintln!("error: write {}: {error}", out.display());
+            return Err(2);
+        }
+        println!("  rows written to {}", out.display());
+    }
+
+    Ok(0)
+}
+
+// --------------------------------------------------- golden (ticket 09, §9.2)
+
+/// `bench golden check|update [flags]` — §9.2 gate 6's second half, and the one
+/// deliberate way to move it.
+fn golden_command(argv: &[String]) -> u8 {
+    golden_run(argv).unwrap_or_else(|code| code)
+}
+
+fn golden_run(argv: &[String]) -> Result<u8, u8> {
+    let Some(action) = argv.first().cloned() else {
+        eprintln!("error: bench golden wants `check` or `update`");
+        return Err(2);
+    };
+    if action != "check" && action != "update" {
+        eprintln!("error: bench golden wants `check` or `update`, found {action:?}");
+        return Err(2);
+    }
+    let mut data = dataset::root();
+    let mut substrate = reference::Substrate::Wasm;
+    let mut wasm = reference::root().join(reference::WASM_ARTIFACT);
+    let mut cal = reference::CAL_DEFAULT;
+    let mut reason: Option<String> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut json = false;
+
+    let mut index = 1;
+    while index < argv.len() {
+        let flag = argv[index].to_string();
+        let outcome: Result<(), String> = (|| {
+            match flag.as_str() {
+                "--data" => data = PathBuf::from(flag_value(argv, &mut index, &flag, "a directory")?),
+                "--ms" => {
+                    let value = flag_value(argv, &mut index, &flag, "wasm or native")?;
+                    substrate = reference::Substrate::from_text(&value)?;
+                }
+                "--wasm" => {
+                    wasm = PathBuf::from(flag_value(argv, &mut index, &flag, "the wasm artifact")?)
+                }
+                "--cal" => {
+                    let value = flag_value(argv, &mut index, &flag, "a repeat count")?;
+                    cal = value
+                        .parse()
+                        .map_err(|_| format!("--cal must be a number, found {value:?}"))?;
+                }
+                "--reason" => {
+                    reason = Some(flag_value(argv, &mut index, &flag, "a one-line reason")?)
+                }
+                "--out" => out = Some(PathBuf::from(flag_value(argv, &mut index, &flag, "a file")?)),
+                "--json" => json = true,
+                other => return Err(format!("unknown argument {other:?}")),
+            }
+            Ok(())
+        })();
+        if let Err(message) = outcome {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+        index += 1;
+    }
+
+    let datasets = match reference::dataset_ids(&data) {
+        Ok(datasets) => datasets,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+    };
+    let width = match reference::width_from_curve(&reference::width_curve_path()) {
+        Ok(width) => width,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+    };
+    let engine = reference::engine_label(&wasm);
+    let machine = reference::machine_label(substrate);
+    let identity = golden::identity(engine.clone(), machine.clone(), datasets.clone(), width);
+
+    // The same code path the Reference run takes, so the gate and a row cannot
+    // disagree about what "the evaluations-to-solve vector" is.
+    let mut measurements = Vec::new();
+    for config in dataset::CONFIGS {
+        let options = reference::MeasureOptions {
+            config,
+            split: reference::Split::TEST,
+            width: Some(width),
+            substrate,
+            cal,
+            wasm: &wasm,
+        };
+        match reference::measure(&options) {
+            Ok(measurement) => measurements.push(measurement),
+            Err(message) => {
+                eprintln!("error: {}: {message}", config.dir);
+                return Err(2);
+            }
+        }
+    }
+
+    let path = reference::golden_path();
+    if action == "check" {
+        let checks = match golden::load(&path) {
+            Ok(golden) => golden::checks(&golden, &identity, &measurements),
+            Err(message) => vec![gate::Check::fail("golden evaluations")
+                .subject(message)
+                .hint(
+                    "pin the golden with `bench golden update --reason \"…\"` after a Reference run \
+                     has been appended (§9.6)",
+                )],
+        };
+        let mut report = gate::Report::new(
+            6,
+            "evaluations-to-solve fingerprint",
+            format!(
+                "split {}, width {}, {}, {}",
+                reference::Split::TEST.label(),
+                width,
+                engine.short,
+                substrate.as_str()
+            ),
+        );
+        for check in checks {
+            report.push(check);
+        }
+        println!("{}", report.render_with(std::io::stdout().is_terminal()));
+        return Ok(report.exit_code());
+    }
+
+    // `update`: pinned from a committed row, never from an unrecorded run.
+    let reason_text = reason.as_deref().unwrap_or("").trim().to_string();
+    if reason_text.len() < 8 {
+        eprintln!("error: --reason \"<one line reason>\" is required: the golden's diff is the reason");
+        return Err(2);
+    }
+    let previous = golden::load(&path).ok();
+    let mut reference_rows: Vec<(String, String)> = Vec::new();
+    for config in dataset::CONFIGS {
+        let log = dataset::reference_path(&data, &config);
+        let rows = match reference::read(&log) {
+            Ok(rows) => rows,
+            Err(message) => {
+                eprintln!("error: {message}");
+                return Err(2);
+            }
+        };
+        let dataset_id = datasets
+            .iter()
+            .find(|(name, _)| name == config.dir)
+            .map(|(_, id)| id.clone())
+            .unwrap_or(reference::DatasetId {
+                fingerprint: String::new(),
+                generator_version: 0,
+            });
+        let row = rows.iter().rev().find(|row| {
+            row.behaviour.width == width
+                && row.dataset.fingerprint == dataset_id.fingerprint
+                && row.engine.wasm_sha256 == engine.wasm_sha256
+        });
+        let Some(row) = row else {
+            eprintln!(
+                "error: {}: no committed Reference row at width {width} on this Dataset and engine — \
+                 the golden is pinned *from* a recorded measurement, so run `bench reference \
+                 --append --reason \"…\"` first (§9.6)",
+                config.dir
+            );
+            return Err(1);
+        };
+        let measurement = measurements
+            .iter()
+            .find(|measurement| measurement.config.dir == config.dir)
+            .expect("a measurement per configuration");
+        if row.fingerprints.evals_fnv1a64 != measurement.evals_fingerprint()
+            || row.fingerprints.lines_fnv1a64 != measurement.lines_fingerprint()
+        {
+            eprintln!(
+                "error: {}: the committed row {} does not carry this run's vectors (digest {} vs \
+                 {}); append a fresh row before re-pinning the golden",
+                config.dir,
+                row.index,
+                row.fingerprints.evals_fnv1a64,
+                measurement.evals_fingerprint()
+            );
+            return Err(1);
+        }
+        reference_rows.push((config.dir.to_string(), row.run_id.clone()));
+    }
+
+    let generated_at = reference::now_iso();
+    let build_labels = reference::RunLabels {
+        engine: engine.clone(),
+        machine: machine.clone(),
+        datasets: datasets.clone(),
+        measured_at: generated_at.clone(),
+        reason: reason_text.clone(),
+        first_index: 0,
+        first_supersedes: None,
+    };
+    let mut next = golden::from_measurements(
+        &measurements,
+        &build_labels,
+        &reference_rows,
+        &generated_at,
+        &reason_text,
+        previous.as_ref().map(|golden| golden.generated_at.clone()),
+    );
+    next.refresh();
+    let text = golden::render(&next);
+    let target = out.unwrap_or(path);
+    if let Err(error) = std::fs::write(&target, &text) {
+        eprintln!("error: write {}: {error}", target.display());
+        return Err(2);
+    }
+
+    let mut moved = 0usize;
+    if let Some(previous) = &previous {
+        for config in dataset::CONFIGS {
+            if let (Some((before, _)), Some((after, _))) =
+                (previous.vectors(config.dir), next.vectors(config.dir))
+            {
+                moved += before
+                    .iter()
+                    .zip(after.iter())
+                    .filter(|(left, right)| left != right)
+                    .count();
+            }
+        }
+    }
+    for entry in &next.configs {
+        println!(
+            "  {:<18} evals {}  lines {}",
+            entry.config.dir, entry.evals_fnv1a64, entry.lines_fnv1a64
+        );
+    }
+    println!(
+        "golden written to {}{} (reason: {reason_text})",
+        target.display(),
+        if previous.is_some() {
+            format!(", {moved} seed(s) moved from the previous golden")
+        } else {
+            String::new()
+        }
+    );
+    if json {
+        println!("{}", text.len());
+    }
+    Ok(0)
 }

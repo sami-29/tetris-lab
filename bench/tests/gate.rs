@@ -496,6 +496,26 @@ fn gate_6_fails_when_no_golden_is_committed() {
 }
 
 #[test]
+fn gate_6_compares_the_committed_golden_exactly() {
+    // The committed golden, the committed Dataset and the built artifact: the exact
+    // compare is green, and it says the digest and the seed count out loud.
+    let report = gate::run(6, &options());
+    let rendered = report.render();
+    let golden = check(&report, "golden identity");
+    assert_eq!(golden.state, State::Pass, "{rendered}");
+    let evals = check(&report, "golden evaluations · goal8-p40-cap7");
+    assert_eq!(evals.state, State::Pass, "{rendered}");
+    assert!(evals.subject.contains("of 1000 seeds"), "{rendered}");
+    let lines = check(&report, "golden lines · goal12-p100-cap7");
+    assert_eq!(lines.state, State::Pass, "{rendered}");
+    let clock = check(&report, "golden wall clock · goal8-p40-cap7");
+    assert_eq!(clock.state, State::Pass, "{rendered}");
+    assert!(clock.subject.contains("normalised"), "{rendered}");
+    // Nothing of gate 6b is skipped: the placeholder is gone.
+    assert!(report.skipped() == 0, "{rendered}");
+}
+
+#[test]
 fn gate_6_refuses_a_golden_it_cannot_read() {
     // A `{}` cannot be compared against anything, and it must not be able to look
     // like a green gate: the file is named, and so is the field that is missing.
@@ -518,7 +538,7 @@ fn gate_6_refuses_a_golden_it_cannot_read() {
     let golden = check(&report, "golden evaluations");
     assert_eq!(golden.state, State::Fail, "{rendered}");
     assert_eq!(report.exit_code(), 1, "{rendered}");
-    assert!(rendered.contains("kind"), "{rendered}");
+    assert!(rendered.contains("format"), "{rendered}");
     let _ = fs::remove_dir_all(&dir);
 }
 

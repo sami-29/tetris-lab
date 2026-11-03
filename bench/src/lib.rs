@@ -26,6 +26,12 @@
 //! * [`ladder`] — ticket 08's ablation ladder: the derived bed, the paired
 //!   statistics, the cascade that names the shipped Evaluator and the rule that
 //!   deletes a toggle from the engine.
+//! * [`reference`] — ticket 09's Reference run: §9.6's row, its statistics, its
+//!   label block, and the append-only log it lands in.
+//! * [`golden`] — §9.2 gate 6's second half: the exact evaluations-to-solve
+//!   fingerprint against committed golden values, and the loose 4x clock bound.
+//! * [`sha256`] — the artifact's hash, computed here because §9.6 labels a row with
+//!   it and this crate may not take a dependency.
 //! * [`tuning`] — ticket 07's cross-entropy trainer: E2's weight table, tuned on
 //!   the tuning Split only, with the Split enforced as a type and the run
 //!   reproducible from a committed seed.
@@ -33,10 +39,13 @@
 pub mod dataset;
 pub mod export;
 pub mod fingerprint;
+pub mod golden;
 pub mod gate;
 pub mod json;
 pub mod ladder;
+pub mod reference;
 pub mod replay;
+pub mod sha256;
 pub mod show;
 pub mod tuning;
 pub mod verify;

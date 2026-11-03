@@ -68,7 +68,10 @@ fn measurement(evals: &[u32], lines: &[u32]) -> Measurement {
     Measurement::from_vectors(
         GOAL8,
         25,
-        (0, (evals.len() as u32) - 1),
+        Split {
+            first: 0,
+            last: (evals.len() as u32) - 1,
+        },
         evals,
         lines,
         2_395.53,
