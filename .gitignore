@@ -11,7 +11,8 @@ target/
 # ---- Node / Vite build output ------------------------------------------------
 web/node_modules/
 web/dist/
-web/pkg/                 # build-wasm.mjs copies the cargo artifact here
+# build-wasm.mjs copies the cargo artifact here
+web/pkg/
 web/.vite/
 
 # ---- Wrangler local state (ticket 17) ---------------------------------------
