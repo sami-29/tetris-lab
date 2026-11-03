@@ -233,20 +233,22 @@ fn the_bootstrap_seed_is_a_function_of_the_artifacts_own_fields() {
 
 #[test]
 fn a_pair_reports_the_two_by_two_table_and_a_reproducible_interval() {
-    let a = candidate("e1", 8, true, samples(1_000, 1_000, 65));
-    let b = candidate("e0", 4, false, samples(940, 1_000, 65));
-    let seed = ladder::bootstrap_seed("goal65-p160-cap7", 25, "e1-vs-e0", "fixture");
-    let pair = ladder::compare(&a, &b, seed);
+    // `judged` first, `reference` second: the challenger against the winner, which
+    // is the direction every row of the published table is read in.
+    let judged = candidate("e0", 4, false, samples(940, 1_000, 65));
+    let reference = candidate("e1", 8, true, samples(1_000, 1_000, 65));
+    let seed = ladder::bootstrap_seed("goal65-p160-cap7", 25, "e0-vs-e1", "fixture");
+    let pair = ladder::compare(&judged, &reference, seed);
     // 60 seeds differ, all in E0's favour, and the identity b - c = win difference
     // is what a reader checks the table against.
-    assert_eq!((pair.only_a, pair.only_b), (0, 60));
+    assert_eq!((pair.only_judged, pair.only_reference), (0, 60));
     assert_eq!(pair.both, 940);
     assert_eq!(pair.neither, 0);
     assert_eq!(pair.discordant, Paired { b: 0, c: 60 });
     assert!(pair.rejects, "60 discordant seeds reject at p < 0.01");
     assert!(pair.delta_mean_lines < 0.0, "E0 is the worse one here");
     // The interval is a function of the pinned stream: same seed, same bytes.
-    let again = ladder::compare(&a, &b, seed);
+    let again = ladder::compare(&judged, &reference, seed);
     assert_eq!(pair.ci95, again.ci95);
     assert_eq!(pair.boot_seed, seed);
 }
@@ -286,7 +288,7 @@ fn a_ladder_run_writes_an_artifact_that_names_what_it_measured() {
         .artifact
         .rows
         .iter()
-        .map(|row| row.id.as_str())
+        .map(|row| row.id)
         .collect();
     assert_eq!(ids, vec!["e0", "e1", "e2", "dedup-off", "tail-off", "no-suicide-off"]);
     // Every rung solved the same games, so the pairing is real.
@@ -294,7 +296,7 @@ fn a_ladder_run_writes_an_artifact_that_names_what_it_measured() {
         assert_eq!(row.stats.games, 24, "{}", row.id);
     }
     // The verdict is one of the three tables and the cascade names its leg.
-    assert!(ids.contains(&outcome.artifact.winner.as_str()));
+    assert!(ids.contains(&outcome.artifact.verdict.winner));
 
     let text = std::fs::read_to_string(&options.out).expect("the artifact");
     for key in [
