@@ -137,17 +137,17 @@ export const ENGINE_FACTS: EngineFacts = {
         "config": "goal12-p100-cap7",
         "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB · Microsoft Windows 11 Pro 10.0.22621",
         "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
-        "date": "2026-11-03T02:03:30Z",
-        "commit": "ffa08fed765e0516d0165869fedff55433448a90",
+        "date": "2026-11-03T03:37:10Z",
+        "commit": "a773ce57915edc5be8bc482800e43258a0724ead",
         "row": {
           "format": 1,
           "kind": "reference",
           "config": "goal12-p100-cap7",
-          "index": 1,
-          "run_id": "ffa08fe/3cb88e38/E1/w25/2026-11-03T02:03:30Z",
-          "measured_at": "2026-11-03T02:03:30Z",
-          "reason": "the Explainer's flat label projection (ticket 16) joins the row's label block; the measurement is re-run rather than edited, because reference.jsonl never rewrites a line",
-          "supersedes": "3678958/3cb88e38/E1/w25/2026-11-03T01:43:31Z",
+          "index": 3,
+          "run_id": "a773ce5/4bfa56b5/E1/w25/2026-11-03T03:37:10Z",
+          "measured_at": "2026-11-03T03:37:10Z",
+          "reason": "supersedes index 2: that row was measured while web/pkg/engine.wasm was still the pre-solve_batch artifact, so it named a wasm hash the page does not load; this row is the same run on the rebuilt artifact the page does load",
+          "supersedes": "c8bf1a5/3cb88e38/E1/w25/2026-11-03T03:34:42Z",
           "dataset": {
             "fingerprint": "4ebdf44940134c40",
             "generator_version": 1
@@ -185,13 +185,13 @@ export const ENGINE_FACTS: EngineFacts = {
             "evals_p90": 15487,
             "evals_mean": 14212.985,
             "evals_max": 18363,
-            "ms_p50": 6.359,
-            "ms_p90": 8.931,
-            "ms_max": 15.86,
-            "batch_ms": 6845.199,
-            "cal_ms": 494.393,
-            "cal_ms_before": 538.586,
-            "cal_ms_after": 450.2
+            "ms_p50": 5.129,
+            "ms_p90": 6.547,
+            "ms_max": 10.983,
+            "batch_ms": 5376.014,
+            "cal_ms": 386.442,
+            "cal_ms_before": 383.694,
+            "cal_ms_after": 389.191
           },
           "fingerprints": {
             "evals_fnv1a64": "1a075f05de2e7027",
@@ -201,11 +201,11 @@ export const ENGINE_FACTS: EngineFacts = {
             "p90_method": "nearest-rank"
           },
           "engine": {
-            "commit": "ffa08fed765e0516d0165869fedff55433448a90",
-            "short": "ffa08fe",
+            "commit": "a773ce57915edc5be8bc482800e43258a0724ead",
+            "short": "a773ce5",
             "dirty": false,
-            "wasm_sha256": "3cb88e38f8d497aa2b080d65386ec92ef0eafec96760e757fb18cd347a473022",
-            "wasm_bytes": 58302,
+            "wasm_sha256": "4bfa56b580d48a81adf85934049f1692fd14254702385088ef164c8531b32135",
+            "wasm_bytes": 58852,
             "profile": "release: lto=fat, codegen-units=1, panic=abort, strip=true; wasm32-unknown-unknown; no wasm-bindgen, no wasm-opt",
             "toolchain": "1.99.1-x86_64-pc-windows-gnu"
           },
@@ -221,8 +221,8 @@ export const ENGINE_FACTS: EngineFacts = {
           "labels": {
             "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB · Microsoft Windows 11 Pro 10.0.22621",
             "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
-            "date": "2026-11-03T02:03:30Z",
-            "engine_commit": "ffa08fed765e0516d0165869fedff55433448a90"
+            "date": "2026-11-03T03:37:10Z",
+            "engine_commit": "a773ce57915edc5be8bc482800e43258a0724ead"
           }
         }
       },
@@ -230,17 +230,17 @@ export const ENGINE_FACTS: EngineFacts = {
         "config": "goal8-p40-cap7",
         "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB · Microsoft Windows 11 Pro 10.0.22621",
         "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
-        "date": "2026-11-03T02:03:30Z",
-        "commit": "ffa08fed765e0516d0165869fedff55433448a90",
+        "date": "2026-11-03T03:37:10Z",
+        "commit": "a773ce57915edc5be8bc482800e43258a0724ead",
         "row": {
           "format": 1,
           "kind": "reference",
           "config": "goal8-p40-cap7",
-          "index": 1,
-          "run_id": "ffa08fe/3cb88e38/E1/w25/2026-11-03T02:03:30Z",
-          "measured_at": "2026-11-03T02:03:30Z",
-          "reason": "the Explainer's flat label projection (ticket 16) joins the row's label block; the measurement is re-run rather than edited, because reference.jsonl never rewrites a line",
-          "supersedes": "3678958/3cb88e38/E1/w25/2026-11-03T01:43:31Z",
+          "index": 3,
+          "run_id": "a773ce5/4bfa56b5/E1/w25/2026-11-03T03:37:10Z",
+          "measured_at": "2026-11-03T03:37:10Z",
+          "reason": "supersedes index 2: that row was measured while web/pkg/engine.wasm was still the pre-solve_batch artifact, so it named a wasm hash the page does not load; this row is the same run on the rebuilt artifact the page does load",
+          "supersedes": "c8bf1a5/3cb88e38/E1/w25/2026-11-03T03:34:42Z",
           "dataset": {
             "fingerprint": "4bf1a17b1685a774",
             "generator_version": 1
@@ -278,13 +278,13 @@ export const ENGINE_FACTS: EngineFacts = {
             "evals_p90": 11414,
             "evals_mean": 9776.799,
             "evals_max": 14334,
-            "ms_p50": 5.666,
-            "ms_p90": 7.643,
-            "ms_max": 19.252,
-            "batch_ms": 5881.533,
-            "cal_ms": 679.135,
-            "cal_ms_before": 787.98,
-            "cal_ms_after": 570.289
+            "ms_p50": 3.56,
+            "ms_p90": 4.536,
+            "ms_max": 8.472,
+            "batch_ms": 3714.79,
+            "cal_ms": 383.208,
+            "cal_ms_before": 388.027,
+            "cal_ms_after": 378.389
           },
           "fingerprints": {
             "evals_fnv1a64": "685753d3144408e0",
@@ -294,11 +294,11 @@ export const ENGINE_FACTS: EngineFacts = {
             "p90_method": "nearest-rank"
           },
           "engine": {
-            "commit": "ffa08fed765e0516d0165869fedff55433448a90",
-            "short": "ffa08fe",
+            "commit": "a773ce57915edc5be8bc482800e43258a0724ead",
+            "short": "a773ce5",
             "dirty": false,
-            "wasm_sha256": "3cb88e38f8d497aa2b080d65386ec92ef0eafec96760e757fb18cd347a473022",
-            "wasm_bytes": 58302,
+            "wasm_sha256": "4bfa56b580d48a81adf85934049f1692fd14254702385088ef164c8531b32135",
+            "wasm_bytes": 58852,
             "profile": "release: lto=fat, codegen-units=1, panic=abort, strip=true; wasm32-unknown-unknown; no wasm-bindgen, no wasm-opt",
             "toolchain": "1.99.1-x86_64-pc-windows-gnu"
           },
@@ -314,8 +314,8 @@ export const ENGINE_FACTS: EngineFacts = {
           "labels": {
             "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB · Microsoft Windows 11 Pro 10.0.22621",
             "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
-            "date": "2026-11-03T02:03:30Z",
-            "engine_commit": "ffa08fed765e0516d0165869fedff55433448a90"
+            "date": "2026-11-03T03:37:10Z",
+            "engine_commit": "a773ce57915edc5be8bc482800e43258a0724ead"
           }
         }
       }
