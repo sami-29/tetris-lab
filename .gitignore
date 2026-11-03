@@ -1,64 +1,60 @@
-__pycache__/
-*.pyc
-tetris_solver.db
-winnable_games.csv
-log.txt
+# .gitignore -- Tetris Lab.
+#
+# The rules are ordered: git takes the LAST matching pattern, so the Dataset guard
+# is the final block and nothing may be appended below it (see the block's comment).
 
-# AI agent / scratch (local only)
+# ---- Rust build output -------------------------------------------------------
+# `target/` with no leading slash matches at any depth: the workspace root, every
+# member, and `web/scripts/gen-replay-vectors/` (its own workspace).
+target/
+
+# ---- Node / Vite build output ------------------------------------------------
+web/node_modules/
+web/dist/
+web/pkg/                 # build-wasm.mjs copies the cargo artifact here
+web/.vite/
+
+# ---- Wrangler local state (ticket 17) ---------------------------------------
+# `wrangler dev` writes Miniflare state and a local secret file; neither is source.
+web/.wrangler/
+web/.dev.vars
+
+# ---- Editor / OS noise -------------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# ---- AI agent / scratch (local only, never committed) ------------------------
+# The design spec, the ticket corpus and every research draft live here; they are
+# the operator's working notes, not repository content. The committed evidence is
+# docs/research/ and docs/adr/.
 .scratch/
 docs/agents/
 AGENTS.md
 CLAUDE.md
+CONTEXT.md
+CONTEXT-MAP.md
+GLOSSARY-MAP.md
 .pi/
 .claude/
 .cursor/
 .aider*
-GLOSSARY.md
-!/GLOSSARY.md
-GLOSSARY-MAP.md
-CONTEXT.md
-CONTEXT-MAP.md
+# GLOSSARY.md is NOT listed, on purpose: it is a committed domain doc, and the
+# old `GLOSSARY.md` + `!/GLOSSARY.md` pair it shipped with was a trap -- delete the
+# negation alone and the file silently becomes untracked on the next clone.
 
-# ticket 06 spike build output and measurements (regenerate with prototype/run-bench.sh)
-prototype/rs/target/
-prototype/artifacts/
-prototype/cpp/*.exe
-prototype/data/
-
-# ticket 09 host probe: build output, local wrangler state, captured URLs
-host-probe/dist/
-host-probe/node_modules/
-host-probe/.wrangler/
-host-probe/rs/target/
-host-probe/.env
-host-probe/dev.log
-host-probe/probe-dom.html
-host-probe/.chrome-profile/
-
-# Rust / Vite build output (ticket 01; ticket 18 rewrites this file)
-/target/
-web/node_modules/
-web/dist/
-web/pkg/
-
-# ticket 10's fixture generator is its own workspace (web/scripts/gen-replay-vectors)
-web/scripts/gen-replay-vectors/target/
-
-# `wrangler deploy` / `wrangler dev` local state (ticket 17): caches, never
-# committed, never uploaded.
-web/.wrangler/
-
-# The Dataset is a build gate, so nothing under it may ever be ignored (§11).
-# `!data/` comes first: git never descends into an ignored directory. Only the
-# last matching pattern counts, so these win against any broad rule added *above*
-# them and lose to one appended below -- which is why the actual guard is the
-# gate's own ignore check (`cargo run -p bench -- verify`, and the test
-# `nothing_under_the_dataset_is_ignored`). Never `git add -f` a Dataset file: it
-# hides the pattern that will eat the next archive.
+# ---- The Dataset is a build gate: nothing under it may ever be ignored ---------
+# Ordering is the whole guard. `!data/` must come first, because git never descends
+# into an excluded directory, so a `data/`-wide rule above these three lines would
+# hide every Dataset file and no later negation could bring them back.
+# Then `!data/dataset/` un-excludes the directory itself, and `!data/dataset/**`
+# every file inside it (including a future `<config>/archive/<fingerprint>.txt`).
+# These three lines beat anything ABOVE them and lose to anything BELOW them -- so
+# never append a pattern after this block, never add a `.gitignore` inside
+# data/dataset/ (a nested file's patterns take precedence over this one), and never
+# `git add -f` a Dataset file: it hides the pattern that will eat the next archive.
+# The rule is enforced by a test, not by hope:
+#   cargo test -p bench nothing_under_the_dataset_is_ignored
+# and by `cargo run -p bench --release -- verify` (gate 1).
 !data/
 !data/dataset/
 !data/dataset/**
-
-# ticket 06 spike measurements: 2.2 MB of jsonl that must never be committed.
-# The directory rule above did not match on this box; this one does.
-prototype/data/**
