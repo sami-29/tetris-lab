@@ -1577,13 +1577,15 @@ fn golden_checks(paths: &Paths) -> Vec<Check> {
     };
 
     // The identity: what the golden was pinned on. Cheap, and it comes first.
-    let width = match crate::reference::width_from_curve(&paths.measurements.join("width-curve.json")) {
-        Ok(width) => width,
-        Err(message) => {
-            return vec![Check::cannot_run("golden identity", message)
-                .hint("DEFAULT_BEAM is a committed number (§9.5): `bench width-curve` writes it")];
-        }
-    };
+    let width =
+        match crate::reference::width_from_curve(&paths.measurements.join("width-curve.json")) {
+            Ok(width) => width,
+            Err(message) => {
+                return vec![Check::cannot_run("golden identity", message).hint(
+                    "DEFAULT_BEAM is a committed number (§9.5): `bench width-curve` writes it",
+                )];
+            }
+        };
     let datasets = match crate::reference::dataset_ids(&paths.data) {
         Ok(datasets) => datasets,
         Err(message) => {

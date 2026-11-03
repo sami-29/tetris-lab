@@ -47,7 +47,11 @@ fn identity_from_golden(golden: &Golden) -> Identity {
     golden.identity()
 }
 
-fn checks_for(golden: &Golden, identity: &Identity, measurements: &[Measurement]) -> Vec<bench::gate::Check> {
+fn checks_for(
+    golden: &Golden,
+    identity: &Identity,
+    measurements: &[Measurement],
+) -> Vec<bench::gate::Check> {
     golden::checks(golden, identity, measurements)
 }
 
@@ -58,13 +62,21 @@ fn named<'a>(checks: &'a [bench::gate::Check], needle: &str) -> &'a bench::gate:
         .unwrap_or_else(|| {
             panic!(
                 "no check named {needle:?}; have {:?}",
-                checks.iter().map(|check| check.name.as_str()).collect::<Vec<_>>()
+                checks
+                    .iter()
+                    .map(|check| check.name.as_str())
+                    .collect::<Vec<_>>()
             )
         })
 }
 
 fn text(check: &bench::gate::Check) -> String {
-    format!("{}\n{}\n{:?}", check.subject, check.lines.join("\n"), check.hint)
+    format!(
+        "{}\n{}\n{:?}",
+        check.subject,
+        check.lines.join("\n"),
+        check.hint
+    )
 }
 
 // ------------------------------------------------------- the committed file
@@ -74,14 +86,23 @@ fn the_committed_golden_names_the_engine_the_dataset_and_the_width() {
     let golden = committed();
 
     // The engine hash is 64 lowercase hex digits: the artifact the page executes.
-    assert_eq!(golden.engine.wasm_sha256.len(), 64, "{}", golden.engine.wasm_sha256);
+    assert_eq!(
+        golden.engine.wasm_sha256.len(),
+        64,
+        "{}",
+        golden.engine.wasm_sha256
+    );
     assert!(golden
         .engine
         .wasm_sha256
         .chars()
         .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     assert!(golden.engine.wasm_bytes > 0);
-    assert!(golden.engine.profile.contains("lto=fat"), "{}", golden.engine.profile);
+    assert!(
+        golden.engine.profile.contains("lto=fat"),
+        "{}",
+        golden.engine.profile
+    );
     assert!(!golden.engine.commit.is_empty());
 
     // The Dataset identity is the committed manifest's, both configurations.
@@ -164,7 +185,9 @@ fn the_committed_golden_is_the_committed_reference_rows() {
                     "{}: the golden was pinned from {named}, which is not in {} (rows: {:?})",
                     config.dir,
                     path.display(),
-                    rows.iter().map(|row| row.run_id.as_str()).collect::<Vec<_>>()
+                    rows.iter()
+                        .map(|row| row.run_id.as_str())
+                        .collect::<Vec<_>>()
                 )
             });
         // The row it names is the row it was pinned on: the same bed, the same games,
@@ -176,12 +199,28 @@ fn the_committed_golden_is_the_committed_reference_rows() {
             "{}: the row's Dataset is the golden's",
             config.dir
         );
-        assert_eq!(row.behaviour.width, golden.behaviour.width, "{}", config.dir);
-        assert_eq!(row.engine.wasm_sha256, golden.engine.wasm_sha256, "{}", config.dir);
+        assert_eq!(
+            row.behaviour.width, golden.behaviour.width,
+            "{}",
+            config.dir
+        );
+        assert_eq!(
+            row.engine.wasm_sha256, golden.engine.wasm_sha256,
+            "{}",
+            config.dir
+        );
         let entry = golden.entry(config.dir).expect("an entry");
 
-        assert_eq!(entry.evals_fnv1a64, row.fingerprints.evals_fnv1a64, "{}", config.dir);
-        assert_eq!(entry.lines_fnv1a64, row.fingerprints.lines_fnv1a64, "{}", config.dir);
+        assert_eq!(
+            entry.evals_fnv1a64, row.fingerprints.evals_fnv1a64,
+            "{}",
+            config.dir
+        );
+        assert_eq!(
+            entry.lines_fnv1a64, row.fingerprints.lines_fnv1a64,
+            "{}",
+            config.dir
+        );
         assert_eq!(entry.stats.wins, row.stats.wins);
         assert_eq!(entry.stats.n_fail, row.stats.n_fail);
         assert_eq!(entry.stats.fail_lines_mean, row.stats.fail_lines_mean);
@@ -203,18 +242,22 @@ fn an_identical_measurement_passes_every_check() {
     let checks = checks_for(&golden, &identity_from_golden(&golden), &measurements);
 
     for check in &checks {
-        assert_eq!(
-            check.state,
-            State::Pass,
-            "{}: {}",
-            check.name,
-            text(check)
-        );
+        assert_eq!(check.state, State::Pass, "{}: {}", check.name, text(check));
     }
     let evals = named(&checks, "golden evaluations");
-    assert!(evals.subject.contains("1000 of 1000 seeds"), "{}", evals.subject);
     assert!(
-        evals.subject.contains(golden.entry("goal8-p40-cap7").unwrap().evals_fnv1a64.as_str()),
+        evals.subject.contains("1000 of 1000 seeds"),
+        "{}",
+        evals.subject
+    );
+    assert!(
+        evals.subject.contains(
+            golden
+                .entry("goal8-p40-cap7")
+                .unwrap()
+                .evals_fnv1a64
+                .as_str()
+        ),
         "{}",
         evals.subject
     );
@@ -287,11 +330,16 @@ fn the_golden_says_which_identity_changed_and_refuses_to_compare_anyway() {
     assert!(body.contains("dataset fingerprint"), "{body}");
     assert!(body.contains("4bf1a17b1685a774"), "{body}");
     assert!(body.contains("0000000000000000"), "{body}");
-    assert!(!body.contains("wasm_sha256"), "only the dataset moved: {body}");
+    assert!(
+        !body.contains("wasm_sha256"),
+        "only the dataset moved: {body}"
+    );
     // Nothing is compared against a golden whose games are different: there is no
     // line here that can pass or fail on behaviour.
     assert!(
-        !checks.iter().any(|check| check.name.contains("golden evaluations")),
+        !checks
+            .iter()
+            .any(|check| check.name.contains("golden evaluations")),
         "a different Dataset must not be reported as a behaviour change"
     );
 
@@ -316,7 +364,12 @@ fn the_four_x_bound_is_normalised_by_the_calibration_and_never_touches_quality()
     let golden = committed();
     let entry = golden.entry("goal8-p40-cap7").expect("an entry");
 
-    let bound = golden::bound(entry.stats.batch_ms, entry.stats.cal_ms, entry.stats.batch_ms * 3.9, entry.stats.cal_ms * 3.9);
+    let bound = golden::bound(
+        entry.stats.batch_ms,
+        entry.stats.cal_ms,
+        entry.stats.batch_ms * 3.9,
+        entry.stats.cal_ms * 3.9,
+    );
     assert!(bound.passes(), "{:?}", bound);
     assert!((bound.normalised - 1.0).abs() < 1e-9, "{:?}", bound);
     assert!(bound.raw > 3.8, "{:?}", bound);

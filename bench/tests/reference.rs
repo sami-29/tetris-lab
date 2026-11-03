@@ -13,9 +13,7 @@ use std::path::PathBuf;
 use bench::dataset::{self, Config, CONFIGS, GOAL8};
 use bench::fingerprint::{self, Fnv};
 use bench::json::{self, Value};
-use bench::reference::{
-    self, DatasetId, Engine, Machine, Measurement, RunLabels, Split,
-};
+use bench::reference::{self, DatasetId, Engine, Machine, Measurement, RunLabels, Split};
 
 // ---------------------------------------------------------------- fixtures
 
@@ -48,15 +46,13 @@ fn labels(first_index: u32, first_supersedes: Option<String>) -> RunLabels {
     RunLabels {
         engine: engine(),
         machine: machine(),
-        datasets: vec![
-            (
-                GOAL8.dir.to_string(),
-                DatasetId {
-                    fingerprint: "4bf1a17b1685a774".to_string(),
-                    generator_version: 1,
-                },
-            ),
-        ],
+        datasets: vec![(
+            GOAL8.dir.to_string(),
+            DatasetId {
+                fingerprint: "4bf1a17b1685a774".to_string(),
+                generator_version: 1,
+            },
+        )],
         measured_at: "2026-11-03T02:30:00Z".to_string(),
         reason: "test row: no measurement was run to make it".to_string(),
         first_index,
@@ -94,10 +90,7 @@ fn the_wilson_interval_is_the_published_formula_and_is_exact_at_saturation() {
     // Reproducing notes/09 §1.2's checked values: no continuity correction, no
     // bootstrap, and a saturated bed gives an upper bound of exactly 1.
     let saturated = reference::wilson95(1000, 1000);
-    assert!(
-        (saturated[0] - 0.996_173).abs() < 5e-7,
-        "{saturated:?}"
-    );
+    assert!((saturated[0] - 0.996_173).abs() < 5e-7, "{saturated:?}");
     assert_eq!(saturated[1], 1.0, "a saturated proportion is exactly 1");
 
     let nearly = reference::wilson95(995, 1000);
@@ -162,13 +155,19 @@ fn the_fingerprints_are_fnv_over_the_vectors_in_seed_order() {
     for value in evals {
         expected.u32_le(value);
     }
-    assert_eq!(sample.evals_fingerprint(), fingerprint::hex(expected.finish()));
+    assert_eq!(
+        sample.evals_fingerprint(),
+        fingerprint::hex(expected.finish())
+    );
 
     let mut expected = Fnv::new();
     for value in lines {
         expected.byte(value as u8);
     }
-    assert_eq!(sample.lines_fingerprint(), fingerprint::hex(expected.finish()));
+    assert_eq!(
+        sample.lines_fingerprint(),
+        fingerprint::hex(expected.finish())
+    );
 
     // 16 lowercase hex digits, the form a human eyeballs in a failure message.
     assert_eq!(sample.evals_fingerprint().len(), 16);
@@ -208,7 +207,10 @@ fn a_reference_row_carries_every_field_the_page_reads() {
     assert_eq!(wilson.as_array().map(|array| array.len()), Some(2));
 
     // R2's denominator is the split's own n, never a number the page invents.
-    assert_eq!(reference::resolve(&parsed, "split.n").unwrap().as_u32(), Some(4));
+    assert_eq!(
+        reference::resolve(&parsed, "split.n").unwrap().as_u32(),
+        Some(4)
+    );
     assert_eq!(
         reference::resolve(&parsed, "stats.wins").unwrap().as_u32(),
         Some(4)
@@ -220,35 +222,47 @@ fn a_reference_row_carries_every_field_the_page_reads() {
         Value::Null
     );
     assert_eq!(
-        reference::resolve(&parsed, "stats.n_fail").unwrap().as_u32(),
+        reference::resolve(&parsed, "stats.n_fail")
+            .unwrap()
+            .as_u32(),
         Some(0)
     );
 }
 
 #[test]
 fn a_reference_row_labels_the_engine_the_box_the_runtime_and_the_date() {
-    let rows = reference::rows(
-        &[measurement(&[10_212, 9_810], &[8, 8])],
-        &labels(0, None),
-    );
+    let rows = reference::rows(&[measurement(&[10_212, 9_810], &[8, 8])], &labels(0, None));
     let row = &rows[0];
 
-    assert_eq!(row.engine.commit.len(), 40, "the full commit, not a short one");
+    assert_eq!(
+        row.engine.commit.len(),
+        40,
+        "the full commit, not a short one"
+    );
     assert_eq!(row.engine.short.len(), 7);
     assert_eq!(row.engine.wasm_sha256.len(), 64, "sha256 hex");
     assert!(
-        row.engine.wasm_sha256
+        row.engine
+            .wasm_sha256
             .chars()
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "{}",
         row.engine.wasm_sha256
     );
-    assert!(row.engine.profile.contains("lto=fat"), "{}", row.engine.profile);
+    assert!(
+        row.engine.profile.contains("lto=fat"),
+        "{}",
+        row.engine.profile
+    );
     assert!(!row.machine.cpu.is_empty());
     assert!(!row.machine.os.is_empty());
     // §9.6 / §2.4: "browser or Node" is a label, and ours is Node — headless V8.
     assert_eq!(row.machine.substrate, "wasm");
-    assert!(row.machine.runtime.contains("V8"), "{}", row.machine.runtime);
+    assert!(
+        row.machine.runtime.contains("V8"),
+        "{}",
+        row.machine.runtime
+    );
     assert!(
         row.machine.runtime.contains("not a browser"),
         "{}",
@@ -260,7 +274,10 @@ fn a_reference_row_labels_the_engine_the_box_the_runtime_and_the_date() {
     assert_eq!(row.behaviour.width, 25);
     assert_eq!(row.behaviour.evaluator, reference::EVALUATOR_ID);
     assert_eq!(row.behaviour.table, reference::EVALUATOR_TABLE);
-    assert!(row.behaviour.tail, "the Tail is the one remaining switch, and it ships on");
+    assert!(
+        row.behaviour.tail,
+        "the Tail is the one remaining switch, and it ships on"
+    );
     assert_eq!(row.dataset.fingerprint, "4bf1a17b1685a774");
     assert_eq!(row.split, Split { first: 0, last: 1 });
     assert_eq!(row.run_id.matches('/').count(), 4, "{}", row.run_id);
@@ -299,10 +316,21 @@ fn a_reference_row_carries_the_flat_labels_the_page_quotes() {
     };
     // The machine label names the box *and* the OS: a visitor comparing their Run
     // needs to know what the numbers came from, in one string.
-    assert!(label("labels.machine").contains(&row.machine.cpu), "{}", label("labels.machine"));
-    assert!(label("labels.machine").contains(&row.machine.os), "{}", label("labels.machine"));
+    assert!(
+        label("labels.machine").contains(&row.machine.cpu),
+        "{}",
+        label("labels.machine")
+    );
+    assert!(
+        label("labels.machine").contains(&row.machine.os),
+        "{}",
+        label("labels.machine")
+    );
     assert_eq!(label("labels.runtime"), row.machine.runtime);
-    assert!(label("labels.runtime").contains("not a browser"), "a Node row says so");
+    assert!(
+        label("labels.runtime").contains("not a browser"),
+        "a Node row says so"
+    );
     assert_eq!(label("labels.date"), row.measured_at);
     assert_eq!(label("labels.engine_commit"), row.engine.commit);
 }
@@ -321,11 +349,8 @@ fn reference_jsonl_is_append_only_and_never_rewrites_a_row() {
     let path = dir.join("reference.jsonl");
     fs::write(&path, "").expect("an empty log");
 
-    let first = reference::rows(
-        &[measurement(&[10_212, 9_810], &[8, 8])],
-        &labels(0, None),
-    )
-    .remove(0);
+    let first =
+        reference::rows(&[measurement(&[10_212, 9_810], &[8, 8])], &labels(0, None)).remove(0);
     reference::append(&path, &first).expect("the first row");
 
     let before = fs::read(&path).expect("read");
@@ -335,11 +360,8 @@ fn reference_jsonl_is_append_only_and_never_rewrites_a_row() {
 
     let mut second_labels = labels(next, previous);
     second_labels.measured_at = "2026-11-04T09:00:00Z".to_string();
-    let second = reference::rows(
-        &[measurement(&[10_212, 9_811], &[8, 8])],
-        &second_labels,
-    )
-    .remove(0);
+    let second =
+        reference::rows(&[measurement(&[10_212, 9_811], &[8, 8])], &second_labels).remove(0);
     reference::append(&path, &second).expect("the second row");
 
     let after = fs::read(&path).expect("read");
@@ -445,6 +467,7 @@ fn a_committed_row_matches_the_manifest_it_was_measured_on() {
 
 fn read_manifest(data: &std::path::Path, config: &Config) -> dataset::Manifest {
     let path = dataset::manifest_path(data, config);
-    let text = fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let text =
+        fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     dataset::Manifest::parse(&text).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }

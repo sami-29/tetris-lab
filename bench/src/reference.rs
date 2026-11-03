@@ -491,8 +491,8 @@ pub fn golden_path() -> PathBuf {
 
 /// The width and where it came from: `width-curve.json`'s `default_beam`, or a flag.
 pub fn width_from_curve(path: &Path) -> Result<u32, String> {
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     let value = json::parse(&text).map_err(|error| format!("parse {}: {error}", path.display()))?;
     value
         .get("default_beam")
@@ -517,8 +517,10 @@ pub fn table_fnv() -> String {
 /// skipped this could be measured on games that are not the committed ones.
 pub fn dataset_id(data: &Path, config: &Config) -> Result<DatasetId, String> {
     let path = dataset::manifest_path(data, config);
-    let text = fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    let manifest = dataset::Manifest::parse(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+    let text =
+        fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let manifest =
+        dataset::Manifest::parse(&text).map_err(|error| format!("{}: {error}", path.display()))?;
 
     let mut games = Vec::with_capacity(dataset::GAME_COUNT);
     for seed in dataset::SEED_FIRST..=dataset::SEED_LAST {
@@ -554,7 +556,8 @@ pub fn engine_label(wasm: &Path) -> Engine {
         Ok((hash, bytes)) => (hash, bytes),
         Err(_) => (String::new(), 0),
     };
-    let commit = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown (git rev-parse failed)".to_string());
+    let commit =
+        git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown (git rev-parse failed)".to_string());
     let short = git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
     let dirty = dirty();
     Engine {
@@ -571,12 +574,15 @@ pub fn engine_label(wasm: &Path) -> Engine {
 /// The box, the runtime and the substrate: probes, not memory. A probe that fails
 /// says so — an invented CPU name is worse than an honest "unknown".
 pub fn machine_label(substrate: Substrate) -> Machine {
-    let node = probe("node", &["--version"]).unwrap_or_else(|| "node (version unknown)".to_string());
+    let node =
+        probe("node", &["--version"]).unwrap_or_else(|| "node (version unknown)".to_string());
     let rustc = probe("rustc", &["-V"]).unwrap_or_else(|| "rustc (version unknown)".to_string());
     let host = probe("rustc", &["-vV"])
         .and_then(|text| {
-            text.lines()
-                .find_map(|line| line.strip_prefix("host: ").map(|host| host.trim().to_string()))
+            text.lines().find_map(|line| {
+                line.strip_prefix("host: ")
+                    .map(|host| host.trim().to_string())
+            })
         })
         .unwrap_or_else(|| format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS));
 
@@ -668,7 +674,9 @@ fn dirty() -> bool {
         .current_dir(root())
         .output();
     match output {
-        Ok(output) if output.status.success() => !String::from_utf8_lossy(&output.stdout).trim().is_empty(),
+        Ok(output) if output.status.success() => {
+            !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+        }
         _ => false,
     }
 }
@@ -676,12 +684,18 @@ fn dirty() -> bool {
 /// §10's pinned toolchain's own answer, from `rustc -vV`'s release and host.
 fn toolchain() -> String {
     let release = probe("rustc", &["-V"])
-        .and_then(|text| text.split_whitespace().nth(1).map(|version| version.to_string()))
+        .and_then(|text| {
+            text.split_whitespace()
+                .nth(1)
+                .map(|version| version.to_string())
+        })
         .unwrap_or_else(|| "unknown".to_string());
     let host = probe("rustc", &["-vV"])
         .and_then(|text| {
-            text.lines()
-                .find_map(|line| line.strip_prefix("host: ").map(|host| host.trim().to_string()))
+            text.lines().find_map(|line| {
+                line.strip_prefix("host: ")
+                    .map(|host| host.trim().to_string())
+            })
         })
         .unwrap_or_else(|| format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS));
     format!("{release}-{host}")
@@ -901,7 +915,11 @@ fn measure_wasm(options: &MeasureOptions<'_>, width: u32) -> Result<Measurement,
 /// cal_after,<ms>
 /// batch_ms,<ms>
 /// ```
-fn parse_wasm_rows(text: &str, options: &MeasureOptions<'_>, width: u32) -> Result<Measurement, String> {
+fn parse_wasm_rows(
+    text: &str,
+    options: &MeasureOptions<'_>,
+    width: u32,
+) -> Result<Measurement, String> {
     let mut samples = Vec::new();
     let mut cal_before = Vec::new();
     let mut cal_after = Vec::new();
@@ -1160,8 +1178,15 @@ impl Row {
 /// identity, and stable enough to point `supersedes` at.
 pub fn run_id(engine: &Engine, width: u32, measured_at: &str) -> String {
     let wasm = &engine.wasm_sha256;
-    let short = if wasm.len() >= 8 { &wasm[..8] } else { wasm.as_str() };
-    format!("{}/{short}/{EVALUATOR_ID}/w{width}/{measured_at}", engine.short)
+    let short = if wasm.len() >= 8 {
+        &wasm[..8]
+    } else {
+        wasm.as_str()
+    };
+    format!(
+        "{}/{short}/{EVALUATOR_ID}/w{width}/{measured_at}",
+        engine.short
+    )
 }
 
 /// One row per measurement, in `measurements` order, chained by `index` and
@@ -1277,7 +1302,8 @@ pub fn read(path: &Path) -> Result<Vec<Row>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let text = fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     let mut rows = Vec::new();
     for (number, line) in text.lines().enumerate() {
         let line = line.trim();
@@ -1333,33 +1359,42 @@ fn parse_row(line: &str, path: &Path, number: usize) -> Result<Row, String> {
     let config = Config::from_name(&dir)
         .ok_or_else(|| format!("{where_}: unknown configuration {dir:?}"))?;
 
-    let dataset = value.get("dataset").ok_or_else(|| format!("{where_}: dataset is missing"))?;
-    let behaviour = value.get("behaviour").ok_or_else(|| format!("{where_}: behaviour is missing"))?;
-    let split = value.get("split").ok_or_else(|| format!("{where_}: split is missing"))?;
-    let stats = value.get("stats").ok_or_else(|| format!("{where_}: stats is missing"))?;
+    let dataset = value
+        .get("dataset")
+        .ok_or_else(|| format!("{where_}: dataset is missing"))?;
+    let behaviour = value
+        .get("behaviour")
+        .ok_or_else(|| format!("{where_}: behaviour is missing"))?;
+    let split = value
+        .get("split")
+        .ok_or_else(|| format!("{where_}: split is missing"))?;
+    let stats = value
+        .get("stats")
+        .ok_or_else(|| format!("{where_}: stats is missing"))?;
     let fingerprints = value
         .get("fingerprints")
         .ok_or_else(|| format!("{where_}: fingerprints is missing"))?;
-    let engine = value.get("engine").ok_or_else(|| format!("{where_}: engine is missing"))?;
-    let machine = value.get("machine").ok_or_else(|| format!("{where_}: machine is missing"))?;
+    let engine = value
+        .get("engine")
+        .ok_or_else(|| format!("{where_}: engine is missing"))?;
+    let machine = value
+        .get("machine")
+        .ok_or_else(|| format!("{where_}: machine is missing"))?;
     Ok(Row {
         config,
         index: uint_of(&value, "index").map_err(|error| format!("{where_}: {error}"))?,
         run_id: text_of(&value, "run_id").map_err(|error| format!("{where_}: {error}"))?,
-        measured_at: text_of(&value, "measured_at").map_err(|error| format!("{where_}: {error}"))?,
+        measured_at: text_of(&value, "measured_at")
+            .map_err(|error| format!("{where_}: {error}"))?,
         reason: text_of(&value, "reason").map_err(|error| format!("{where_}: {error}"))?,
         supersedes: match value.get("supersedes") {
             Some(Value::Null) | None => None,
             Some(Value::String(text)) => Some(text.clone()),
-            Some(other) => {
-                return Err(format!(
-                    "{where_}: supersedes is {}",
-                    other.kind()
-                ))
-            }
+            Some(other) => return Err(format!("{where_}: supersedes is {}", other.kind())),
         },
         dataset: DatasetId {
-            fingerprint: text_of(dataset, "fingerprint").map_err(|error| format!("{where_}: {error}"))?,
+            fingerprint: text_of(dataset, "fingerprint")
+                .map_err(|error| format!("{where_}: {error}"))?,
             generator_version: uint_of(dataset, "generator_version")
                 .map_err(|error| format!("{where_}: {error}"))?,
         },
@@ -1370,16 +1405,18 @@ fn parse_row(line: &str, path: &Path, number: usize) -> Result<Row, String> {
             width: uint_of(behaviour, "width").map_err(|error| format!("{where_}: {error}"))?,
             width_source: text_of(behaviour, "width_source")
                 .map_err(|error| format!("{where_}: {error}"))?,
-            evaluator: text_of(behaviour, "evaluator").map_err(|error| format!("{where_}: {error}"))?,
+            evaluator: text_of(behaviour, "evaluator")
+                .map_err(|error| format!("{where_}: {error}"))?,
             table: text_of(behaviour, "table").map_err(|error| format!("{where_}: {error}"))?,
-            table_fnv: text_of(behaviour, "table_fnv").map_err(|error| format!("{where_}: {error}"))?,
+            table_fnv: text_of(behaviour, "table_fnv")
+                .map_err(|error| format!("{where_}: {error}"))?,
             toggles: text_of(behaviour, "toggles").map_err(|error| format!("{where_}: {error}"))?,
             tail: behaviour
                 .get("tail")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| format!("{where_}: behaviour.tail is missing"))?,
-            tail_pieces: uint_of(behaviour, "tail_pieces").map_err(|error| format!("{where_}: {error}"))?
-                as usize,
+            tail_pieces: uint_of(behaviour, "tail_pieces")
+                .map_err(|error| format!("{where_}: {error}"))? as usize,
         },
         split: Split {
             first: uint_of(split, "first").map_err(|error| format!("{where_}: {error}"))?,
@@ -1405,14 +1442,16 @@ fn parse_row(line: &str, path: &Path, number: usize) -> Result<Row, String> {
                 .get("dirty")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| format!("{where_}: engine.dirty is missing"))?,
-            wasm_sha256: text_of(engine, "wasm_sha256").map_err(|error| format!("{where_}: {error}"))?,
+            wasm_sha256: text_of(engine, "wasm_sha256")
+                .map_err(|error| format!("{where_}: {error}"))?,
             wasm_bytes: engine
                 .get("wasm_bytes")
                 .and_then(Value::as_u32)
                 .map(|bytes| bytes as u64)
                 .ok_or_else(|| format!("{where_}: engine.wasm_bytes is missing"))?,
             profile: text_of(engine, "profile").map_err(|error| format!("{where_}: {error}"))?,
-            toolchain: text_of(engine, "toolchain").map_err(|error| format!("{where_}: {error}"))?,
+            toolchain: text_of(engine, "toolchain")
+                .map_err(|error| format!("{where_}: {error}"))?,
         },
         machine: machine_of(machine).map_err(|error| format!("{where_}: {error}"))?,
     })
@@ -1492,7 +1531,9 @@ pub(crate) fn optional_number(value: &Value, key: &str) -> Result<Option<f64>, S
             .as_f64()
             .map(Some)
             .ok_or_else(|| format!("{key} is neither null nor a number")),
-        None => Err(format!("{key} is missing (a missing row is not a null one)")),
+        None => Err(format!(
+            "{key} is missing (a missing row is not a null one)"
+        )),
     }
 }
 
@@ -1503,7 +1544,9 @@ pub(crate) fn optional_uint(value: &Value, key: &str) -> Result<Option<u32>, Str
             .as_u32()
             .map(Some)
             .ok_or_else(|| format!("{key} is neither null nor a non-negative integer")),
-        None => Err(format!("{key} is missing (a missing row is not a null one)")),
+        None => Err(format!(
+            "{key} is missing (a missing row is not a null one)"
+        )),
     }
 }
 
@@ -1533,7 +1576,11 @@ pub const PAGE_FIELDS: [(&str, &[&str]); 9] = [
     // R5/R6: the two per-solve rows, and the method that produced the percentile.
     (
         "R5 Evaluations per Solve",
-        &["stats.evals_p50", "stats.evals_p90", "fingerprints.p90_method"],
+        &[
+            "stats.evals_p50",
+            "stats.evals_p90",
+            "fingerprints.p90_method",
+        ],
     ),
     (
         "R6 ms per Solve",
@@ -1567,7 +1614,8 @@ pub const PAGE_FIELDS: [(&str, &[&str]); 9] = [
 
 /// Walk a JSON path like `stats.evals_p90` into a parsed row.
 pub fn resolve<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    path.split('.').try_fold(value, |current, key| current.get(key))
+    path.split('.')
+        .try_fold(value, |current, key| current.get(key))
 }
 
 // --------------------------------------------------------------- formatting
@@ -1629,7 +1677,12 @@ mod tests {
             .split("[profile.release]")
             .nth(1)
             .expect("a [profile.release] block");
-        for flag in ["lto = \"fat\"", "codegen-units = 1", "panic = \"abort\"", "strip = true"] {
+        for flag in [
+            "lto = \"fat\"",
+            "codegen-units = 1",
+            "panic = \"abort\"",
+            "strip = true",
+        ] {
             assert!(
                 release.contains(flag),
                 "Cargo.toml no longer sets {flag}; the row's profile label says: {ENGINE_PROFILE}"
@@ -1641,7 +1694,10 @@ mod tests {
     fn the_table_fingerprint_is_the_shipped_weight_table() {
         // Ticket 08's ladder names `E1_PUBLISHED` as what ships, and this is the same
         // eight integers hashed the same way as ticket 07's record.
-        assert_eq!(table_fnv(), crate::tuning::table_fnv(&engine::E1_PUBLISHED.as_array()));
+        assert_eq!(
+            table_fnv(),
+            crate::tuning::table_fnv(&engine::E1_PUBLISHED.as_array())
+        );
         assert!(table_fnv().starts_with("0x"), "{}", table_fnv());
     }
 

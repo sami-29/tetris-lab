@@ -30,9 +30,7 @@ use crate::dataset::{self, Config};
 use crate::fingerprint::{self, Fnv};
 use crate::gate::{Check, State};
 use crate::json::{self, Value};
-use crate::reference::{
-    self, DatasetId, Engine, Machine, Measurement, RunLabels, Split, Stats,
-};
+use crate::reference::{self, DatasetId, Engine, Machine, Measurement, RunLabels, Split, Stats};
 
 /// The golden file's format. A reader that does not know it must refuse the file.
 pub const FORMAT: u32 = 1;
@@ -114,7 +112,9 @@ impl Golden {
     }
 
     pub fn entry_mut(&mut self, dir: &str) -> Option<&mut GoldenConfig> {
-        self.configs.iter_mut().find(|entry| entry.config.dir == dir)
+        self.configs
+            .iter_mut()
+            .find(|entry| entry.config.dir == dir)
     }
 
     pub fn reference_run(&self, dir: &str) -> Option<&str> {
@@ -198,7 +198,8 @@ pub fn identity(
 // ------------------------------------------------------------------- reading
 
 pub fn load(path: &Path) -> Result<Golden, String> {
-    let text = fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     from_text(&text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
@@ -242,9 +243,9 @@ pub fn from_text(text: &str) -> Result<Golden, String> {
         let entry = configs
             .get(config.dir)
             .ok_or_else(|| format!("configs.{} is missing", config.dir))?;
-        let stats = entry.get("stats").ok_or_else(|| {
-            format!("configs.{}.stats is missing", config.dir)
-        })?;
+        let stats = entry
+            .get("stats")
+            .ok_or_else(|| format!("configs.{}.stats is missing", config.dir))?;
         let evals = vector(entry, "evals", config.dir)?;
         let lines = vector(entry, "lines", config.dir)?;
         let recorded_evals = reference::text_of(entry, "evals_fnv1a64")?;
@@ -290,7 +291,10 @@ pub fn from_text(text: &str) -> Result<Golden, String> {
         engine: Engine {
             commit: reference::text_of(engine, "commit")?,
             short: reference::text_of(engine, "short")?,
-            dirty: engine.get("dirty").and_then(Value::as_bool).unwrap_or(false),
+            dirty: engine
+                .get("dirty")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             wasm_sha256: reference::text_of(engine, "wasm_sha256")?,
             wasm_bytes: reference::uint_of(engine, "wasm_bytes")? as u64,
             profile: reference::text_of(engine, "profile")?,
@@ -305,7 +309,10 @@ pub fn from_text(text: &str) -> Result<Golden, String> {
             table: reference::text_of(behaviour, "table")?,
             table_fnv: reference::text_of(behaviour, "table_fnv")?,
             toggles: reference::text_of(behaviour, "toggles")?,
-            tail: behaviour.get("tail").and_then(Value::as_bool).unwrap_or(true),
+            tail: behaviour
+                .get("tail")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
             tail_pieces: reference::uint_of(behaviour, "tail_pieces")? as usize,
         },
         split: Split {
@@ -343,8 +350,20 @@ pub fn render(golden: &Golden) -> String {
     out.push_str("{\n");
     field(&mut out, 1, "format", &golden.format.to_string(), true);
     field(&mut out, 1, "kind", &reference::quote(&golden.kind), true);
-    field(&mut out, 1, "generated_at", &reference::quote(&golden.generated_at), true);
-    field(&mut out, 1, "reason", &reference::quote(&golden.reason), true);
+    field(
+        &mut out,
+        1,
+        "generated_at",
+        &reference::quote(&golden.generated_at),
+        true,
+    );
+    field(
+        &mut out,
+        1,
+        "reason",
+        &reference::quote(&golden.reason),
+        true,
+    );
     match &golden.supersedes {
         Some(text) => field(&mut out, 1, "supersedes", &reference::quote(text), true),
         None => field(&mut out, 1, "supersedes", "null", true),
@@ -392,7 +411,13 @@ pub fn render(golden: &Golden) -> String {
 
     out.push_str("  \"bound\": {\n");
     field(&mut out, 2, "wall_clock_factor", "4", true);
-    field(&mut out, 2, "measured", "\"batch_ms over the whole Split\"", true);
+    field(
+        &mut out,
+        2,
+        "measured",
+        "\"batch_ms over the whole Split\"",
+        true,
+    );
     field(
         &mut out,
         2,
@@ -428,8 +453,20 @@ pub fn render(golden: &Golden) -> String {
     out.push_str("  },\n");
 
     out.push_str("  \"engine\": {\n");
-    field(&mut out, 2, "commit", &reference::quote(&golden.engine.commit), true);
-    field(&mut out, 2, "short", &reference::quote(&golden.engine.short), true);
+    field(
+        &mut out,
+        2,
+        "commit",
+        &reference::quote(&golden.engine.commit),
+        true,
+    );
+    field(
+        &mut out,
+        2,
+        "short",
+        &reference::quote(&golden.engine.short),
+        true,
+    );
     field(&mut out, 2, "dirty", &golden.engine.dirty.to_string(), true);
     field(
         &mut out,
@@ -438,8 +475,20 @@ pub fn render(golden: &Golden) -> String {
         &reference::quote(&golden.engine.wasm_sha256),
         true,
     );
-    field(&mut out, 2, "wasm_bytes", &golden.engine.wasm_bytes.to_string(), true);
-    field(&mut out, 2, "profile", &reference::quote(&golden.engine.profile), true);
+    field(
+        &mut out,
+        2,
+        "wasm_bytes",
+        &golden.engine.wasm_bytes.to_string(),
+        true,
+    );
+    field(
+        &mut out,
+        2,
+        "profile",
+        &reference::quote(&golden.engine.profile),
+        true,
+    );
     field(
         &mut out,
         2,
@@ -469,7 +518,13 @@ pub fn render(golden: &Golden) -> String {
     out.push_str("  \"datasets\": {\n");
     for (index, (name, id)) in golden.datasets.iter().enumerate() {
         out.push_str(&format!("    {}: {{\n", reference::quote(name)));
-        field(&mut out, 3, "fingerprint", &reference::quote(&id.fingerprint), true);
+        field(
+            &mut out,
+            3,
+            "fingerprint",
+            &reference::quote(&id.fingerprint),
+            true,
+        );
         field(
             &mut out,
             3,
@@ -479,13 +534,23 @@ pub fn render(golden: &Golden) -> String {
         );
         out.push_str(&format!(
             "    }}{}\n",
-            if index + 1 < golden.datasets.len() { "," } else { "" }
+            if index + 1 < golden.datasets.len() {
+                ","
+            } else {
+                ""
+            }
         ));
     }
     out.push_str("  },\n");
 
     out.push_str("  \"behaviour\": {\n");
-    field(&mut out, 2, "width", &golden.behaviour.width.to_string(), true);
+    field(
+        &mut out,
+        2,
+        "width",
+        &golden.behaviour.width.to_string(),
+        true,
+    );
     field(
         &mut out,
         2,
@@ -500,7 +565,13 @@ pub fn render(golden: &Golden) -> String {
         &reference::quote(&golden.behaviour.evaluator),
         true,
     );
-    field(&mut out, 2, "table", &reference::quote(&golden.behaviour.table), true);
+    field(
+        &mut out,
+        2,
+        "table",
+        &reference::quote(&golden.behaviour.table),
+        true,
+    );
     field(
         &mut out,
         2,
@@ -515,7 +586,13 @@ pub fn render(golden: &Golden) -> String {
         &reference::quote(&golden.behaviour.toggles),
         true,
     );
-    field(&mut out, 2, "tail", &golden.behaviour.tail.to_string(), true);
+    field(
+        &mut out,
+        2,
+        "tail",
+        &golden.behaviour.tail.to_string(),
+        true,
+    );
     field(
         &mut out,
         2,
@@ -557,7 +634,11 @@ pub fn render(golden: &Golden) -> String {
         out.push('\n');
         out.push_str(&format!(
             "    }}{}\n",
-            if index + 1 < golden.configs.len() { "," } else { "" }
+            if index + 1 < golden.configs.len() {
+                ","
+            } else {
+                ""
+            }
         ));
     }
     out.push_str("  },\n");
@@ -686,7 +767,10 @@ pub fn from_measurements(
             }
         })
         .collect();
-    let width = measurements.first().map(|measurement| measurement.width).unwrap_or(0);
+    let width = measurements
+        .first()
+        .map(|measurement| measurement.width)
+        .unwrap_or(0);
     Golden {
         format: FORMAT,
         kind: KIND.to_string(),
@@ -968,15 +1052,21 @@ pub fn checks(golden: &Golden, identity: &Identity, measurements: &[Measurement]
         let entry = match golden.entry(config.dir) {
             Some(entry) => entry,
             None => {
-                checks.push(Check::fail(format!("golden evaluations · {}", config.dir))
-                    .subject("the golden has no entry for this configuration"));
+                checks.push(
+                    Check::fail(format!("golden evaluations · {}", config.dir))
+                        .subject("the golden has no entry for this configuration"),
+                );
                 continue;
             }
         };
-        let measurement = measurements.iter().find(|item| item.config.dir == config.dir);
+        let measurement = measurements
+            .iter()
+            .find(|item| item.config.dir == config.dir);
         let Some(measurement) = measurement else {
-            checks.push(Check::fail(format!("golden evaluations · {}", config.dir))
-                .subject("no measurement was taken for this configuration"));
+            checks.push(
+                Check::fail(format!("golden evaluations · {}", config.dir))
+                    .subject("no measurement was taken for this configuration"),
+            );
             continue;
         };
 
@@ -1070,7 +1160,12 @@ fn vector_check(
 
 fn clock_check(config: Config, golden: &Stats, measured: &Stats) -> Check {
     let name = format!("golden wall clock · {}", config.dir);
-    let bound = bound(golden.batch_ms, golden.cal_ms, measured.batch_ms, measured.cal_ms);
+    let bound = bound(
+        golden.batch_ms,
+        golden.cal_ms,
+        measured.batch_ms,
+        measured.cal_ms,
+    );
     let subject = format!(
         "batch {:.0} ms vs golden {:.0} ms = {:.2}x raw; calibration {:.0} ms vs {:.0} ms ⇒ \
          normalised {:.2}x (bound {:.0}x)",
@@ -1093,14 +1188,12 @@ fn clock_check(config: Config, golden: &Stats, measured: &Stats) -> Check {
             bound.factor / bound.normalised.max(f64::MIN_POSITIVE)
         )]);
     }
-    Check::fail(name)
-        .subject(subject)
-        .hint(
-            "MACHINE, not a behaviour change — the evaluations and Lines vectors are identical, so \
+    Check::fail(name).subject(subject).hint(
+        "MACHINE, not a behaviour change — the evaluations and Lines vectors are identical, so \
              the work is identical and only the clock moved. This is not a red engine: re-run on a \
              quiet box, and if it persists on the labelled box the engine got slower and §9.3's \
              budget is the thing to look at, not the golden (ADR 0002).",
-        )
+    )
 }
 
 /// The state a golden check would report, without a `Report`: for a caller that
