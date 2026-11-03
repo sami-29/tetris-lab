@@ -578,9 +578,9 @@ pub fn render(golden: &Golden) -> String {
 }
 
 fn field(out: &mut String, depth: usize, key: &str, value: &str, comma: bool) {
-    let _ = depth;
-    out.push_str("  ");
-    out.push_str("  ");
+    for _ in 0..depth * 2 {
+        out.push(' ');
+    }
     out.push_str(&reference::quote(key));
     out.push_str(": ");
     out.push_str(value);
@@ -627,6 +627,14 @@ fn push_stats(out: &mut String, stats: &Stats) {
         ("ms_max".to_string(), reference::millis(stats.ms_max)),
         ("batch_ms".to_string(), reference::millis(stats.batch_ms)),
         ("cal_ms".to_string(), reference::millis(stats.cal_ms)),
+        (
+            "cal_ms_before".to_string(),
+            reference::millis(stats.cal_ms_before),
+        ),
+        (
+            "cal_ms_after".to_string(),
+            reference::millis(stats.cal_ms_after),
+        ),
     ];
     for (index, (key, value)) in fields.iter().enumerate() {
         out.push_str("        ");
