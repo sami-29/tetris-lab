@@ -298,6 +298,21 @@ const READ = `(() => {
     presets: [...document.querySelectorAll("#playground [data-preset]")].map((el) => el.dataset.preset),
     beamReadout: text("beam-readout"),
     beamTickTitled: document.getElementById("beam-tick")?.getAttribute("title") ?? "",
+    // Ticket 15: the Run panel - progress, both columns, and the machine labels.
+    // A cell's data-run-cell is config-figure-column, so the harness can compare
+    // the live column with the Reference column row by row.
+    run: {
+      state: text("run-state"),
+      status: document.getElementById("run-state")?.dataset.runStatus ?? "",
+      workers: Number(document.getElementById("run-state")?.dataset.workers ?? 0),
+      startDisabled: document.getElementById("run-dataset")?.disabled ?? true,
+      stopDisabled: document.getElementById("run-stop")?.disabled ?? true,
+      cells: Object.fromEntries(
+        [...document.querySelectorAll("[data-run-cell]")].map((el) => [el.dataset.runCell, (el.textContent ?? "").trim()]),
+      ),
+      labels: [...document.querySelectorAll("[data-run-label]")].map((el) => (el.textContent ?? "").trim()),
+      assumption: document.getElementById("run-assumption")?.textContent ?? "",
+    },
     // Ticket 16: the Explainer drawer, opened and read as a visitor reads it.
     drawerOpen: document.getElementById("drawer")?.dataset.open === "true",
     drawerText: document.getElementById("drawer")?.innerText ?? "",
@@ -853,6 +868,107 @@ try {
     );
     check("the re-solve reason is named per control", wide.reason === "beam", wide.reason);
     shots.push(await shoot("playground"));
+  }
+
+  // ---- ticket 15: a Run beside the Reference run ------------------------------
+  //
+  // §2.5.5 and §2.5.7 in one gesture: press Run, watch the progress move, stop one,
+  // then run the whole split and read the table. Three things are asserted that only
+  // a browser can settle — that a Run *finishes* inside its budget on this machine,
+  // that `terminate()` really stops it (the panel says partial and no figure claims
+  // the split), and that the live column agrees with the committed Reference row on
+  // the one thing that must be identical: the engine's own integers.
+  {
+    const clickId = (id) =>
+      cdp.send(
+        "Runtime.evaluate",
+        { expression: `document.getElementById(${JSON.stringify(id)}).click()`, returnByValue: true },
+        sessionId,
+      );
+    const runState = async () => (await read()).run;
+
+    const ready = await runState();
+    check("the Run panel offers a Run and a Stop", !ready.startDisabled && ready.stopDisabled, `start ${ready.startDisabled ? "disabled" : "live"}, stop ${ready.stopDisabled ? "disabled" : "live"}`);
+    check("the Reference column is committed and labelled", /Ryzen|\w+ \w+ ·/.test(ready.labels.join(" ")), ready.labels.join(" | ").slice(0, 160));
+    check("the 5 s budget names the 8-core laptop as an assumption", /assumption/.test(ready.assumption) && /not a measurement/.test(ready.assumption), ready.assumption.slice(0, 120));
+
+    // 1. Stop, and be honest about it. The whole Run is ~1 s here, so the stop has
+    //    to land inside that window; retried a few times rather than flaking.
+    let partial = null;
+    for (let attempt = 0; attempt < 4 && !partial; attempt += 1) {
+      await clickId("run-dataset");
+      for (let i = 0; i < 400; i += 1) {
+        await sleep(10);
+        const state = await runState();
+        if (state.status === "complete" || state.status === "failed") break;
+        if (/[1-9]/.test(state.state)) {
+          await clickId("run-stop");
+          break;
+        }
+      }
+      for (let i = 0; i < 100; i += 1) {
+        await sleep(20);
+        const state = await runState();
+        if (state.status === "stopped") {
+          partial = state;
+          break;
+        }
+        if (state.status === "complete") break;
+      }
+    }
+    check(
+      "a Run stops immediately, and what it measured is labelled partial",
+      Boolean(partial) && /partial/.test(partial.state) && partial.labels.some((line) => /partial/.test(line)),
+      partial ? `${partial.state} · ${partial.labels.join(" / ").slice(0, 100)}` : "no stopped Run",
+    );
+    check(
+      "a stopped Run keeps its denominator in the same cell as its value",
+      Boolean(partial) && / of [\d,]+$/.test(partial.cells["0-r1-yours"] ?? ""),
+      partial?.cells["0-r1-yours"] ?? "(no cell)",
+    );
+    shots.push(await shoot("run-partial"));
+
+    // 2. The whole split, timed. The budget is §9.3's: under 5 s on this box.
+    await clickId("run-dataset");
+    const startedAt = Date.now();
+    let done = null;
+    for (let i = 0; i < 2400 && !done; i += 1) {
+      await sleep(25);
+      const state = await runState();
+      if (state.status === "complete" || state.status === "failed") done = state;
+    }
+    const wallMs = Date.now() - startedAt;
+    console.log(`  run      ${(wallMs / 1000).toFixed(2)} s wall clock on ${done?.workers ?? 0} workers · ${done?.state ?? "never finished"}`);
+    check("a Run of both configurations completes", done?.status === "complete", done ? done.state : "never finished");
+    check("the Run finishes inside the 5 s budget", wallMs < 5000, `${(wallMs / 1000).toFixed(2)} s on ${done?.workers ?? 0} workers`);
+
+    if (done) {
+      for (const config of ["0", "1"]) {
+        check(
+          `configuration ${config}: the live Evaluations are the Reference row's`,
+          done.cells[`${config}-r5-yours`] === done.cells[`${config}-r5-reference`],
+          `${done.cells[`${config}-r5-yours`]} vs ${done.cells[`${config}-r5-reference`]}`,
+        );
+        check(
+          `configuration ${config}: the live win rate and games won are the Reference row's`,
+          done.cells[`${config}-r2-yours`] === done.cells[`${config}-r2-reference`] &&
+            (done.cells[`${config}-r1-yours`] ?? "").replace(/ of [\d,]+$/, "") === done.cells[`${config}-r1-reference`],
+          `${done.cells[`${config}-r1-yours`]} / ${done.cells[`${config}-r2-yours`]}`,
+        );
+        check(
+          `configuration ${config}: the ms rows are this machine's and say so`,
+          /ms/.test(done.cells[`${config}-r6-yours`] ?? "") && done.cells[`${config}-r6-yours`] !== done.cells[`${config}-r6-reference`],
+          `${done.cells[`${config}-r6-yours`]} vs ${done.cells[`${config}-r6-reference`]}`,
+        );
+      }
+      check(
+        "both columns name the machine that produced them",
+        done.labels.some((line) => /this browser/.test(line)) && done.labels.some((line) => /Ryzen/.test(line)),
+        done.labels.join(" | ").slice(0, 200),
+      );
+      check("the Run says the split is measured, in words", /2,000 of 2,000 games/.test(done.state), done.state);
+      shots.push(await shoot("run-complete"));
+    }
   }
 
   for (const file of shots) console.log(`  screenshot ${file}`);
