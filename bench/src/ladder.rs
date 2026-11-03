@@ -63,7 +63,7 @@ pub const BOOTSTRAP_RESAMPLES: u32 = 10_000;
 pub const VERSION: u32 = 1;
 
 /// The six rungs the artifact carries, in the order the table publishes them.
-pub const ROWS: [&'static str; 6] = [
+pub const ROWS: [&str; 6] = [
     "e0",
     "e1",
     "e2",
@@ -73,7 +73,7 @@ pub const ROWS: [&'static str; 6] = [
 ];
 
 /// The three Evaluators the ladder compares, in §9.4's order.
-pub const EVALUATORS: [&'static str; 3] = ["e0", "e1", "e2"];
+pub const EVALUATORS: [&str; 3] = ["e0", "e1", "e2"];
 
 // ---------------------------------------------------------------- the goal scan
 
@@ -221,6 +221,11 @@ pub struct Pair {
     /// Seeds whose evaluation count differs at all: how much of the evals leg is
     /// actually exercised, which a bare median difference cannot show.
     pub evals_differ_seeds: u32,
+    /// Mean `evals_judged - evals_reference` over every seed: the axis a cost
+    /// device (Dedup) is judged on, because its claim is work saved and not Lines.
+    pub delta_mean_evals: f64,
+    /// The paired bootstrap 95 % interval of the same difference, same stream.
+    pub evals_ci95: [f64; 2],
     /// Seeds where any of `(won, lines, evals)` differs.
     pub moved_seeds: u32,
 }
@@ -229,6 +234,20 @@ impl Pair {
     /// The interval excludes zero, i.e. the mean-lines axis resolves the pair.
     pub fn ci95_excludes_zero(&self) -> bool {
         self.ci95[1] < 0.0 || self.ci95[0] > 0.0
+    }
+
+    /// The interval on the axis `axis` names: what the toggle rule reads.
+    pub fn interval(&self, axis: Axis) -> [f64; 2] {
+        match axis {
+            Axis::Quality => self.ci95,
+            Axis::Cost => self.evals_ci95,
+        }
+    }
+
+    /// Whether the interval on `axis` excludes zero.
+    pub fn resolves(&self, axis: Axis) -> bool {
+        let interval = self.interval(axis);
+        interval[1] < 0.0 || interval[0] > 0.0
     }
 
     /// The 2×2 table's cells sum to the game count.
@@ -299,6 +318,14 @@ pub fn compare(judged: &Candidate, reference: &Candidate, boot_seed: u64) -> Pai
         boot_seed,
         evals_median_judged: judged_stats.evals_median,
         evals_median_reference: reference_stats.evals_median,
+        delta_mean_evals: judged_stats.evals_mean - reference_stats.evals_mean,
+        evals_ci95: stats::paired_bootstrap_ci95_of(
+            &reference.samples,
+            &judged.samples,
+            boot_seed,
+            BOOTSTRAP_RESAMPLES,
+            |sample| sample.evals as i64,
+        ),
         evals_differ_seeds,
         moved_seeds,
     }
@@ -597,6 +624,36 @@ impl ToggleVerdict {
             ToggleVerdict::Kept => "kept",
             ToggleVerdict::Deleted => "deleted",
         }
+    }
+}
+
+/// Which interval a toggle's claim is judged on.
+///
+/// The rule is "moves nothing beyond its CI", and the CI has to be the one the
+/// mechanism claims: the exact Tail search and the No-suicide rule claim quality
+/// (Lines and outcomes), while Dedup is a cost device — it removes duplicate
+/// Boards before the trim — so judging it on Lines would delete the machinery that
+/// makes the beam affordable (notes/08 §3.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Axis {
+    Quality,
+    Cost,
+}
+
+impl Axis {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Axis::Quality => "quality (mean lines)",
+            Axis::Cost => "cost (evaluations per solve)",
+        }
+    }
+}
+
+/// The axis each toggle claims.
+pub fn toggle_axis(id: &str) -> Axis {
+    match id {
+        "dedup-off" => Axis::Cost,
+        _ => Axis::Quality,
     }
 }
 
@@ -1025,7 +1082,7 @@ pub fn run(options: &Options) -> Result<Outcome, String> {
             pair.moved_seeds > 0,
             pair.moved_seeds,
             pair.discordant,
-            pair.ci95,
+            pair.interval(toggle_axis(id)),
         ));
         toggle_pairs.push(pair);
         rows.push(row);
@@ -1141,7 +1198,7 @@ fn thousands(value: u32) -> String {
     let text = value.to_string();
     let mut out = String::new();
     for (index, digit) in text.chars().enumerate() {
-        if index > 0 && (text.len() - index) % 3 == 0 {
+        if index > 0 && (text.len() - index).is_multiple_of(3) {
             out.push(',');
         }
         out.push(digit);
@@ -1326,8 +1383,9 @@ fn render_json(artifact: &Artifact) -> String {
              \"only_reference\": {}, \"neither\": {}, \"games\": {}, \"n_disc\": {}, \
              \"rejects_1_100\": {}, \"delta_mean_lines\": {:.4}, \"ci95\": [{:.4}, {:.4}], \
              \"ci95_excludes_zero\": {}, \"boot_seed\": \"0x{:016x}\", \"resamples\": \
-             {BOOTSTRAP_RESAMPLES}, \"evals_median\": [{:.1}, {:.1}], \"evals_differ_seeds\": {}, \
-             \"moved_seeds\": {} }}{}\n",
+             {BOOTSTRAP_RESAMPLES}, \"evals_median\": [{:.1}, {:.1}], \"evals_ci95\": [{:.4}, \
+             {:.4}], \"evals_delta_mean\": {:.4}, \"evals_differ_seeds\": {}, \"moved_seeds\": \
+             {} }}{}\n",
             escape(pair.judged),
             escape(pair.reference),
             pair.both,
@@ -1344,6 +1402,9 @@ fn render_json(artifact: &Artifact) -> String {
             pair.boot_seed,
             pair.evals_median_judged,
             pair.evals_median_reference,
+            pair.evals_ci95[0],
+            pair.evals_ci95[1],
+            pair.delta_mean_evals,
             pair.evals_differ_seeds,
             pair.moved_seeds,
             if index + 1 == all.len() { "" } else { "," }
@@ -1388,18 +1449,23 @@ fn render_json(artifact: &Artifact) -> String {
     out.push_str("  \"toggles\": [\n");
     for (index, pair) in artifact.toggle_pairs.iter().enumerate() {
         out.push_str(&format!(
-            "    {{ \"id\": \"{}\", \"off\": \"{}\", \"verdict\": \"{}\", \"moved_seeds\": {}, \
-             \"n_disc\": {}, \"rejects_1_100\": {}, \"ci95\": [{:.4}, {:.4}], \
-             \"ci95_excludes_zero\": {} }}{}\n",
+            "    {{ \"id\": \"{}\", \"off\": \"{}\", \"verdict\": \"{}\", \"axis\": \"{}\", \
+             \"moved_seeds\": {}, \"n_disc\": {}, \"rejects_1_100\": {}, \"ci95\": [{:.4}, \
+             {:.4}], \"ci95_excludes_zero\": {}, \"evals_ci95\": [{:.4}, {:.4}], \
+             \"evals_delta_mean\": {:.4} }}{}\n",
             escape(pair.judged),
             escape(pair.judged.trim_end_matches("-off")),
             artifact.toggles[index].as_str(),
+            toggle_axis(pair.judged).as_str(),
             pair.moved_seeds,
             pair.discordant.n(),
             pair.rejects,
             pair.ci95[0],
             pair.ci95[1],
             pair.ci95_excludes_zero(),
+            pair.evals_ci95[0],
+            pair.evals_ci95[1],
+            pair.delta_mean_evals,
             if index + 1 == artifact.toggle_pairs.len() {
                 ""
             } else {
@@ -1691,13 +1757,15 @@ pub fn render_markdown(artifact: &Artifact) -> String {
          told from one that achieved\nnothing without it.\n\n",
     );
     out.push_str(
-        "| toggle | moved seeds | flipped (b, c) | mean lines Δ [95 % CI] | verdict |\n\
-         |---|---|---|---|---|\n",
+        "| toggle | axis | moved seeds | flipped (b, c) | mean lines Δ [95 % CI] | evals Δ \
+         [95 % CI] | verdict |\n|---|---|---|---|---|---|---|\n",
     );
     for (index, pair) in artifact.toggle_pairs.iter().enumerate() {
+        let axis = toggle_axis(pair.judged);
         out.push_str(&format!(
-            "| {} | {}/{} | {}, {} | {:+.4} [{:+.4}, {:+.4}] | {} |\n",
+            "| {} | {} | {}/{} | {}, {} | {:+.4} [{:+.4}, {:+.4}] | {:+.1} [{:+.1}, {:+.1}] | {} |\n",
             pair.judged,
+            axis.as_str(),
             pair.moved_seeds,
             games,
             pair.only_judged,
@@ -1705,6 +1773,9 @@ pub fn render_markdown(artifact: &Artifact) -> String {
             pair.delta_mean_lines,
             pair.ci95[0],
             pair.ci95[1],
+            pair.delta_mean_evals,
+            pair.evals_ci95[0],
+            pair.evals_ci95[1],
             artifact.toggles[index].as_str()
         ));
     }
