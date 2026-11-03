@@ -1,11 +1,12 @@
 # The six Gates of §9.2 on every push and every pull request (ticket 03).
 #
-# One job, named `gates`, and one command:
+# One job, named `gates`, and one gated command:
 #
+#   cargo fmt --all --check
 #   npm --prefix web run gates
 #
-# which is the same command a developer types. The job is the required check
-# for `main`, so a red Gate blocks instead of being noticed later:
+# which are the commands a developer types. The job is the required check for
+# `main`, so a red Gate blocks instead of being noticed later:
 #
 #   Settings -> Rules -> New branch ruleset -> target `main`
 #     -> Require status checks to pass -> add `gates`
@@ -77,6 +78,7 @@ jobs:
           fi
           echo "channel: $CHANNEL"
           rustup toolchain install "$CHANNEL" --profile minimal \
+            --component rustfmt \
             --target wasm32-unknown-unknown
           rustup default "$CHANNEL"
           rustup show active-toolchain
@@ -111,6 +113,15 @@ jobs:
       #                        the ABI data-segment guard and the page
       #   cargo run --release -p bench -- gate all
       #                        gates 1-6
+      # Formatting is part of the Gate, not a style opinion: it was red on a
+      # merged tip after tickets 09/15/17 and nothing caught it because this
+      # file did not run it (ticket 18). rustfmt comes from the same pinned
+      # toolchain -- the `--component rustfmt` above -- so the formatter and the
+      # compiler cannot disagree about which toolchain is authoritative. A diff
+      # here fails the run; the fix is `cargo fmt --all`, committed.
+      - name: fmt
+        run: cargo fmt --all --check
+
       # The build comes first because gates 4 and 6 measure
       # `web/pkg/engine.wasm` and `web/dist`, which are not committed.
       - name: six gates
