@@ -146,18 +146,38 @@ fn the_committed_golden_names_the_engine_the_dataset_and_the_width() {
 fn the_committed_golden_is_the_committed_reference_rows() {
     // §9.6's rule is that the golden is pinned *from* a committed row, never from an
     // unrecorded run: the digests, the quality rows and the run id all have to be
-    // the row's.
+    // the row's. The log is append-only, so a later row is *not* a candidate — the
+    // golden names the row it was pinned from, and that row has to still be there.
     let golden = committed();
     let data = dataset::root();
     for config in CONFIGS {
         let path = dataset::reference_path(&data, &config);
         let rows = reference::read(&path).expect("the log reads");
+        let named = golden
+            .reference_run(config.dir)
+            .unwrap_or_else(|| panic!("{}: the golden names no run", config.dir));
         let row = rows
             .iter()
-            .rev()
-            .find(|row| row.dataset.fingerprint == golden.dataset(config.dir).unwrap().fingerprint
-                && row.behaviour.width == golden.behaviour.width)
-            .unwrap_or_else(|| panic!("{}: no Reference row for the golden", config.dir));
+            .find(|row| row.run_id == named)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: the golden was pinned from {named}, which is not in {} (rows: {:?})",
+                    config.dir,
+                    path.display(),
+                    rows.iter().map(|row| row.run_id.as_str()).collect::<Vec<_>>()
+                )
+            });
+        // The row it names is the row it was pinned on: the same bed, the same games,
+        // the same width. A golden re-pointed at another row without re-pinning the
+        // numbers would fail here rather than at the first moved seed.
+        assert_eq!(
+            Some(&row.dataset.fingerprint),
+            golden.dataset(config.dir).map(|id| &id.fingerprint),
+            "{}: the row's Dataset is the golden's",
+            config.dir
+        );
+        assert_eq!(row.behaviour.width, golden.behaviour.width, "{}", config.dir);
+        assert_eq!(row.engine.wasm_sha256, golden.engine.wasm_sha256, "{}", config.dir);
         let entry = golden.entry(config.dir).expect("an entry");
 
         assert_eq!(entry.evals_fnv1a64, row.fingerprints.evals_fnv1a64, "{}", config.dir);
@@ -168,12 +188,6 @@ fn the_committed_golden_is_the_committed_reference_rows() {
         assert_eq!(entry.stats.fail_lines_median, row.stats.fail_lines_median);
         assert_eq!(entry.stats.evals_p50, row.stats.evals_p50);
         assert_eq!(entry.stats.evals_p90, row.stats.evals_p90);
-        assert_eq!(
-            golden.reference_run(config.dir),
-            Some(row.run_id.as_str()),
-            "{}: the golden names the run it was pinned from",
-            config.dir
-        );
     }
 }
 
