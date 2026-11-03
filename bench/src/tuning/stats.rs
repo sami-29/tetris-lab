@@ -255,6 +255,21 @@ pub fn paired_bootstrap_ci95(
     tune_seed: u64,
     resamples: u32,
 ) -> [f64; 2] {
+    paired_bootstrap_ci95_of(reference, judged, tune_seed, resamples, |sample| {
+        sample.lines as i64
+    })
+}
+
+/// The same interval on any one integer per seed: ticket 08 needs it on
+/// Evaluations per Solve to judge Dedup on the axis Dedup claims, and a second
+/// implementation would be a second way to compute a percentile.
+pub fn paired_bootstrap_ci95_of(
+    reference: &[Sample],
+    judged: &[Sample],
+    tune_seed: u64,
+    resamples: u32,
+    value: impl Fn(&Sample) -> i64,
+) -> [f64; 2] {
     assert_eq!(reference.len(), judged.len());
     let n = reference.len();
     if n == 0 || resamples == 0 {
@@ -263,7 +278,7 @@ pub fn paired_bootstrap_ci95(
     let deltas: Vec<f64> = reference
         .iter()
         .zip(judged)
-        .map(|(a, b)| b.lines as f64 - a.lines as f64)
+        .map(|(a, b)| value(b) as f64 - value(a) as f64)
         .collect();
     let mut rng = super::rng::SplitMix64::bootstrap_stream(tune_seed);
     let mut means: Vec<f64> = Vec::with_capacity(resamples as usize);
