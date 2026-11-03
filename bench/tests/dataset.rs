@@ -581,12 +581,29 @@ fn reference_jsonl_is_append_only_and_untouched() {
     for cfg in dataset::CONFIGS {
         let path = dataset::reference_path(&dataset::root(), &cfg);
         assert!(path.exists(), "{}: reference.jsonl is missing", cfg.dir);
-        let rows = bench::reference::read(&path).unwrap_or_else(|error| panic!("{}: {error}", cfg.dir));
+        let rows =
+            bench::reference::read(&path).unwrap_or_else(|error| panic!("{}: {error}", cfg.dir));
         for (position, row) in rows.iter().enumerate() {
-            assert_eq!(row.index, position as u32, "{}: a row index has a gap", cfg.dir);
-            assert_eq!(row.config.dir, cfg.dir, "{}: a row names another bed", cfg.dir);
-            assert!(!row.reason.trim().is_empty(), "{}: a row with no reason", cfg.dir);
-            assert_eq!(row.machine.substrate, "wasm", "{}: the page compares against wasm rows", cfg.dir);
+            assert_eq!(
+                row.index, position as u32,
+                "{}: a row index has a gap",
+                cfg.dir
+            );
+            assert_eq!(
+                row.config.dir, cfg.dir,
+                "{}: a row names another bed",
+                cfg.dir
+            );
+            assert!(
+                !row.reason.trim().is_empty(),
+                "{}: a row with no reason",
+                cfg.dir
+            );
+            assert_eq!(
+                row.machine.substrate, "wasm",
+                "{}: the page compares against wasm rows",
+                cfg.dir
+            );
         }
     }
 

@@ -1,0 +1,56 @@
+# Response headers for the Tetris Lab (ticket 17). Vite copies this file from
+# `web/public/` to `dist/_headers`, which is the directory Wrangler reads it from.
+# The file itself is never served: Workers Static Assets treats `_headers` and
+# `_redirects` as configuration, so `GET /_headers` is the SPA fallback, not this.
+#
+# The rules apply to static-asset responses only. That is why the Worker has no
+# `main` (see `web/wrangler.jsonc`): a script's responses ignore this file.
+#
+# Shape proven on this account by `host-probe/src/_headers` (ticket 09), live at
+# lab.samibentaleb.com. Two rules of the platform decide the layout:
+#
+#   * `.wasm` is already inferred as `application/wasm` from the extension, so the
+#     first rule is a tripwire, not the mechanism;
+#   * same-name headers from matching rules are **comma-joined**. So exactly one
+#     rule may set `Cache-Control` for a given URL, which is why `/*` below sets
+#     only `X-Content-Type-Options`: adding a Cache-Control there would turn
+#     `immutable` into `immutable, public, max-age=0, must-revalidate`.
+#
+# `scripts/verify.sh` asserts the *effects* of this file over the wire, because the
+# file itself cannot be read back.
+
+# 1. The wasm module, pinned. `compileStreaming` in the loader requires it.
+/*.wasm
+  Content-Type: application/wasm
+
+# 2. Fingerprinted assets cache forever. The rule is `/assets/*` and not
+#    `/assets/engine-*.wasm`, because the directory is the stable thing and the
+#    filenames are not: every future Vite asset — the entry chunk, the worker, the
+#    css, the source maps — lands under this rule automatically.
+#    ETag is a platform default and needs no line here.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# 3. The page always revalidates. These two rules restate the platform default, so
+#    a change to that default cannot silently ship a stale shell. `/` is the URL a
+#    visitor (and the smoke test) asks for; `/index.html` is matched whatever
+#    `html_handling` rewrites it to. One rule each: patterns are exact unless they
+#    carry a `*`, so these two never match the same URL and cannot be joined.
+/
+  Cache-Control: public, max-age=0, must-revalidate
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# 4. Everything else — `manifest.json`, anything the fallback serves — keeps the
+#    default Cache-Control and gets hardening only. No Cache-Control rule here,
+#    ever: see the comma-join note above.
+#
+#    Cross-origin isolation is not needed in v1 (§7: one wasm instance per worker,
+#    no SharedArrayBuffer), so COOP/COEP stay commented — inside this rule, because
+#    a pattern block with no live header is rejected as an invalid rule. This is the
+#    one-line opt-in if a threaded build is ever wanted; the check is
+#      curl -sSI <url> | grep -i cross-origin     (empty is the expected answer)
+/*
+  X-Content-Type-Options: nosniff
+#  Cross-Origin-Opener-Policy: same-origin
+#  Cross-Origin-Embedder-Policy: require-corp

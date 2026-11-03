@@ -7,7 +7,7 @@
   "scripts": {
     "build:wasm": "node scripts/build-wasm.mjs",
     "dev": "vite",
-    "build": "npm run build:wasm && npm run build:facts && tsc --noEmit && vite build",
+    "build": "npm run build:wasm && npm run build:facts && tsc --noEmit && vite build && node scripts/manifest.mjs",
     "preview": "vite preview",
     "test": "npm run build:wasm && npm run build:facts && node --test \"test/**/*.test.mjs\"",
     "gates": "npm run build && npm run check:words && cargo test --workspace && node --test \"test/**/*.test.mjs\" && cargo run --release -p bench -- gate all",
@@ -16,7 +16,8 @@
   },
   "devDependencies": {
     "typescript": "^5.9.3",
-    "vite": "^7.1.12"
+    "vite": "^7.1.12",
+    "wrangler": "^4.156.1"
   },
   "dependencies": {}
 }

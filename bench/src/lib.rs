@@ -39,8 +39,8 @@
 pub mod dataset;
 pub mod export;
 pub mod fingerprint;
-pub mod golden;
 pub mod gate;
+pub mod golden;
 pub mod json;
 pub mod ladder;
 pub mod reference;

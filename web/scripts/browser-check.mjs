@@ -262,6 +262,13 @@ const READ = `(() => {
     status: text("status"),
     outcome: text("outcome"),
     progress: text("progress"),
+    // Ticket 17: the deploy's own handshake, read from the status bar's boot slot.
+    // 'src/main.ts' writes "worker 1 · abi 2 · <n> pieces" once the worker has
+    // compiled the deployed wasm and its abi_version() agreed, so this is the
+    // page's report of a successful handshake, not the harness's assumption.
+    boot: text("boot"),
+    origin: location.origin,
+    protocol: location.protocol,
     tone: document.getElementById("status")?.dataset.tone ?? "",
     mask,
     flight,
@@ -449,6 +456,19 @@ try {
   // the outcome's full sentence are in the log and the status bar.
   check("the outcome came from wasm", /^(solved|lost) · \d+ of \d+ Lines cleared · [\d.]+ ms$/.test(solved.outcome), solved.outcome);
   check("the status names the default game", /seed 0/.test(solved.status) && /beam 25/.test(solved.status));
+
+  // Ticket 17's two deploy-time assertions (§10: the smoke test runs against the
+  // live URL). The first is the ABI handshake in the page's own words — the loader
+  // refuses a mismatched artifact, so `abi 2` on screen means the deployed bytes and
+  // this page agree. The second catches a preview URL wired into production, or a
+  // page served over http where the wasm's streaming compile is not the same path.
+  check("the worker booted the wasm and the ABI handshake agrees", /\babi 2\b/.test(solved.boot), solved.boot || "no boot slot");
+  const wanted = new URL(target);
+  check(
+    "the page is the requested origin, and https when it was asked for",
+    solved.origin === wanted.origin && (wanted.protocol !== "https:" || solved.protocol === "https:"),
+    `${solved.origin} (asked for ${wanted.origin})`,
+  );
 
   const shot = option("shot", join(tmpdir(), "tetris-lab-check.png"));
   const shoot = async (label) => {
