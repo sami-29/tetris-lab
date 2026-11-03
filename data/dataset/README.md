@@ -37,7 +37,7 @@ push.
 
 prints `<config> <fingerprint> <path>` without reading the manifest.
 
-## The cap, and the one thing the design spec got wrong
+## The cap, per game and per configuration
 
 ADR 0003 says every committed board's tallest column is **at most** the cap, and
 *equals* it only for the maximum over a configuration. Per game it is not equal: the
@@ -45,12 +45,12 @@ pre-fill loop breaks on the first draw whose resting top would exceed the cap, a
 the crossing piece can overshoot by more than one row (a pre-fill line clear lowers
 the stack further), so a board may be shorter than the cap. Measured over seeds
 0-1999 at cap 7: 1074 boards reach exactly 7, 926 are shorter, 0 exceed it. The gate
-asserts `tallest <= cap` for every game and `max over the configuration == cap` —
+asserts `tallest <= cap` for every game and `max over the configuration == cap`,
 never per-game equality.
 
 ## When the generator legitimately changes
 
-Never silently, never by rewriting history.
+A generator change is never silent and never rewrites history.
 
 1. Land the generator change, which will make `verify` name the first game that moved.
 2. Re-export in place with a one-line reason:
@@ -85,7 +85,7 @@ Rules:
 
 ### Reviewing such a change
 
-One screen, in order: `verify` green after the re-export; the archive file present and
+One screen, in order: `verify` green after the re-export; the archive file present,
 non-empty and named after the *old* fingerprint; `generator_version` incremented
 exactly once; `notes` grown by exactly one line carrying the reason; no
 `reference.jsonl` row removed or edited; `git status` showing only the files above.
