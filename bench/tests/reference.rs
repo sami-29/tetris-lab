@@ -267,6 +267,47 @@ fn a_reference_row_labels_the_engine_the_box_the_runtime_and_the_date() {
 }
 
 #[test]
+fn a_reference_row_carries_the_flat_labels_the_page_quotes() {
+    // Ticket 16's Explainer does not walk the nested label block: web/scripts/
+    // build-facts.mjs reads four flat strings (labels.machine, labels.runtime,
+    // labels.date, labels.engine_commit) and refuses to quote a label it cannot
+    // name. Ticket 09 owns this file's shape, so the row has to carry them.
+    let rows = reference::rows(&[measurement(&[10_212, 9_810], &[8, 8])], &labels(0, None));
+    let row = &rows[0];
+    let rendered = row.render();
+    let parsed = json::parse(&rendered).expect("the row parses");
+
+    for path in [
+        "labels.machine",
+        "labels.runtime",
+        "labels.date",
+        "labels.engine_commit",
+    ] {
+        let value = reference::resolve(&parsed, path)
+            .unwrap_or_else(|| panic!("the row carries no {path}: {rendered}"));
+        let text = value
+            .as_str()
+            .unwrap_or_else(|| panic!("{path} is not one flat string: {rendered}"));
+        assert!(!text.trim().is_empty(), "{path} is blank");
+    }
+
+    let label = |path: &str| {
+        reference::resolve(&parsed, path)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    // The machine label names the box *and* the OS: a visitor comparing their Run
+    // needs to know what the numbers came from, in one string.
+    assert!(label("labels.machine").contains(&row.machine.cpu), "{}", label("labels.machine"));
+    assert!(label("labels.machine").contains(&row.machine.os), "{}", label("labels.machine"));
+    assert_eq!(label("labels.runtime"), row.machine.runtime);
+    assert!(label("labels.runtime").contains("not a browser"), "a Node row says so");
+    assert_eq!(label("labels.date"), row.measured_at);
+    assert_eq!(label("labels.engine_commit"), row.engine.commit);
+}
+
+#[test]
 fn the_row_id_names_the_commit_the_artifact_the_width_and_the_date() {
     let id = reference::run_id(&engine(), 25, "2026-11-03T02:30:00Z");
     assert_eq!(id, "0123456/3cb88e38/E1/w25/2026-11-03T02:30:00Z");

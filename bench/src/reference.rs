@@ -1130,7 +1130,7 @@ impl Row {
         let m = &self.machine;
         out.push_str(&format!(
             "\"machine\":{{\"cpu\":{},\"os\":{},\"runtime\":{},\"substrate\":{},\
-             \"browser_or_node\":{},\"rustc\":{},\"node\":{}}}",
+             \"browser_or_node\":{},\"rustc\":{},\"node\":{}}},",
             quote(&m.cpu),
             quote(&m.os),
             quote(&m.runtime),
@@ -1138,6 +1138,18 @@ impl Row {
             quote(&m.browser_or_node),
             quote(&m.rustc),
             quote(&m.node)
+        ));
+        // The flat projection of the label block: one string per fact, for a reader
+        // that does not walk nested objects (web/scripts/build-facts.mjs reads
+        // `labels.machine`, `labels.runtime`, `labels.date` and `labels.engine_commit`,
+        // and refuses to quote a label it cannot name). Derived, never a second
+        // opinion: every value here is a field of this row, copied.
+        out.push_str(&format!(
+            "\"labels\":{{\"machine\":{},\"runtime\":{},\"date\":{},\"engine_commit\":{}}}",
+            quote(&format!("{} · {}", m.cpu, m.os)),
+            quote(&m.runtime),
+            quote(&self.measured_at),
+            quote(&self.engine.commit)
         ));
         out.push('}');
         out
