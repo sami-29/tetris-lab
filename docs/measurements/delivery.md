@@ -20,34 +20,49 @@ the Gate cannot disagree. It gzips `dist/**/*.{html,js,css,wasm}` with Node's
 `gzipSync` at the default level; source maps are excluded because they are not the
 payload.
 
-## §12's two rows
+## §12's rows, measured
 
-| Item | Value | Machine label |
-| --- | --- | --- |
-| wasm raw size (`engine.wasm`, the `wasm32-unknown-unknown` release artifact) | **58 302 B** (56.9 KiB) | AMD Ryzen 7 5700X 8C/16T, 31.9 GiB, Windows 11 Pro; rustc 1.99.1 (`x86_64-pc-windows-gnu`), `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `strip = true` |
-| whole-page transferred gzip (html + js + css + wasm, source maps excluded) | **68 391 B** (66.8 KiB) over 206 800 B raw, 5 files | same box; Node 24.21.0 `zlib.gzipSync` default level, Vite 7.3.7 |
+The spec's §12 lists the numbers the build owes back. Every row below carries its
+number and the machine that produced it; the one row that cannot have a number yet
+is the deployed commit's gate results, because nothing is deployed (the sequence is
+in `docs/runbook.md`).
+
+| §12 row | Number | Machine label | Artifact |
+| --- | --- | --- | --- |
+| `DEFAULT_BEAM` | **25** — named on cost; `default_beam_basis: "cost"`, `quality_axis: "no-resolution"` | AMD Ryzen 7 5700X (8C/16T), 31.9 GB, Windows 11 Pro; wasm through node 24.21.0 (V8); rustc 1.99.1 release, `lto=fat, codegen-units=1` | `data/measurements/width-curve.json` |
+| Width cap (the slider maximum) | **800**, `cap_bound: "budget"`. 1,600 was measured and failed the 200 ms default-config p90 budget at **203.46 ms** native (≈215 ms extrapolated on wasm) | same | `data/measurements/width-curve.json` (`overshoot`) |
+| Shipped evaluator and weight table | **E1 / `E1_PUBLISHED`** — Dellacherie–Thiery, 8 features; dedup and no-suicide unconditional, the Tail switchable | deterministic; the artifact records the box | `data/measurements/ablation-ladder.json`; weights in `engine/src/evaluator.rs` |
+| Reference run rows | index **3** (live), both configurations: **1,000/1,000 wins**, wasm **4bfa56b5…** (58,852 B), commit `a773ce5`, 2026-11-03T03:37:10Z. Index 2 is void and says so | each row carries cpu, os, runtime, rustc and node | `data/dataset/*/reference.jsonl` |
+| wasm raw size and whole-page gzip | **58,852 B** raw; **77,495 B** gzip over **234,046 B** raw, 5 files (source maps excluded) | same box; rustc 1.99.1 win-gnu with `strip = true`; Node 24.21.0 `gzipSync` default level, Vite 7.3.7 | gate 6; the per-file table below |
+| Solve p90, default configuration | **4.536 ms** at beam 25, wasm (budget 200 ms) | Reference row index 3's machine | the `goal8-p40-cap7` reference row's `stats` |
+| Solve p90, harder configuration | **6.547 ms** at beam 25, wasm (budget 1,000 ms) | same | the `goal12-p100-cap7` reference row's `stats` |
+| First solve p75 | **5.824 ms** over 50 trials — compile + instantiate + `gen_game` + `solve`; network fetch and Worker spawn excluded (budget 1,000 ms) | same box; node 24.21.0 V8 | `node bench/tools/first-solve.mjs --trials 50 --json` |
+| Run wall time | **11.7 s** for 2,000 games on 8 workers — **over §9.3's 5 s budget**; recorded there rather than adjusted | headless Chrome on the same box | `node web/scripts/browser-check.mjs` |
+| The six gate results on the deployed commit | **not yet measured** — nothing is deployed. Locally all six pass and gate 6 is 9 checks, 0 skipped | the CI runner (`windows-2025`) | the release note, after `docs/runbook.md`'s deploy |
+| A frozen trace fixture | `web/test/fixtures/trace-seed0-goal8-p40-cap7-band25.json` — 444 records over 20 Layers at band 25 | `solve_traced` on the default game | the committed fixture; regenerate with `web/scripts/gen-trace-fixture.mjs` |
 
 Per file, so a regression is attributable:
 
 | file | raw | gzip |
 | --- | --- | --- |
-| `assets/engine-BO4_EbTC.wasm` | 58 302 | 21 459 |
-| `assets/index-CvTXBxIA.js` | 98 269 | 33 807 |
-| `assets/index-BgWENkHr.css` | 24 617 | 5 610 |
-| `index.html` | 21 408 | 5 601 |
-| `assets/solve.worker-DZSqr1HT.js` | 4 204 | 1 914 |
-| **total** | **206 800** | **68 391** |
+| `assets/engine-BtPiaFvn.wasm` | 58 852 | 21 737 |
+| `assets/index-CgWIuYq_.js` | 121 140 | 41 487 |
+| `assets/index-DuOtfHqX.css` | 25 252 | 5 702 |
+| `index.html` | 22 351 | 5 908 |
+| `assets/solve.worker-Bc5ui2l-.js` | 6 451 | 2 661 |
+| **total** | **234 046** | **77 495** |
 
-Against §9.3's budgets: the wasm is 56.9 KB against a 100 KB warn line and a 150 KB
-fail line; the page is 66.8 KB against a 150 KB fail line. Both pass, and gate 6
-asserts them on every push.
+Against §9.3's budgets: the wasm is 57.5 KiB against a 100 KiB warn line and a
+150 KiB fail line; the page is 75.7 KiB against a 150 KiB fail line. Both pass, and
+gate 6 asserts them on every push.
 
 ## Reproducibility, measured
 
 Two consecutive `npm run build` runs of the same tree produced **byte-identical**
-`dist/` — all eight files (including `manifest.json` and `_headers`) with identical
-`sha256` sums and identical hashed filenames. That is the "a rebuild that changes
-nothing produces the same hashes" clause, verified on this box with this toolchain.
+`dist/` — all nine files (including `manifest.json`, `_headers` and the two source
+maps) with identical `sha256` sums and identical hashed filenames. That is the "a
+rebuild that changes nothing produces the same hashes" clause, verified on this box
+with this toolchain.
 
 Caveat, stated rather than hidden: the same has to hold on `windows-2025`, where the
 deploy runs. The pin (`rust-toolchain.toml`) is committed and the workflow installs
