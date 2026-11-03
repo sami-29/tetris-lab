@@ -170,6 +170,12 @@ pub struct Candidate {
     pub features: u32,
     /// Whether the table is published rather than tuned: §9.4's closing sentence.
     pub published: bool,
+    /// The implementation type, not the table: `heuristic` or `dellacherie-thiery`.
+    /// §9.4's closing sentence only ever separates two *tables of one
+    /// architecture* (E2 is a config swap on E1), so the rule that drops a tuned
+    /// table in favour of a published one is scoped by this field and cannot
+    /// silently retire a different architecture's control.
+    pub architecture: &'static str,
     pub samples: Vec<Sample>,
 }
 
@@ -309,8 +315,10 @@ pub enum Leg {
     Evaluations,
     /// Both tied, broken by the number of Features.
     Features,
-    /// Both tied, broken by §9.4's closing sentence: the published table ships
-    /// over a tuned one unless the tuned one clears `p < 0.01`.
+    /// §9.4's closing sentence: the published table ships over a tuned one of the
+    /// same architecture unless the tuned one clears `p < 0.01` on win rate. It is
+    /// applied before the legs, so it is the reason the tuned table is gone rather
+    /// than a leg the tie survived to.
     Published,
 }
 
@@ -403,6 +411,54 @@ pub fn cascade(candidates: &[Candidate]) -> Result<Verdict, String> {
             tied: tied_ids,
             steps,
         });
+    }
+
+    // §9.4's closing sentence, applied first because it fixes one pair before any
+    // leg can: "E1 ships unless E2 clears p < 0.01". A tuned table only displaces
+    // a published one of the *same architecture* by winning on win rate; a 24-
+    // evaluation median difference out of ninety thousand does not carry it. The
+    // evals numbers are still recorded by the leg below, so a reader can see that
+    // this rule, and not a measurement, is what kept the published table.
+    let mut tuned: Vec<&'static str> = Vec::new();
+    for published in tied.iter().filter(|candidate| candidate.published) {
+        for candidate in tied.iter().copied() {
+            if candidate.published
+                || candidate.architecture != published.architecture
+                || tuned.contains(&candidate.id)
+            {
+                continue;
+            }
+            let (_, only_tuned, only_published, _) =
+                two_by_two(&candidate.samples, &published.samples);
+            let discordant = Paired {
+                b: only_tuned,
+                c: only_published,
+            };
+            if !width::mcnemar_rejects(discordant) {
+                tuned.push(candidate.id);
+                steps.push(format!(
+                    "{} vs {}: b = {}, c = {}, n = {} -> the tuned table does not clear \
+                     p < 0.01, so {} ships (§9.4)",
+                    candidate.id,
+                    published.id,
+                    only_tuned,
+                    only_published,
+                    discordant.n(),
+                    published.id
+                ));
+            }
+        }
+    }
+    if !tuned.is_empty() {
+        tied.retain(|candidate| !tuned.contains(&candidate.id));
+        if tied.len() == 1 {
+            return Ok(Verdict {
+                winner: tied[0].id,
+                leg: Leg::Published,
+                tied: tied_ids,
+                steps,
+            });
+        }
     }
 
     // Leg 1: fewer Evaluations per Solve. The median first, because §9.4 says "per
@@ -748,11 +804,12 @@ enum Table {
 }
 
 impl Table {
-    fn for_id(id: &str) -> Result<(Table, &'static str, u32, bool), String> {
+    /// `(table, committed table name, features, published, architecture)`.
+    fn for_id(id: &str) -> Result<(Table, &'static str, u32, bool, &'static str), String> {
         match id {
-            "e0" => Ok((Table::E0, "E0_HEURISTIC", 4, false)),
-            "e1" => Ok((Table::E1, "E1_PUBLISHED", 8, true)),
-            "e2" => Ok((Table::E2, "E2_TUNED", 8, false)),
+            "e0" => Ok((Table::E0, "E0_HEURISTIC", 4, false, "heuristic")),
+            "e1" => Ok((Table::E1, "E1_PUBLISHED", 8, true, "dellacherie-thiery")),
+            "e2" => Ok((Table::E2, "E2_TUNED", 8, false, "dellacherie-thiery")),
             other => Err(format!(
                 "{other} is not an Evaluator row; the ladder's are {}",
                 EVALUATORS.join(", ")
@@ -909,7 +966,7 @@ pub fn run(options: &Options) -> Result<Outcome, String> {
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut rows: Vec<RungRow> = Vec::new();
     for id in EVALUATORS {
-        let (table, table_name, features, published) = Table::for_id(id)?;
+        let (table, table_name, features, published, architecture) = Table::for_id(id)?;
         let row = rung(
             &games,
             bed,
@@ -925,6 +982,7 @@ pub fn run(options: &Options) -> Result<Outcome, String> {
             table: row.table,
             features,
             published,
+            architecture,
             samples: row.samples.clone(),
         });
         rows.push(row);
@@ -955,6 +1013,7 @@ pub fn run(options: &Options) -> Result<Outcome, String> {
             table: row.table,
             features: row.features,
             published: false,
+            architecture: candidates[winner].architecture,
             samples: row.samples.clone(),
         };
         let pair = compare(
@@ -984,6 +1043,7 @@ pub fn run(options: &Options) -> Result<Outcome, String> {
             table: row.table,
             features: row.features,
             published: row.id == "e1",
+            architecture: candidates[winner].architecture,
             samples: row.samples.clone(),
         };
         pairs.push(compare(

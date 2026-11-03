@@ -36,17 +36,20 @@ fn with_evals(mut rows: Vec<Sample>, evals: u32) -> Vec<Sample> {
     rows
 }
 
-fn candidate(
-    id: &'static str,
-    features: u32,
-    published: bool,
-    samples: Vec<Sample>,
-) -> Candidate {
+fn candidate(id: &'static str, features: u32, published: bool, samples: Vec<Sample>) -> Candidate {
+    // E0 is a different architecture from E1/E2, which is what scopes §9.4's
+    // published-over-tuned rule to the pair it names.
+    let architecture = if id == "e0" {
+        "heuristic"
+    } else {
+        "dellacherie-thiery"
+    };
     Candidate {
         id,
         table: "TEST",
         features,
         published,
+        architecture,
         samples,
     }
 }
@@ -176,6 +179,44 @@ fn the_published_table_wins_the_last_leg() {
     let verdict = ladder::cascade(&rows).expect("a verdict");
     assert_eq!(verdict.winner, "e1");
     assert_eq!(verdict.leg, ladder::Leg::Published);
+}
+
+#[test]
+fn a_fewer_evaluations_nudge_does_not_displace_the_published_table() {
+    // The measured shape of ticket 08's bed: E1 and E2 tie on win rate and on
+    // feature count, and E2's evaluation median is a hair lower (24 out of 90,000).
+    // §9.4's closing sentence — "E1 ships unless E2 clears p < 0.01" — is applied
+    // before the legs for exactly this pair, so the nudge cannot ship a tuned table.
+    let rows = vec![
+        candidate("e1", 8, true, with_evals(samples(956, 1_000, 65), 89_959)),
+        candidate("e2", 8, false, with_evals(samples(955, 1_000, 65), 89_935)),
+    ];
+    let verdict = ladder::cascade(&rows).expect("a verdict");
+    assert_eq!(verdict.winner, "e1");
+    assert_eq!(verdict.leg, ladder::Leg::Published);
+
+    // But a tuned table that *does* clear p < 0.01 on win rate displaces it.
+    let rows = vec![
+        candidate("e1", 8, true, with_evals(samples(956, 1_000, 65), 89_959)),
+        candidate("e2", 8, false, with_evals(samples(964, 1_000, 65), 100_000)),
+    ];
+    let verdict = ladder::cascade(&rows).expect("a verdict");
+    assert_eq!(verdict.winner, "e2");
+    assert_eq!(verdict.leg, ladder::Leg::WinRate);
+}
+
+#[test]
+fn the_published_over_tuned_rule_cannot_retire_a_different_architecture() {
+    // E0 is the Ablation control, not a tuned DT table: the rule is scoped by
+    // architecture, so a win-rate tie against the published table still goes to
+    // the legs — and here the control's 4 features win on the last one.
+    let rows = vec![
+        candidate("e1", 8, true, with_evals(samples(1_000, 1_000, 65), 18_000)),
+        candidate("e0", 4, false, with_evals(samples(1_000, 1_000, 65), 18_000)),
+    ];
+    let verdict = ladder::cascade(&rows).expect("a verdict");
+    assert_eq!(verdict.winner, "e0");
+    assert_eq!(verdict.leg, ladder::Leg::Features);
 }
 
 // ------------------------------------------------------------------- the toggles
