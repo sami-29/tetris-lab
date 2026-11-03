@@ -571,19 +571,23 @@ fn no_seed_is_out_of_domain() {
     }
 }
 
-// ----------------------------- T11 reference.jsonl exists, is empty, is untouched
+// ------------------------ T11 reference.jsonl exists, is append-only, is untouched
 
 #[test]
-fn reference_jsonl_is_empty_and_untouched() {
+fn reference_jsonl_is_append_only_and_untouched() {
+    // Ticket 02 owns the file's *existence* and its immunity to the exporter; ticket
+    // 09 owns its rows, so "empty" is no longer the invariant — "every row is a
+    // well-formed Reference row, numbered from 0 without a gap" is (§9.6).
     for cfg in dataset::CONFIGS {
         let path = dataset::reference_path(&dataset::root(), &cfg);
         assert!(path.exists(), "{}: reference.jsonl is missing", cfg.dir);
-        assert_eq!(
-            fs::metadata(&path).unwrap().len(),
-            0,
-            "{}: reference.jsonl must be empty until a Reference run lands",
-            cfg.dir
-        );
+        let rows = bench::reference::read(&path).unwrap_or_else(|error| panic!("{}: {error}", cfg.dir));
+        for (position, row) in rows.iter().enumerate() {
+            assert_eq!(row.index, position as u32, "{}: a row index has a gap", cfg.dir);
+            assert_eq!(row.config.dir, cfg.dir, "{}: a row names another bed", cfg.dir);
+            assert!(!row.reason.trim().is_empty(), "{}: a row with no reason", cfg.dir);
+            assert_eq!(row.machine.substrate, "wasm", "{}: the page compares against wasm rows", cfg.dir);
+        }
     }
 
     // A dry-run export must not truncate or rewrite it (§6: append-only).
@@ -592,11 +596,12 @@ fn reference_jsonl_is_empty_and_untouched() {
         copy_config(&dataset::root(), &root, &cfg);
     }
     for cfg in dataset::CONFIGS {
-        export::run(&cfg, &root, None, true).expect("dry-run export");
         let path = dataset::reference_path(&root, &cfg);
+        let before = fs::read(&path).unwrap();
+        export::run(&cfg, &root, None, true).expect("dry-run export");
         assert_eq!(
-            fs::metadata(&path).unwrap().len(),
-            0,
+            fs::read(&path).unwrap(),
+            before,
             "{}: a dry-run export touched the append-only file",
             cfg.dir
         );
