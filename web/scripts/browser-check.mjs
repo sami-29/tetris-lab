@@ -274,8 +274,12 @@ const READ = `(() => {
     sheetOpen: sheet?.dataset.open === "true",
     sheetRows: document.querySelectorAll("#sheet dt").length,
     stripCells: document.querySelectorAll("#strip i").length,
+    // §2.1.2: a tooltip on every control. Since ticket 14 the page's tooltip is one
+    // delegated element driven by data-tip (a native title would be clipped by the
+    // scrolling rail), and every title in the document is migrated into data-tip at
+    // boot — so either attribute counts, and "neither" is the failure.
     untitled: [...document.querySelectorAll("button, input, [role=slider]")]
-      .filter((el) => !el.getAttribute("title"))
+      .filter((el) => !el.getAttribute("title") && !el.getAttribute("data-tip"))
       .map((el) => el.id || el.tagName),
     stripRect: (() => {
       const rect = strip?.getBoundingClientRect();
@@ -353,6 +357,16 @@ try {
   await cdp.send("Target.activateTarget", { targetId });
   await cdp.send("Page.enable", {}, sessionId);
   await cdp.send("Runtime.enable", {}, sessionId);
+  // The shell is desktop-first (§2.1.5) and the design floor is 1440×900: below it,
+  // panels scroll inside themselves and the readout loses its column. The window the
+  // chrome happens to open with is not a viewport a visitor has, so the harness sets
+  // one — 1440×900 unless `--size WxH` says otherwise.
+  const [viewW, viewH] = (option("size", "1440x900") || "1440x900").split("x").map(Number);
+  await cdp.send(
+    "Emulation.setDeviceMetricsOverride",
+    { width: viewW, height: viewH, deviceScaleFactor: 1, mobile: false },
+    sessionId,
+  );
   await cdp.send("Page.navigate", { url: target }, sessionId);
 
   const read = async () => {
@@ -374,12 +388,15 @@ try {
     return result.result?.value ?? [];
   };
 
-  // The solve arrives in the worker; wait for the page to name an outcome.
+  // The solve arrives in the worker; wait for the page to name an outcome. The toolbar
+  // slot reads "solving · seed 0 · goal 8 Lines" while a solve is in flight (notes/14
+  // §3's S0), so an answer is an outcome that is not that.
+  const settled = (state) => state && state.outcome.length > 0 && !state.outcome.startsWith("solving · ");
   let solved = null;
   for (let i = 0; i < 160 && !solved; i += 1) {
     await sleep(250);
     const state = await read();
-    if (state && state.outcome.length > 0) solved = state;
+    if (settled(state)) solved = state;
   }
 
   if (!solved) throw new Error("the page never reported an outcome");
@@ -390,7 +407,10 @@ try {
 
   check("the page reports an outcome instead of an error", solved.tone !== "error", solved.tone || "ok");
   // Ticket 13's words: "Won: the Goal of 8 lines was reached, 8 Lines cleared."
-  check("the outcome came from wasm", /^(Won|Lost): the Goal of \d+ lines/.test(solved.outcome) && /evaluations/.test(solved.outcome), solved.outcome);
+  // Ticket 14's words: "solved · 8 of 8 Lines cleared · 9.3 ms" — the outcome word,
+  // the Lines against the Goal, and the page's own clock. The engine's evaluations and
+  // the outcome's full sentence are in the log and the status bar.
+  check("the outcome came from wasm", /^(solved|lost) · \d+ of \d+ Lines cleared · [\d.]+ ms$/.test(solved.outcome), solved.outcome);
   check("the status names the default game", /seed 0/.test(solved.status) && /beam 25/.test(solved.status));
 
   const shot = option("shot", join(tmpdir(), "tetris-lab-check.png"));
@@ -450,7 +470,7 @@ try {
   check("the Move strip is one cell per Move, and addresses every one", solved.seekMax === expected.total && solved.stripCells === expected.total, `${solved.stripCells} cells, max ${solved.seekMax}, ${expected.total} Moves`);
   check("every control carries a tooltip", solved.untitled.length === 0, solved.untitled.join(", ") || "all titled");
   check("the keyboard map is on the page", solved.sheetRows >= 7, `${solved.sheetRows} rows behind ?`);
-  check("the speed is labelled in words", /moves\/s/.test(solved.speed) && /s per move/.test(solved.speed), solved.speed);
+  check("the speed is labelled in words", /Moves\/s/.test(solved.speed) && /s per Move/.test(solved.speed), solved.speed);
 
   // ---- playback advances, and the picture changes -----------------------------
   const first = solved;
@@ -642,7 +662,7 @@ try {
     for (let i = 0; i < 40; i += 1) {
       await sleep(120);
       const state = await read();
-      if (state && state.outcome.length > 0 && state.outcome !== after) return state;
+      if (settled(state) && state.outcome !== after) return state;
     }
     return read();
   };
@@ -690,8 +710,7 @@ try {
     const lost = await settle(raised.outcome);
     check(
       "a game the search cannot win says so with the Lines it reached",
-      /^Lost: the Goal of 20 lines was not reached, \d+ Lines cleared\./.test(lost.outcome) &&
-        lost.tone !== "error",
+      /^lost · \d+ of 20 Lines cleared · [\d.]+ ms$/.test(lost.outcome) && lost.tone !== "error",
       lost.outcome.slice(0, 100),
     );
     check(
