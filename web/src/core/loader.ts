@@ -5,8 +5,9 @@
 //
 //   * the `abi_version` handshake is checked once, here, before any buffer is
 //     touched — a mismatch is a fatal typed error, not a silent misbehaviour;
-//   * one `alloc` at boot reserves the variable-size region (§4's trace and batch
-//     buffers are allocated once and never freed);
+//   * one `alloc` at boot reserves the trace region, and a second one — the first
+//     time a Run needs it — reserves the §4.3 summary buffer (`16 × games` bytes,
+//     reused for every chunk and never freed);
 //   * **no view is cached across a call.** `memory.buffer` is replaced whenever the
 //     engine grows memory, which detaches every existing `TypedArray`; so each
 //     accessor below builds its view from the current `memory.buffer` and hands it
@@ -32,6 +33,14 @@ export const SEQ_BYTES = 200;
 export const MOVES_OFF = 0x140;
 export const MOVES_MAX = 200;
 export const ABI_END = 0x460;
+
+/**
+ * §4.3's stride: `won, lines, evaluations, status`, four `u32` per game. Fixed so a
+ * whole chunk crosses as one `Uint32Array` — no JSON, no per-game objects.
+ */
+export const SUMMARY_STRIDE = 4;
+/** Bytes one game's summary takes, and what `allocBatch` reserves per game. */
+export const SUMMARY_BYTES = SUMMARY_STRIDE * 4;
 
 /**
  * §2.3's traced band, and the only width this module needs: `DEFAULT_BEAM`, read
@@ -69,6 +78,23 @@ export class AbiMismatchError extends Error {
     this.name = "AbiMismatchError";
     this.expected = expected;
     this.actual = actual;
+  }
+}
+
+/**
+ * The artifact predates an export this page needs.
+ *
+ * `abi_version` stayed 2 when `solve_batch` landed (§4 lists it at 2), so the
+ * handshake cannot see a stale artifact: only the *absence* of the symbol can, and
+ * it must be a sentence naming the fix rather than a `TypeError` from inside the
+ * pool.
+ */
+export class MissingExportError extends Error {
+  constructor(name: string) {
+    super(
+      `the artifact does not export \`${name}\` — rebuild it with \`npm run build:wasm\` and reload.`,
+    );
+    this.name = "MissingExportError";
   }
 }
 
@@ -111,6 +137,32 @@ export interface Engine {
   moves(count: number): Uint32Array;
   /** §4 `alloc`: a byte offset, never freed. Exposed for the growth test. */
   allocBytes(len: number): number;
+  /**
+   * Reserve (once, growing as needed) the §4.3 summary buffer for `games` games and
+   * return its offset. Offsets are stable for the instance — `alloc` never frees and
+   * the offset is not a pointer — so the caller keeps this and passes it to every
+   * `solveBatch` call.
+   */
+  allocBatch(games: number): number;
+  /**
+   * §4 `solve_batch`: generate and solve `count` consecutive seeds from `firstSeed`,
+   * writing one stride-4 summary per game at `out`. Returns how many it wrote, which
+   * is `< count` only for an invalid request (nothing written).
+   */
+  solveBatch(
+    firstSeed: number,
+    count: number,
+    goal: number,
+    pieces: number,
+    heightCap: number,
+    beamWidth: number,
+    out: number,
+  ): number;
+  /**
+   * A **fresh** view over `out` — build it after the call, never before: a solve can
+   * grow wasm memory, which detaches every `TypedArray` taken over the old buffer.
+   */
+  summaries(out: number, games: number): Uint32Array;
 }
 
 const STATUS_NAMES: Record<number, string> = {
@@ -133,6 +185,16 @@ interface Exports {
   gen_game(seed: number, pieces: number, heightCap: number): number;
   solve(goal: number, beamWidth: number): bigint;
   solve_traced(goal: number, beamWidth: number, band: number): bigint;
+  /** §4 export 6. Absent from a stale artifact, so it is checked, not assumed. */
+  solve_batch?(
+    firstSeed: number,
+    count: number,
+    goal: number,
+    pieces: number,
+    heightCap: number,
+    beamWidth: number,
+    out: number,
+  ): number;
 }
 
 /**
@@ -189,7 +251,11 @@ function boot(instance: WebAssembly.Instance): Engine {
   }
 
   const allocBytes = (len: number): number => exports.alloc!(len);
+  // §4.4's trace region is the *first* allocation (§4.4's convention, `buffers.rs`),
+  // so the batch buffer is allocated lazily, the first time a Run asks for one.
   const scratchOffset = allocBytes(TRACE_BYTES);
+  let batchOffset = 0;
+  let batchGames = 0;
 
   // Every accessor rebuilds its view: memory may have grown since the last call,
   // and a view taken across a growth has a byteLength of 0.
@@ -245,6 +311,26 @@ function boot(instance: WebAssembly.Instance): Engine {
     },
 
     allocBytes,
+
+    allocBatch(games) {
+      if (games > batchGames) {
+        // `alloc` never frees and its offsets are stable, so a bigger request simply
+        // supersedes the old region: one allocation per growth, not one per chunk.
+        batchOffset = allocBytes(Math.max(16, SUMMARY_BYTES * games));
+        batchGames = games;
+      }
+      return batchOffset;
+    },
+
+    solveBatch(firstSeed, count, goal, pieces, heightCap, beamWidth, out) {
+      const batch = exports.solve_batch;
+      if (typeof batch !== "function") throw new MissingExportError("solve_batch");
+      return batch(firstSeed, count, goal, pieces, heightCap, beamWidth, out);
+    },
+
+    summaries(out, games) {
+      return words(out, Math.max(0, games) * SUMMARY_STRIDE);
+    },
   };
 }
 

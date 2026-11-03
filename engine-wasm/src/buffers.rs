@@ -135,6 +135,32 @@ pub fn write_moves(moves: &[Move]) -> u32 {
     count as u32
 }
 
+// ── the batch summary (§4.3) ──────────────────────────────────────────────
+//
+// `solve_batch` writes one stride-4 summary per game into a buffer the *caller*
+// allocated through `alloc`, so there is no static buffer here and nothing to
+// overwrite: the batch cannot clobber the board, the sequence or the moves a live
+// interactive session is holding (§4.3, notes/15 §0.4).
+//
+// The writes are volatile for the same reason `write_moves`' are: the caller's
+// offset is memory this module cannot reason about at compile time, and a plain
+// store at a low offset has been observed being deleted.
+
+/// §4.3: `won, lines, evaluations, status`, four `u32` per game.
+pub const SUMMARY_STRIDE_WORDS: u32 = 4;
+
+/// Write one game's summary at `out + 16 * index`. The caller has already reserved
+/// `16 * count` bytes at `out`; `solve_batch` validates both before it writes.
+pub fn write_summary(out: u32, index: u32, words: [u32; SUMMARY_STRIDE_WORDS as usize]) {
+    let base = (out as usize + 16 * index as usize) as *mut u32;
+    for (offset, word) in words.iter().enumerate() {
+        // SAFETY: the offset came from `alloc` in this module, and `solve_batch`
+        // rejected any `out` that is misaligned or inside the ABI region and any
+        // `count` that could overflow the offset arithmetic.
+        unsafe { core::ptr::write_volatile(base.add(offset), *word) };
+    }
+}
+
 // ── the trace region (§4.4) ────────────────────────────────────────────────
 //
 // §4.4 says the trace is written into "the trace buffer allocated through
