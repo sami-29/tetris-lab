@@ -1279,7 +1279,11 @@ fn ladder_run(argv: &[String]) -> Result<(), u8> {
                     row.goal,
                     row.wins,
                     row.games,
-                    if row.saturated() { "" } else { "  <-- below 99 %" },
+                    if row.saturated() {
+                        ""
+                    } else {
+                        "  <-- below 99 %"
+                    },
                     if row.wins == 0 { "  (unreachable)" } else { "" }
                 );
             }
@@ -1349,8 +1353,8 @@ struct CurveRef {
 }
 
 fn read_width_curve(path: &Path) -> Result<CurveRef, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
     let value = bench::json::parse(&text)?;
     let number = |key: &str| -> Result<u32, String> {
         value
@@ -1436,7 +1440,6 @@ fn parse_bed(name: &str) -> Result<width::Bed, String> {
 
 /// One flag's value: `argv[index + 1]`, with the flag named in the error.
 fn flag_value(
-
     argv: &[String],
     index: &mut usize,
     flag: &str,

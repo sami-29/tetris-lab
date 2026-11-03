@@ -8,7 +8,7 @@
 
 use engine::evaluator::{shipped, Heuristic, E0_HEURISTIC};
 use engine::generator::generate_game;
-use engine::search::{solve, Feature, SolveConfig, Status, Toggles};
+use engine::search::{solve, SolveConfig, Status, Toggles};
 
 mod common;
 use common::{data_lines, replay};
@@ -17,9 +17,10 @@ const SEEDS: &str = include_str!("fixtures/tail-seeds.txt");
 
 /// A configuration with the Tail switched off, which is the beam alone.
 fn beam_only(goal: u32, beam_width: u32) -> SolveConfig {
-    let mut cfg = SolveConfig::new(goal, beam_width);
-    cfg.toggles = Toggles::SHIPPED.without(Feature::Tail);
-    cfg
+    SolveConfig {
+        toggles: Toggles::BEAM_ONLY,
+        ..SolveConfig::new(goal, beam_width)
+    }
 }
 
 /// The shipped configuration: every search decision on.
@@ -216,25 +217,29 @@ fn the_tail_never_changes_a_result_the_beam_reaches() {
     );
 }
 
-// ── one place decides the three search decisions ───────────────────────
+// ── one place decides the one search decision left ─────────────────────
 
-/// Ticket 04: "Dedup, the No-suicide rule and the Tail search are each
+/// Ticket 04 asked for "Dedup, the No-suicide rule and the Tail search each
 /// independently switchable from one place, so an Ablation is a configuration
-/// change and not a second engine build."
+/// change and not a second engine build". Ticket 08 measured the ablation and
+/// changed the truth, so this test asserts the new one: two of the three decisions
+/// are no longer switches at all, and one still is.
 ///
-/// The shipped row is constructed in exactly one place, and taking one feature
-/// off it leaves the other two alone: a sweep of §9.4's ladder is
-/// `Toggles::SHIPPED.without(feature)` for `feature` in `FEATURES`.
+/// §9.4: "A toggle that moves nothing beyond its confidence interval is deleted from
+/// the engine, not kept on the grounds that it might help." On the ladder's bed
+/// (`goal65-p160-cap7`, 1,000 seeds, `DEFAULT_BEAM`) turning Dedup off moved no
+/// quality axis and the No-suicide rule never fired on a single seed, so both are
+/// gone from `Toggles` and run unconditionally. The Tail stayed because it rejects:
+/// off, it loses 13 seeds and wins none back (`p < 0.01`).
 #[test]
-fn the_three_search_decisions_are_switchable_from_one_place() {
-    assert_eq!(
-        Toggles::SHIPPED,
-        Toggles {
-            dedup: true,
-            no_suicide: true,
-            tail: true,
-        },
-        "the shipped row has every decision on"
+fn the_tail_is_the_one_search_decision_left_to_switch() {
+    // The destructuring *is* the assertion. `Toggles` has exactly one field, so
+    // re-introducing a `dedup` or `no_suicide` field stops this line compiling —
+    // which is what makes §9.4's deletion structural rather than documented.
+    let Toggles { tail } = Toggles::SHIPPED;
+    assert!(
+        tail,
+        "the shipped row searches the final three pieces exactly"
     );
     assert_eq!(
         SolveConfig::new(8, 25).toggles,
@@ -242,55 +247,44 @@ fn the_three_search_decisions_are_switchable_from_one_place() {
         "a SolveConfig is shipped behaviour unless it says otherwise"
     );
 
-    // One feature off, two untouched -- each of them, on its own.
-    let no_dedup = Toggles::SHIPPED.without(Feature::Dedup);
+    // The one ablation row: the same shipped configuration with the Tail off.
     assert_eq!(
-        (no_dedup.dedup, no_dedup.no_suicide, no_dedup.tail),
-        (false, true, true)
+        Toggles::BEAM_ONLY,
+        Toggles { tail: false },
+        "the beam alone is the shipped row minus the exact Tail"
     );
-    let no_suicide = Toggles::SHIPPED.without(Feature::NoSuicide);
-    assert_eq!(
-        (no_suicide.dedup, no_suicide.no_suicide, no_suicide.tail),
-        (true, false, true)
-    );
-    let no_tail = Toggles::SHIPPED.without(Feature::Tail);
-    assert_eq!(
-        (no_tail.dedup, no_tail.no_suicide, no_tail.tail),
-        (true, true, false)
-    );
+    assert_ne!(Toggles::BEAM_ONLY, Toggles::SHIPPED);
 
-    // All off is reachable from the same place, and is the ladder's worst row.
-    let mut all_off = Toggles::SHIPPED;
-    for feature in [Feature::Dedup, Feature::NoSuicide, Feature::Tail] {
-        all_off = all_off.without(feature);
-    }
-    assert_eq!(
-        (all_off.dedup, all_off.no_suicide, all_off.tail),
-        (false, false, false)
-    );
+    // And the switch acts on the search, not only on the config: the two rows are
+    // two Solves, both of them legal, over the same game (asserted below in
+    // `every_ablation_row_the_engine_can_run_still_solves`).
 }
 
-/// Each switch acts on the search, not just on the config: the four rows §9.4
-/// compares are four `SolveConfig`s over the same game, and all of them are
-/// Solves, not errors.
+/// Every ablation row the engine can still run is a Solve, not an error.
+///
+/// Ticket 04 wrote this as four rows (shipped, Dedup off, No-suicide off, Tail off);
+/// after ticket 08's deletion the ladder's rows are the three Evaluators plus one
+/// toggle, so the switchable part is two rows. Deleting the other two from the test
+/// would be the wrong repair — the point of a row is that the engine still answers
+/// it — so the two that no longer exist are asserted *structurally* above and the
+/// two that do are solved here.
 #[test]
-fn every_ablation_row_still_solves() {
+fn every_ablation_row_the_engine_can_run_still_solves() {
     // Seed 42 is won by the beam alone, so its outcome cannot depend on the Tail;
     // seed 453 needs the Tail, which is what makes the Tail row visible.
     let won_by_beam = generate_game(42, 40, 7).expect("seed 42 in domain");
     let needs_tail = generate_game(453, 40, 7).expect("seed 453 in domain");
 
-    let mut rows: Vec<(&str, SolveConfig)> = vec![("shipped", SolveConfig::new(8, 25))];
-    for feature in [Feature::Dedup, Feature::NoSuicide, Feature::Tail] {
-        let name = match feature {
-            Feature::Dedup => "dedup off",
-            Feature::NoSuicide => "no-suicide off",
-            Feature::Tail => "tail off",
-        };
-        let mut cfg = SolveConfig::new(8, 25);
-        cfg.toggles = Toggles::SHIPPED.without(feature);
-        rows.push((name, cfg));
-    }
+    let rows: Vec<(&str, SolveConfig)> = vec![
+        ("shipped", SolveConfig::new(8, 25)),
+        (
+            "tail off",
+            SolveConfig {
+                toggles: Toggles::BEAM_ONLY,
+                ..SolveConfig::new(8, 25)
+            },
+        ),
+    ];
 
     for (name, cfg) in &rows {
         let result = solve(
@@ -314,14 +308,10 @@ fn every_ablation_row_still_solves() {
         &rows[0].1,
         &control,
     );
-    let off_row = rows
-        .iter()
-        .find(|(name, _)| *name == "tail off")
-        .expect("the tail-off row");
     let off = solve(
         &needs_tail.board,
         needs_tail.sequence.as_slice(),
-        &off_row.1,
+        &rows[1].1,
         &control,
     );
     assert!(on.won, "seed 453 with the Tail on");

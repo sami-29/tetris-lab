@@ -54,6 +54,26 @@ fn candidate(id: &'static str, features: u32, published: bool, samples: Vec<Samp
     }
 }
 
+/// The mean-lines interval the cascade reports, computed the way the ladder
+/// computes it: the pinned bootstrap stream over the two rows' samples. The rule does
+/// not own a stream of its own, which is why it is an argument.
+fn intervals<'a>(rows: &'a [Candidate]) -> impl Fn(&str, &str) -> [f64; 2] + 'a {
+    move |judged, reference| {
+        let find = |id: &str| rows.iter().find(|row| row.id == id).expect("a row");
+        ladder::compare(
+            find(judged),
+            find(reference),
+            ladder::bootstrap_seed(
+                "goal65-p160-cap7",
+                25,
+                &format!("{judged}-vs-{reference}"),
+                "fixture",
+            ),
+        )
+        .ci95
+    }
+}
+
 fn scans(rows: &[(u32, u32)]) -> Vec<ScanRow> {
     rows.iter()
         .map(|(goal, wins)| ScanRow {
@@ -120,7 +140,7 @@ fn the_cascade_ships_the_highest_win_rate_when_the_difference_is_significant() {
         candidate("e1", 8, true, samples(1_000, 1_000, 65)),
         candidate("e2", 8, false, samples(950, 1_000, 65)),
     ];
-    let verdict = ladder::cascade(&rows).expect("a verdict");
+    let verdict = ladder::cascade(&rows, &intervals(&rows)).expect("a verdict");
     assert_eq!(verdict.winner, "e1");
     assert_eq!(verdict.leg, ladder::Leg::WinRate);
     assert_eq!(verdict.tied, vec!["e1"]);
@@ -133,7 +153,7 @@ fn a_p_value_at_or_above_one_percent_is_a_tie() {
         candidate("e1", 8, true, samples(1_000, 1_000, 65)),
         candidate("e2", 8, false, samples(993, 1_000, 65)),
     ];
-    let verdict = ladder::cascade(&rows).expect("a verdict");
+    let verdict = ladder::cascade(&rows, &intervals(&rows)).expect("a verdict");
     assert_eq!(verdict.tied, vec!["e1", "e2"]);
 
     // 8 discordant seeds: p = 2/256 = 0.0078 < 0.01, a real difference.
@@ -141,7 +161,7 @@ fn a_p_value_at_or_above_one_percent_is_a_tie() {
         candidate("e1", 8, true, samples(1_000, 1_000, 65)),
         candidate("e2", 8, false, samples(992, 1_000, 65)),
     ];
-    let verdict = ladder::cascade(&rows).expect("a verdict");
+    let verdict = ladder::cascade(&rows, &intervals(&rows)).expect("a verdict");
     assert_eq!(verdict.leg, ladder::Leg::WinRate);
     assert_eq!(verdict.winner, "e1");
 }
@@ -149,10 +169,15 @@ fn a_p_value_at_or_above_one_percent_is_a_tie() {
 #[test]
 fn a_tie_goes_to_fewer_evaluations_per_solve() {
     let rows = vec![
-        candidate("e0", 4, false, with_evals(samples(1_000, 1_000, 65), 20_000)),
+        candidate(
+            "e0",
+            4,
+            false,
+            with_evals(samples(1_000, 1_000, 65), 20_000),
+        ),
         candidate("e1", 8, true, with_evals(samples(1_000, 1_000, 65), 18_000)),
     ];
-    let verdict = ladder::cascade(&rows).expect("a verdict");
+    let verdict = ladder::cascade(&rows, &intervals(&rows)).expect("a verdict");
     assert_eq!(verdict.winner, "e1");
     assert_eq!(verdict.leg, ladder::Leg::Evaluations);
 }
@@ -161,9 +186,14 @@ fn a_tie_goes_to_fewer_evaluations_per_solve() {
 fn an_evaluations_tie_goes_to_fewer_features() {
     let rows = vec![
         candidate("e1", 8, true, with_evals(samples(1_000, 1_000, 65), 18_000)),
-        candidate("e0", 4, false, with_evals(samples(1_000, 1_000, 65), 18_000)),
+        candidate(
+            "e0",
+            4,
+            false,
+            with_evals(samples(1_000, 1_000, 65), 18_000),
+        ),
     ];
-    let verdict = ladder::cascade(&rows).expect("a verdict");
+    let verdict = ladder::cascade(&rows, &intervals(&rows)).expect("a verdict");
     assert_eq!(verdict.winner, "e0");
     assert_eq!(verdict.leg, ladder::Leg::Features);
 }
@@ -173,10 +203,15 @@ fn the_published_table_wins_the_last_leg() {
     // Same win rate, same evaluations, same feature count: §9.4's closing
     // sentence decides it, and it is the published table.
     let rows = vec![
-        candidate("e2", 8, false, with_evals(samples(1_000, 1_000, 65), 18_000)),
+        candidate(
+            "e2",
+            8,
+            false,
+            with_evals(samples(1_000, 1_000, 65), 18_000),
+        ),
         candidate("e1", 8, true, with_evals(samples(1_000, 1_000, 65), 18_000)),
     ];
-    let verdict = ladder::cascade(&rows).expect("a verdict");
+    let verdict = ladder::cascade(&rows, &intervals(&rows)).expect("a verdict");
     assert_eq!(verdict.winner, "e1");
     assert_eq!(verdict.leg, ladder::Leg::Published);
 }
@@ -191,7 +226,7 @@ fn a_fewer_evaluations_nudge_does_not_displace_the_published_table() {
         candidate("e1", 8, true, with_evals(samples(956, 1_000, 65), 89_959)),
         candidate("e2", 8, false, with_evals(samples(955, 1_000, 65), 89_935)),
     ];
-    let verdict = ladder::cascade(&rows).expect("a verdict");
+    let verdict = ladder::cascade(&rows, &intervals(&rows)).expect("a verdict");
     assert_eq!(verdict.winner, "e1");
     assert_eq!(verdict.leg, ladder::Leg::Published);
 
@@ -200,7 +235,7 @@ fn a_fewer_evaluations_nudge_does_not_displace_the_published_table() {
         candidate("e1", 8, true, with_evals(samples(956, 1_000, 65), 89_959)),
         candidate("e2", 8, false, with_evals(samples(964, 1_000, 65), 100_000)),
     ];
-    let verdict = ladder::cascade(&rows).expect("a verdict");
+    let verdict = ladder::cascade(&rows, &intervals(&rows)).expect("a verdict");
     assert_eq!(verdict.winner, "e2");
     assert_eq!(verdict.leg, ladder::Leg::WinRate);
 }
@@ -212,9 +247,14 @@ fn the_published_over_tuned_rule_cannot_retire_a_different_architecture() {
     // the legs — and here the control's 4 features win on the last one.
     let rows = vec![
         candidate("e1", 8, true, with_evals(samples(1_000, 1_000, 65), 18_000)),
-        candidate("e0", 4, false, with_evals(samples(1_000, 1_000, 65), 18_000)),
+        candidate(
+            "e0",
+            4,
+            false,
+            with_evals(samples(1_000, 1_000, 65), 18_000),
+        ),
     ];
-    let verdict = ladder::cascade(&rows).expect("a verdict");
+    let verdict = ladder::cascade(&rows, &intervals(&rows)).expect("a verdict");
     assert_eq!(verdict.winner, "e0");
     assert_eq!(verdict.leg, ladder::Leg::Features);
 }
@@ -294,6 +334,223 @@ fn a_pair_reports_the_two_by_two_table_and_a_reproducible_interval() {
     assert_eq!(pair.boot_seed, seed);
 }
 
+// ------------------------------------------------------- the committed record
+
+/// The committed artifact, as JSON. Read, not re-run: the ladder's record has to be
+/// checkable without a thousand games of work behind it.
+fn committed_artifact() -> bench::json::Value {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("bench/ has a parent")
+        .join("data")
+        .join("measurements")
+        .join("ablation-ladder.json");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{} is not committed: {error}", path.display()));
+    bench::json::parse(&text).expect("the artifact parses")
+}
+
+/// The three Evaluators' rows, rebuilt from the committed per-seed file.
+///
+/// This is the pair of files the ticket commits together: the summary and the
+/// evidence. Re-deriving the rows from the evidence is what keeps the summary's
+/// cascade checkable after the losing architecture and the deleted switches left the
+/// source.
+fn committed_evaluators(artifact: &bench::json::Value) -> Vec<Candidate> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("bench/ has a parent")
+        .join("data")
+        .join("measurements")
+        .join("ablation-ladder-rows.jsonl");
+    let text = std::fs::read_to_string(&path).expect("the per-seed rows are committed");
+    let pieces = artifact
+        .get("bed")
+        .and_then(|bed| bed.get("pieces"))
+        .and_then(bench::json::Value::as_u32)
+        .expect("the bed's piece count");
+    let rows = artifact
+        .get("rows")
+        .and_then(bench::json::Value::as_array)
+        .expect("the artifact has rows");
+
+    let mut candidates: Vec<Candidate> = Vec::new();
+    for (id, table) in [
+        ("e0", "E0_HEURISTIC"),
+        ("e1", "E1_PUBLISHED"),
+        ("e2", "E2_TUNED"),
+    ] {
+        let row = rows
+            .iter()
+            .find(|row| row.get("id").and_then(bench::json::Value::as_str) == Some(id))
+            .unwrap_or_else(|| panic!("the artifact has no {id} row"));
+        let marker = format!("\"row\":\"{id}\"");
+        let samples: Vec<Sample> = text
+            .lines()
+            .filter(|line| line.contains(&marker))
+            .map(|line| {
+                let value = bench::json::parse(line).expect("a row parses");
+                let number = |key: &str| {
+                    value
+                        .get(key)
+                        .and_then(bench::json::Value::as_u32)
+                        .unwrap_or_else(|| panic!("{id} row without {key}"))
+                };
+                Sample {
+                    seed: number("seed"),
+                    won: value
+                        .get("won")
+                        .and_then(bench::json::Value::as_bool)
+                        .expect("a won flag"),
+                    lines: number("lines"),
+                    evals: number("evals"),
+                    moves: number("moves"),
+                    ms: value
+                        .get("ms")
+                        .and_then(bench::json::Value::as_f64)
+                        .expect("a millisecond count"),
+                    pieces,
+                }
+            })
+            .collect();
+        assert!(!samples.is_empty(), "the {id} row has no seeds");
+        // The row was measured with the rules that are now unconditional.
+        assert_eq!(
+            row.get("toggles")
+                .and_then(bench::json::Value::as_str)
+                .expect("a toggles label"),
+            "dedup+tail+no-suicide",
+            "the {id} row is not the shipped search"
+        );
+        candidates.push(Candidate {
+            id,
+            table,
+            features: row
+                .get("features")
+                .and_then(bench::json::Value::as_u32)
+                .expect("a feature count"),
+            // E1 is the published table; the other two are not.
+            published: id == "e1",
+            architecture: if id == "e0" {
+                "heuristic"
+            } else {
+                "dellacherie-thiery"
+            },
+            samples,
+        });
+    }
+    candidates
+}
+
+/// The committed cascade is what the rule says about the committed rows.
+///
+/// Ticket 08's record only works if a reader can check it: the summary quotes a
+/// verdict, the per-seed file holds the evidence, and the rule between them is
+/// `cascade`. So this re-derives the verdict from the evidence — the bed, the width
+/// and the fingerprint come from the artifact, the bootstrap stream is a function of
+/// them, and nothing is re-measured — and then holds the artifact and the published
+/// table to it, line by line.
+#[test]
+fn the_committed_cascade_is_re_derivable_from_the_committed_rows() {
+    let artifact = committed_artifact();
+    let candidates = committed_evaluators(&artifact);
+
+    let bed = artifact
+        .get("bed")
+        .and_then(|bed| bed.get("name"))
+        .and_then(bench::json::Value::as_str)
+        .expect("the bed's name");
+    let width = artifact
+        .get("width")
+        .and_then(|width| width.get("default_beam"))
+        .and_then(bench::json::Value::as_u32)
+        .expect("the width");
+    let fingerprint = artifact
+        .get("bed")
+        .and_then(|bed| bed.get("fingerprint"))
+        .and_then(bench::json::Value::as_str)
+        .expect("the bed's fingerprint");
+    let intervals = |judged: &str, reference: &str| {
+        let find = |id: &str| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.id == id)
+                .expect("a rung")
+        };
+        ladder::compare(
+            find(judged),
+            find(reference),
+            ladder::bootstrap_seed(bed, width, &format!("{judged}-vs-{reference}"), fingerprint),
+        )
+        .ci95
+    };
+    let verdict = ladder::cascade(&candidates, &intervals).expect("a verdict");
+
+    // The verdict, exactly as the artifact records it: E1 wins, the evaluations leg
+    // names it, and the rungs it beat are the ones that tied it on win rate.
+    assert_eq!(verdict.winner, "e1");
+    assert_eq!(verdict.leg, ladder::Leg::Evaluations);
+    assert_eq!(verdict.tied, vec!["e1", "e0", "e2"]);
+
+    // Every pre-registered comparison is in the steps: the mean-lines interval the
+    // spec reports, the evaluations leg that decides, and the feature counts.
+    let mean_lines = verdict
+        .steps
+        .iter()
+        .find(|step| step.starts_with("mean lines"))
+        .expect("the mean-lines statistic is reported");
+    assert!(
+        mean_lines.contains("e0 -0.0140 [-0.0270, -0.0010]"),
+        "the control's mean-lines interval, re-derived: {mean_lines}"
+    );
+    assert!(
+        mean_lines.contains("e2 -0.0010 [-0.0100, +0.0090]"),
+        "the tuned table's mean-lines interval, re-derived: {mean_lines}"
+    );
+    assert!(
+        verdict
+            .steps
+            .iter()
+            .any(|step| step.starts_with("evaluations")),
+        "the leg that names the winner is recorded"
+    );
+    assert!(
+        verdict
+            .steps
+            .iter()
+            .any(|step| step.starts_with("features")),
+        "the feature counts are recorded too"
+    );
+
+    // The artifact's own cascade block, and the published table, quote the same lines
+    // in the same order: a record that drifted from its rule would fail here.
+    let recorded: Vec<String> = artifact
+        .get("cascade")
+        .and_then(|cascade| cascade.get("steps"))
+        .and_then(bench::json::Value::as_array)
+        .expect("the artifact's steps")
+        .iter()
+        .map(|step| step.as_str().expect("a step is a string").to_string())
+        .collect();
+    assert_eq!(recorded, verdict.steps, "the artifact's cascade is stale");
+
+    let docs = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("bench/ has a parent")
+            .join("docs")
+            .join("measurements")
+            .join("ablation-ladder.md"),
+    )
+    .expect("the published table is committed");
+    for step in &verdict.steps {
+        assert!(
+            docs.contains(step.as_str()),
+            "the published table does not print a step it claims: {step}"
+        );
+    }
+}
+
 // ------------------------------------------------------------------ the artifact
 
 #[test]
@@ -323,15 +580,18 @@ fn a_ladder_run_writes_an_artifact_that_names_what_it_measured() {
     };
     let outcome = ladder::run(&options).expect("a finished run");
 
-    // One row per rung: three evaluators plus three toggles off the winner.
-    assert_eq!(outcome.artifact.rows.len(), 6, "{:?}", outcome.artifact.rows);
-    let ids: Vec<&str> = outcome
-        .artifact
-        .rows
-        .iter()
-        .map(|row| row.id)
-        .collect();
-    assert_eq!(ids, vec!["e0", "e1", "e2", "dedup-off", "tail-off", "no-suicide-off"]);
+    // One row per rung: three Evaluators plus the one toggle the engine still has.
+    // It was six until §9.4's deletion took `dedup-off` and `no-suicide-off` out of
+    // `engine/src/search.rs`; a ladder cannot measure a configuration the engine
+    // cannot reach, and their rows are in the committed artifact instead.
+    assert_eq!(
+        outcome.artifact.rows.len(),
+        4,
+        "{:?}",
+        outcome.artifact.rows
+    );
+    let ids: Vec<&str> = outcome.artifact.rows.iter().map(|row| row.id).collect();
+    assert_eq!(ids, vec!["e0", "e1", "e2", "tail-off"]);
     // Every rung solved the same games, so the pairing is real.
     for row in &outcome.artifact.rows {
         assert_eq!(row.stats.games, 24, "{}", row.id);
@@ -353,11 +613,13 @@ fn a_ladder_run_writes_an_artifact_that_names_what_it_measured() {
     }
     // The per-seed rows are the artifact's evidence, one line per (row, seed).
     let rows = std::fs::read_to_string(&options.rows_path).expect("the rows");
-    assert_eq!(rows.lines().count(), 6 * 24);
+    assert_eq!(rows.lines().count(), 4 * 24);
     assert!(rows.contains("\"row\":\"e1\""));
     // The published table names the bed, the Split and the machine.
     let table = std::fs::read_to_string(&options.docs_path).expect("the table");
     assert!(table.contains("goal4-p20-cap7"), "{table}");
+    // The control is explained where a reader meets it, not left as an oversight.
+    assert!(table.contains("The control"), "{table}");
     assert!(table.contains("1,000–1,023"), "{table}");
     assert!(table.contains("test box"), "{table}");
 

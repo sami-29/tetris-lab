@@ -100,7 +100,7 @@
     { "judged": "no-suicide-off", "reference": "e1", "both": 956, "only_judged": 0, "only_reference": 0, "neither": 44, "games": 1000, "n_disc": 0, "rejects_1_100": false, "delta_mean_lines": 0.0000, "ci95": [0.0000, 0.0000], "ci95_excludes_zero": false, "boot_seed": "0x7da952bba28917db", "resamples": 10000, "evals_median": [89959.0, 89959.0], "evals_differ_seeds": 0, "moved_seeds": 0 }
   ],
   "cascade": {
-    "rule": "highest win rate, where a difference with exact McNemar p >= 0.01 is a tie; a tie goes to fewer evaluations per solve, then to fewer features, then to the published table (\u00a79.4: E1 ships unless E2 clears p < 0.01)",
+    "rule": "highest win rate, where a difference with exact McNemar p >= 0.01 is a tie; every tie is also reported on mean lines (paired bootstrap 95 % CI, \u00a79.4's other statistic) and that report decides nothing; a tie goes to fewer evaluations per solve, then to fewer features, then to the published table (\u00a79.4: E1 ships unless E2 clears p < 0.01)",
     "winner": "e1",
     "leg": "fewer evaluations per solve",
     "tied": ["e1", "e0", "e2"],
@@ -108,8 +108,10 @@
       "highest win rate: e1 (956 of 1000)",
       "e0 vs e1: b = 14, c = 30, n = 44 -> p >= 0.01, a tie",
       "e2 vs e1: b = 11, c = 12, n = 23 -> p >= 0.01, a tie",
+      "mean lines, paired bootstrap 95 % CI vs e1: e0 -0.0140 [-0.0270, -0.0010], e2 -0.0010 [-0.0100, +0.0090] -> the reported quality statistic; §9.4's tie-break chain is evaluations, then features",
       "e2 vs e1: b = 11, c = 12, n = 23 -> the tuned table does not clear p < 0.01, so e1 ships (§9.4)",
-      "evaluations per solve (median): e1 89959, e0 90123.5 -> kept e1"
+      "evaluations per solve (median): e1 89959, e0 90123.5 -> kept e1",
+      "features (recorded after the decision, which evaluations made): e1 8, e0 4 -> kept e1"
     ]
   },
   "toggles": [

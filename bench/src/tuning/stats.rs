@@ -249,21 +249,24 @@ fn normal_cdf(z: f64) -> f64 {
 /// 10,000 resamples with replacement, drawn from splitmix64 seeded by the run's
 /// committed `tune_seed ^ C_BOOTSTRAP`, so the interval is a function of the
 /// record's own numbers. Percentile 2.5/97.5 by nearest rank.
+///
+/// Mean lines is the statistic §9.4 pairs with the exact McNemar test. Ticket 08
+/// briefly needed the same interval on Evaluations per Solve, to judge Dedup on the
+/// axis Dedup claimed; the ladder then deleted Dedup (§9.4), so the cost axis went
+/// with it and this is once again the one interval this crate computes.
 pub fn paired_bootstrap_ci95(
     reference: &[Sample],
     judged: &[Sample],
     tune_seed: u64,
     resamples: u32,
 ) -> [f64; 2] {
-    paired_bootstrap_ci95_of(reference, judged, tune_seed, resamples, |sample| {
+    interval_of(reference, judged, tune_seed, resamples, |sample| {
         sample.lines as i64
     })
 }
 
-/// The same interval on any one integer per seed: ticket 08 needs it on
-/// Evaluations per Solve to judge Dedup on the axis Dedup claims, and a second
-/// implementation would be a second way to compute a percentile.
-pub fn paired_bootstrap_ci95_of(
+/// The one implementation: a paired percentile interval of one integer per seed.
+fn interval_of(
     reference: &[Sample],
     judged: &[Sample],
     tune_seed: u64,

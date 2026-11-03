@@ -14,17 +14,23 @@
 //!    ([`derive_bed`]). If no goal does it, this module refuses instead of
 //!    inventing a bed §5.8 forbids.
 //! 3. **The pre-registered statistics, unchanged** ([`compare`], [`cascade`]):
-//!    paired per seed, exact McNemar on win rate — `p >= 0.01` is a tie — then
+//!    paired per seed; exact McNemar on win rate, where `p >= 0.01` is a tie; the
+//!    paired mean-lines interval reported on every tie and deciding nothing; then
 //!    fewer Evaluations per Solve, then fewer Features, then §9.4's own closing
 //!    sentence: the published table ships over a tuned one.
 //! 4. **One-at-a-time toggles off the winner** ([`toggle_verdict`]): a switch that
-//!    moves nothing beyond its interval is deleted from the engine, not kept.
+//!    moves nothing beyond its interval is deleted from the engine, not kept. The
+//!    verdict was `tail` kept, `dedup-off` and `no-suicide-off` deleted, so the
+//!    ladder's toggle round is now one row: the engine has no Dedup switch and no
+//!    No-suicide switch left to turn off, and their rows live in the committed
+//!    artifact and its per-seed file rather than in a re-runnable configuration.
 //!
-//! Two numbers are pinned so a re-run is a re-reading and not a new experiment:
+//! Three things are pinned so a re-run is a re-reading and not a new experiment:
 //! the bootstrap's stream is [`bootstrap_seed`], a function of the artifact's own
-//! fields, and the per-seed rows are committed next to the summary, because
-//! §9.4's statistics must stay recomputable after the losing architecture is
-//! deleted from `engine/`.
+//! fields; the per-seed rows are committed next to the summary, because §9.4's
+//! statistics must stay recomputable after the losing architecture is deleted from
+//! `engine/`; and the removed tuned table's weights are read from the record ticket
+//! 07 wrote rather than from a constant the engine should not carry.
 //!
 //! Nothing here touches the engine's semantics: the Evaluator is chosen by a
 //! `match` in `bench/`, never by a field in [`engine::SolveConfig`], the URL or
@@ -33,8 +39,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use engine::search::{Feature, Toggles};
-use engine::{DellacherieThiery, Evaluator, Heuristic};
+use engine::search::Toggles;
+use engine::{DellacherieThiery, DtWeights, Evaluator, Heuristic};
 
 use crate::fingerprint::{self, Fnv};
 use crate::tuning::stats::{self, Sample, Stats};
@@ -62,15 +68,17 @@ pub const BOOTSTRAP_RESAMPLES: u32 = 10_000;
 /// The artifact's schema version.
 pub const VERSION: u32 = 1;
 
-/// The six rungs the artifact carries, in the order the table publishes them.
-pub const ROWS: [&str; 6] = [
-    "e0",
-    "e1",
-    "e2",
-    "dedup-off",
-    "tail-off",
-    "no-suicide-off",
-];
+/// The rungs the artifact carries, in the order the table publishes them.
+///
+/// It was six until ticket 08's own verdict landed. §9.4 deletes a switch that
+/// moves nothing beyond its confidence interval, so `dedup-off` and
+/// `no-suicide-off` left `engine/src/search.rs` and the ladder can no longer
+/// measure them: a row the engine cannot configure is not a measurement, it is a
+/// claim. Their rows and their thousand per-seed samples stay in
+/// `data/measurements/ablation-ladder.json` and its `-rows.jsonl`, which is where
+/// the evidence for deleting them lives, and a re-run writes the four rows it can
+/// still produce.
+pub const ROWS: [&str; 4] = ["e0", "e1", "e2", "tail-off"];
 
 /// The three Evaluators the ladder compares, in §9.4's order.
 pub const EVALUATORS: [&str; 3] = ["e0", "e1", "e2"];
@@ -221,11 +229,6 @@ pub struct Pair {
     /// Seeds whose evaluation count differs at all: how much of the evals leg is
     /// actually exercised, which a bare median difference cannot show.
     pub evals_differ_seeds: u32,
-    /// Mean `evals_judged - evals_reference` over every seed: the axis a cost
-    /// device (Dedup) is judged on, because its claim is work saved and not Lines.
-    pub delta_mean_evals: f64,
-    /// The paired bootstrap 95 % interval of the same difference, same stream.
-    pub evals_ci95: [f64; 2],
     /// Seeds where any of `(won, lines, evals)` differs.
     pub moved_seeds: u32,
 }
@@ -234,20 +237,6 @@ impl Pair {
     /// The interval excludes zero, i.e. the mean-lines axis resolves the pair.
     pub fn ci95_excludes_zero(&self) -> bool {
         self.ci95[1] < 0.0 || self.ci95[0] > 0.0
-    }
-
-    /// The interval on the axis `axis` names: what the toggle rule reads.
-    pub fn interval(&self, axis: Axis) -> [f64; 2] {
-        match axis {
-            Axis::Quality => self.ci95,
-            Axis::Cost => self.evals_ci95,
-        }
-    }
-
-    /// Whether the interval on `axis` excludes zero.
-    pub fn resolves(&self, axis: Axis) -> bool {
-        let interval = self.interval(axis);
-        interval[1] < 0.0 || interval[0] > 0.0
     }
 
     /// The 2×2 table's cells sum to the game count.
@@ -318,14 +307,6 @@ pub fn compare(judged: &Candidate, reference: &Candidate, boot_seed: u64) -> Pai
         boot_seed,
         evals_median_judged: judged_stats.evals_median,
         evals_median_reference: reference_stats.evals_median,
-        delta_mean_evals: judged_stats.evals_mean - reference_stats.evals_mean,
-        evals_ci95: stats::paired_bootstrap_ci95_of(
-            &reference.samples,
-            &judged.samples,
-            boot_seed,
-            BOOTSTRAP_RESAMPLES,
-            |sample| sample.evals as i64,
-        ),
         evals_differ_seeds,
         moved_seeds,
     }
@@ -360,6 +341,18 @@ impl Leg {
     }
 }
 
+/// A pair's paired mean-lines interval, `[lo, hi]` at 95 %.
+///
+/// §9.4 pairs two statistics per comparison: "McNemar on win rate and a paired
+/// bootstrap 95 % CI over 10,000 resamples on mean lines". The second is a
+/// *reported* statistic and not one of the tie-break legs — the spec's chain is
+/// evaluations, then features — so the cascade records it and does not consult it.
+///
+/// It is a parameter because the resample stream is pinned by the artifact's own
+/// fields ([`bootstrap_seed`]): a rule that drew its own stream could not be checked
+/// against the table it writes.
+pub type MeanLinesCi<'a> = &'a dyn Fn(&str, &str) -> [f64; 2];
+
 /// What the ladder decided, and how.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Verdict {
@@ -378,8 +371,18 @@ pub struct Verdict {
 /// Legs, in the spec's own order: highest win rate (a difference with
 /// `p >= 0.01` is a tie) → fewer Evaluations per Solve → fewer Features → the
 /// published table. The last leg is §9.4's closing sentence, "E1 ships unless E2
-/// clears `p < 0.01`", read as the tie-break it is.
-pub fn cascade(candidates: &[Candidate]) -> Result<Verdict, String> {
+/// clears `p < 0.01`", applied before the legs because it fixes one pair before any
+/// of them can run.
+///
+/// The paired mean-lines interval is reported in `steps` at its pre-registered
+/// position (with the win-rate ties, before the tie-breaks) and is **not** a leg: it
+/// says how far apart two rungs are in Lines, which is the quality statement a
+/// three-seed win-rate difference cannot make, while §9.4 spends its tie-breaks on
+/// cost and width instead.
+pub fn cascade(
+    candidates: &[Candidate],
+    mean_lines_ci: MeanLinesCi<'_>,
+) -> Result<Verdict, String> {
     if candidates.is_empty() {
         return Err("the ladder has no rows to rank".to_string());
     }
@@ -439,6 +442,31 @@ pub fn cascade(candidates: &[Candidate]) -> Result<Verdict, String> {
             steps,
         });
     }
+
+    // §9.4's other pre-registered statistic, in its own position: every rung tied
+    // with the highest win rate, paired against it, on mean lines. Recorded because
+    // the spec reports it — never consulted, because the spec's tie-break chain does
+    // not contain it — so a reader sees the whole pre-registered comparison instead
+    // of only the part that happened to decide.
+    steps.push(format!(
+        "mean lines, paired bootstrap 95 % CI vs {}: {} -> the reported quality statistic; \
+         §9.4's tie-break chain is evaluations, then features",
+        candidates[top].id,
+        tied.iter()
+            .filter(|candidate| candidate.id != candidates[top].id)
+            .map(|candidate| {
+                let ci = mean_lines_ci(candidate.id, candidates[top].id);
+                format!(
+                    "{} {:+.4} [{:+.4}, {:+.4}]",
+                    candidate.id,
+                    candidate.stats().mean_lines - candidates[top].stats().mean_lines,
+                    ci[0],
+                    ci[1]
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
 
     // §9.4's closing sentence, applied first because it fixes one pair before any
     // leg can: "E1 ships unless E2 clears p < 0.01". A tuned table only displaces
@@ -502,8 +530,7 @@ pub fn cascade(candidates: &[Candidate]) -> Result<Verdict, String> {
         .collect();
     steps.push(format!(
         "evaluations per solve (median): {} -> kept {}",
-        tied
-            .iter()
+        tied.iter()
             .map(|candidate| format!("{} {}", candidate.id, evals(candidate)))
             .collect::<Vec<_>>()
             .join(", "),
@@ -516,6 +543,17 @@ pub fn cascade(candidates: &[Candidate]) -> Result<Verdict, String> {
         return Err("the evaluations leg kept nothing".to_string());
     }
     if kept.len() == 1 {
+        // The features leg never had to run. Its numbers are the last of the
+        // pre-registered comparisons and a reader should not have to recompute them
+        // to see that they agree with the decision.
+        steps.push(format!(
+            "features (recorded after the decision, which evaluations made): {} -> kept {}",
+            tied.iter()
+                .map(|candidate| format!("{} {}", candidate.id, candidate.features))
+                .collect::<Vec<_>>()
+                .join(", "),
+            kept[0].id
+        ));
         return Ok(Verdict {
             winner: kept[0].id,
             leg: Leg::Evaluations,
@@ -599,8 +637,7 @@ pub fn cascade(candidates: &[Candidate]) -> Result<Verdict, String> {
 /// stream on purpose: that is a new measurement, not a new reading of an old one.
 pub fn bootstrap_seed(bed: &str, width: u32, pair: &str, dataset_fingerprint: &str) -> u64 {
     let mut fnv = Fnv::new();
-    let text =
-        format!("ladder-bootstrap/{VERSION}|{bed}|{width}|{pair}|dfp={dataset_fingerprint}");
+    let text = format!("ladder-bootstrap/{VERSION}|{bed}|{width}|{pair}|dfp={dataset_fingerprint}");
     for byte in text.bytes() {
         fnv.byte(byte);
     }
@@ -627,36 +664,6 @@ impl ToggleVerdict {
     }
 }
 
-/// Which interval a toggle's claim is judged on.
-///
-/// The rule is "moves nothing beyond its CI", and the CI has to be the one the
-/// mechanism claims: the exact Tail search and the No-suicide rule claim quality
-/// (Lines and outcomes), while Dedup is a cost device — it removes duplicate
-/// Boards before the trim — so judging it on Lines would delete the machinery that
-/// makes the beam affordable (notes/08 §3.2).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Axis {
-    Quality,
-    Cost,
-}
-
-impl Axis {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Axis::Quality => "quality (mean lines)",
-            Axis::Cost => "cost (evaluations per solve)",
-        }
-    }
-}
-
-/// The axis each toggle claims.
-pub fn toggle_axis(id: &str) -> Axis {
-    match id {
-        "dedup-off" => Axis::Cost,
-        _ => Axis::Quality,
-    }
-}
-
 /// §9.4's deletion rule, made mechanical: "a toggle that moves nothing beyond its
 /// CI is deleted from the engine, not kept because it might help".
 ///
@@ -665,7 +672,19 @@ pub fn toggle_axis(id: &str) -> Axis {
 /// flipped. A mechanism that never engaged changed not one number on the Split and
 /// has nothing to keep; a mechanism that engaged and moved nothing is deleted with
 /// its counts recorded next to it.
-pub fn toggle_verdict(engaged: bool, moved: u32, discordant: Paired, ci95: [f64; 2]) -> ToggleVerdict {
+///
+/// The rule deleted two of the three switches §9.4 lists. `dedup-off` moved 959 of
+/// the 1,000 seeds and still resolved nothing: mean lines `[-0.017, +0.005]` and
+/// `p >= 0.01` on the 30 flipped games, so there was no interval to keep it on. And
+/// `no-suicide-off` moved **zero** seeds of the thousand — the rule never fired on
+/// this bed at all, which is a statement about this bed and not a proof that it is
+/// inert everywhere. Both are gone from the engine; `tail-off` kept its switch.
+pub fn toggle_verdict(
+    engaged: bool,
+    moved: u32,
+    discordant: Paired,
+    ci95: [f64; 2],
+) -> ToggleVerdict {
     if !engaged || moved == 0 {
         return ToggleVerdict::Deleted;
     }
@@ -861,59 +880,123 @@ enum Table {
 }
 
 impl Table {
-    /// `(table, committed table name, features, published, architecture)`.
-    fn for_id(id: &str) -> Result<(Table, &'static str, u32, bool, &'static str), String> {
+    /// The Evaluator this rung scores with. E2's table is an argument rather than a
+    /// constant because the engine no longer carries it ([`tuned_weights`]).
+    fn evaluator(self, tuned: &DellacherieThiery) -> &(dyn Evaluator + Sync) {
+        match self {
+            // The control is named explicitly, so a §9.4 verdict can never move the
+            // control's own numbers.
+            Table::E0 => &CONTROL,
+            Table::E1 => &PUBLISHED,
+            Table::E2 => tuned,
+        }
+    }
+}
+
+/// One rung as the ledger names it: which table, how many Features it measures and
+/// whether it is the published one — everything the artifact records about a row that
+/// is not itself a measurement.
+#[derive(Clone, Copy)]
+struct Rung {
+    id: &'static str,
+    table: Table,
+    /// The committed constant's name, as the artifact quotes it.
+    name: &'static str,
+    features: u32,
+    published: bool,
+    architecture: &'static str,
+}
+
+impl Rung {
+    fn for_id(id: &'static str) -> Result<Rung, String> {
         match id {
-            "e0" => Ok((Table::E0, "E0_HEURISTIC", 4, false, "heuristic")),
-            "e1" => Ok((Table::E1, "E1_PUBLISHED", 8, true, "dellacherie-thiery")),
-            "e2" => Ok((Table::E2, "E2_TUNED", 8, false, "dellacherie-thiery")),
+            "e0" => Ok(Rung {
+                id,
+                table: Table::E0,
+                name: "E0_HEURISTIC",
+                features: 4,
+                published: false,
+                architecture: "heuristic",
+            }),
+            "e1" => Ok(Rung {
+                id,
+                table: Table::E1,
+                name: "E1_PUBLISHED",
+                features: 8,
+                published: true,
+                architecture: "dellacherie-thiery",
+            }),
+            "e2" => Ok(Rung {
+                id,
+                table: Table::E2,
+                name: "E2_TUNED",
+                features: 8,
+                published: false,
+                architecture: "dellacherie-thiery",
+            }),
             other => Err(format!(
                 "{other} is not an Evaluator row; the ladder's are {}",
                 EVALUATORS.join(", ")
             )),
         }
     }
-
-    fn evaluator(self) -> &'static dyn Evaluator {
-        match self {
-            // The control is named explicitly, so a §9.4 verdict can never move the
-            // control's own numbers.
-            Table::E0 => &CONTROL,
-            Table::E1 => &PUBLISHED,
-            Table::E2 => &TUNED,
-        }
-    }
 }
 
 static CONTROL: Heuristic = Heuristic(engine::E0_HEURISTIC);
 static PUBLISHED: DellacherieThiery = DellacherieThiery(engine::E1_PUBLISHED);
-static TUNED: DellacherieThiery = DellacherieThiery(engine::E2_TUNED);
 
-/// Which search decision a toggle row switches off.
-fn toggle_for_id(id: &str) -> Result<Feature, String> {
+/// The weights of the table the ladder made lose, read from the record that holds
+/// them.
+///
+/// `E2_TUNED` is not in the engine any more, and that is ticket 08's rule doing its
+/// job: "the chosen weight table is committed with the engine and the losing
+/// architecture is removed from the source, not disabled by a flag". The numbers are
+/// not lost — ticket 07 wrote them to `data/measurements/e2-tuning.json` as
+/// `weights_q16` beside the `weights_decimal` they round from — so the row that
+/// proves E1 beat them is built from the record, and this is the only place in the
+/// workspace that builds a tuned table at all.
+fn tuned_weights() -> Result<DtWeights, String> {
+    let path = crate::tuning::record::record_path();
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    let record = crate::tuning::record::Record::parse(&text)?;
+    let accepted = record
+        .accepted
+        .as_ref()
+        .ok_or_else(|| format!("{} records no accepted run", path.display()))?;
+    let run = record
+        .runs
+        .iter()
+        .find(|run| run.run == accepted.run)
+        .ok_or_else(|| {
+            format!(
+                "{}: run {} is the accepted one and is not in the record",
+                path.display(),
+                accepted.run
+            )
+        })?;
+    Ok(DtWeights::from_array(run.weights_q16))
+}
+
+/// §9.4's toggle round, as the engine can still run it: one switch, the Tail's.
+fn toggle_for_id(id: &str) -> Result<Toggles, String> {
     match id {
-        "dedup-off" => Ok(Feature::Dedup),
-        "tail-off" => Ok(Feature::Tail),
-        "no-suicide-off" => Ok(Feature::NoSuicide),
-        other => Err(format!("{other} is not one of the ladder's toggle rows")),
+        "tail-off" => Ok(Toggles::BEAM_ONLY),
+        other => Err(format!(
+            "{other} is not one of the ladder's toggle rows: it has {}. The engine has no \
+             Dedup switch and no No-suicide switch any more — §9.4's verdict deleted both, and \
+             the evidence for the two deletions is in data/measurements/ablation-ladder.json",
+            ROWS[3..].join(", ")
+        )),
     }
 }
 
+/// The row's label: the two rules that are now unconditional, then the one switch.
 fn toggles_label(toggles: Toggles) -> String {
-    let mut parts = Vec::new();
-    if toggles.dedup {
-        parts.push("dedup");
-    }
     if toggles.tail {
-        parts.push("tail");
-    }
-    if toggles.no_suicide {
-        parts.push("no-suicide");
-    }
-    if parts.is_empty() {
-        "none".to_string()
+        "dedup+tail+no-suicide".to_string()
     } else {
-        parts.join("+")
+        "dedup+no-suicide".to_string()
     }
 }
 
@@ -946,7 +1029,13 @@ fn map_parallel(n: usize, f: &(impl Fn(usize) -> Sample + Sync)) -> Vec<Sample> 
 }
 
 /// One rung: every game of the Split, solved once, in seed order.
-fn measure(games: &Games, bed: Bed, width: u32, table: Table, toggles: Toggles) -> Vec<Sample> {
+fn measure(
+    games: &Games,
+    bed: Bed,
+    width: u32,
+    evaluator: &(dyn Evaluator + Sync),
+    toggles: Toggles,
+) -> Vec<Sample> {
     map_parallel(games.len(), &|index| {
         let cfg = engine::SolveConfig {
             goal: bed.goal,
@@ -958,7 +1047,7 @@ fn measure(games: &Games, bed: Bed, width: u32, table: Table, toggles: Toggles) 
             &games.boards[index],
             &games.sequences[index],
             &cfg,
-            table.evaluator(),
+            evaluator,
         );
         Sample {
             seed: games.seeds[index],
@@ -977,17 +1066,15 @@ fn rung(
     games: &Games,
     bed: Bed,
     width: u32,
-    id: &'static str,
-    table: Table,
-    table_name: &'static str,
-    features: u32,
+    spec: &Rung,
+    evaluator: &(dyn Evaluator + Sync),
     toggles: Toggles,
 ) -> RungRow {
-    let samples = measure(games, bed, width, table, toggles);
+    let samples = measure(games, bed, width, evaluator, toggles);
     RungRow {
-        id,
-        table: table_name,
-        features,
+        id: spec.id,
+        table: spec.name,
+        features: spec.features,
         toggles: toggles_label(toggles),
         stats: stats::summarise(&samples),
         samples,
@@ -1020,50 +1107,72 @@ pub fn run(options: &Options) -> Result<Outcome, String> {
     let bed_name = bed.name();
 
     // Rungs 1–3: the Evaluators, at the shipped search decisions.
+    // The losing table's weights, read from ticket 07's record: the engine no longer
+    // has them (§9.4), and the row that proves E1 beat them still has to be measured.
+    let tuned = DellacherieThiery(tuned_weights()?);
+
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut rows: Vec<RungRow> = Vec::new();
     for id in EVALUATORS {
-        let (table, table_name, features, published, architecture) = Table::for_id(id)?;
+        let spec = Rung::for_id(id)?;
         let row = rung(
             &games,
             bed,
             options.width,
-            id,
-            table,
-            table_name,
-            features,
+            &spec,
+            spec.table.evaluator(&tuned),
             Toggles::SHIPPED,
         );
         candidates.push(Candidate {
             id: row.id,
             table: row.table,
-            features,
-            published,
-            architecture,
+            features: spec.features,
+            published: spec.published,
+            architecture: spec.architecture,
             samples: row.samples.clone(),
         });
         rows.push(row);
     }
-    let verdict = cascade(&candidates)?;
+    // §9.4's reported mean-lines statistic, on the same pinned stream the table's
+    // "vs winner" column uses, so the cascade's line and the published pair cannot
+    // disagree about one comparison.
+    let mean_lines = |judged: &str, reference: &str| {
+        let find = |id: &str| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.id == id)
+                .expect("the cascade reports a pair it was given")
+        };
+        let pair_id = format!("{judged}-vs-{reference}");
+        compare(
+            find(judged),
+            find(reference),
+            bootstrap_seed(&bed_name, options.width, &pair_id, &bed_fingerprint),
+        )
+        .ci95
+    };
+    let verdict = cascade(&candidates, &mean_lines)?;
     let winner = candidates
         .iter()
         .position(|candidate| candidate.id == verdict.winner)
         .ok_or_else(|| format!("the cascade's winner {} has no row", verdict.winner))?;
 
-    // Rungs 4–6: one decision off the winner, one at a time.
+    // Rung 4: the one search decision the engine can still turn off, off the winner.
     let mut toggle_pairs: Vec<Pair> = Vec::new();
     let mut toggle_verdicts: Vec<ToggleVerdict> = Vec::new();
+    let winner_spec = Rung::for_id(verdict.winner)?;
     for id in ROWS[3..].iter().copied() {
-        let feature = toggle_for_id(id)?;
+        let off = toggle_for_id(id)?;
+        // The row's own id and the winner's table: a toggle row is the shipped rung
+        // with one switch off, so its Features and architecture are the winner's.
+        let spec = Rung { id, ..winner_spec };
         let row = rung(
             &games,
             bed,
             options.width,
-            id,
-            Table::for_id(verdict.winner)?.0,
-            candidates[winner].table,
-            candidates[winner].features,
-            Toggles::SHIPPED.without(feature),
+            &spec,
+            winner_spec.table.evaluator(&tuned),
+            off,
         );
         let judged = Candidate {
             id: row.id,
@@ -1082,7 +1191,7 @@ pub fn run(options: &Options) -> Result<Outcome, String> {
             pair.moved_seeds > 0,
             pair.moved_seeds,
             pair.discordant,
-            pair.interval(toggle_axis(id)),
+            pair.ci95,
         ));
         toggle_pairs.push(pair);
         rows.push(row);
@@ -1160,7 +1269,7 @@ fn scan_goals(options: &Options) -> Result<Vec<ScanRow>, String> {
                 cap: options.scan_cap,
             },
             options.width,
-            Table::E0,
+            &CONTROL,
             Toggles::SHIPPED,
         );
         let summary = stats::summarise(&samples);
@@ -1220,7 +1329,9 @@ fn render_json(artifact: &Artifact) -> String {
         "    \"commit\": \"{}\",\n",
         escape(&artifact.engine_commit)
     ));
-    out.push_str("    \"profile\": \"release: lto=fat, codegen-units=1, panic=abort, strip=true\"\n");
+    out.push_str(
+        "    \"profile\": \"release: lto=fat, codegen-units=1, panic=abort, strip=true\"\n",
+    );
     out.push_str("  },\n");
     out.push_str(&format!(
         "  \"machine\": {{ \"label\": \"{}\" }},\n",
@@ -1383,9 +1494,8 @@ fn render_json(artifact: &Artifact) -> String {
              \"only_reference\": {}, \"neither\": {}, \"games\": {}, \"n_disc\": {}, \
              \"rejects_1_100\": {}, \"delta_mean_lines\": {:.4}, \"ci95\": [{:.4}, {:.4}], \
              \"ci95_excludes_zero\": {}, \"boot_seed\": \"0x{:016x}\", \"resamples\": \
-             {BOOTSTRAP_RESAMPLES}, \"evals_median\": [{:.1}, {:.1}], \"evals_ci95\": [{:.4}, \
-             {:.4}], \"evals_delta_mean\": {:.4}, \"evals_differ_seeds\": {}, \"moved_seeds\": \
-             {} }}{}\n",
+             {BOOTSTRAP_RESAMPLES}, \"evals_median\": [{:.1}, {:.1}], \"evals_differ_seeds\": {}, \
+             \"moved_seeds\": {} }}{}\n",
             escape(pair.judged),
             escape(pair.reference),
             pair.both,
@@ -1402,9 +1512,6 @@ fn render_json(artifact: &Artifact) -> String {
             pair.boot_seed,
             pair.evals_median_judged,
             pair.evals_median_reference,
-            pair.evals_ci95[0],
-            pair.evals_ci95[1],
-            pair.delta_mean_evals,
             pair.evals_differ_seeds,
             pair.moved_seeds,
             if index + 1 == all.len() { "" } else { "," }
@@ -1416,8 +1523,10 @@ fn render_json(artifact: &Artifact) -> String {
     out.push_str("  \"cascade\": {\n");
     out.push_str(
         "    \"rule\": \"highest win rate, where a difference with exact McNemar p >= 0.01 is a \
-         tie; a tie goes to fewer evaluations per solve, then to fewer features, then to the \
-         published table (\\u00a79.4: E1 ships unless E2 clears p < 0.01)\",\n",
+         tie; every tie is also reported on mean lines (paired bootstrap 95 % CI, \\u00a79.4's \
+         other statistic) and that report decides nothing; a tie goes to fewer evaluations per \
+         solve, then to fewer features, then to the published table (\\u00a79.4: E1 ships unless \
+         E2 clears p < 0.01)\",\n",
     );
     out.push_str(&format!(
         "    \"winner\": \"{}\",\n    \"leg\": \"{}\",\n    \"tied\": [{}],\n",
@@ -1449,23 +1558,18 @@ fn render_json(artifact: &Artifact) -> String {
     out.push_str("  \"toggles\": [\n");
     for (index, pair) in artifact.toggle_pairs.iter().enumerate() {
         out.push_str(&format!(
-            "    {{ \"id\": \"{}\", \"off\": \"{}\", \"verdict\": \"{}\", \"axis\": \"{}\", \
-             \"moved_seeds\": {}, \"n_disc\": {}, \"rejects_1_100\": {}, \"ci95\": [{:.4}, \
-             {:.4}], \"ci95_excludes_zero\": {}, \"evals_ci95\": [{:.4}, {:.4}], \
-             \"evals_delta_mean\": {:.4} }}{}\n",
+            "    {{ \"id\": \"{}\", \"off\": \"{}\", \"verdict\": \"{}\", \"moved_seeds\": {}, \
+             \"n_disc\": {}, \"rejects_1_100\": {}, \"ci95\": [{:.4}, {:.4}], \
+             \"ci95_excludes_zero\": {} }}{}\n",
             escape(pair.judged),
             escape(pair.judged.trim_end_matches("-off")),
             artifact.toggles[index].as_str(),
-            toggle_axis(pair.judged).as_str(),
             pair.moved_seeds,
             pair.discordant.n(),
             pair.rejects,
             pair.ci95[0],
             pair.ci95[1],
             pair.ci95_excludes_zero(),
-            pair.evals_ci95[0],
-            pair.evals_ci95[1],
-            pair.delta_mean_evals,
             if index + 1 == artifact.toggle_pairs.len() {
                 ""
             } else {
@@ -1592,7 +1696,11 @@ fn render_rows(artifact: &Artifact) -> String {
 /// The published comparison table: the one a human reads, with the labels ticket 08
 /// requires — the bed, the Split and the machine.
 pub fn render_markdown(artifact: &Artifact) -> String {
-    let games = artifact.rows.first().map(|row| row.stats.games).unwrap_or(0);
+    let games = artifact
+        .rows
+        .first()
+        .map(|row| row.stats.games)
+        .unwrap_or(0);
     let mut out = String::new();
     out.push_str("# The ablation ladder: which Evaluator ships\n\n");
     out.push_str(
@@ -1670,6 +1778,16 @@ pub fn render_markdown(artifact: &Artifact) -> String {
         ));
     }
 
+    out.push_str("## The control\n\n");
+    out.push_str(
+        "E0 is the ladder's **control**, and it is in the engine on purpose. §9.4 ranks three \
+         Evaluators\non a bed that has to be hard enough for the weakest of them to fail, and a ladder needs a \
+         control\nfrom a *different* architecture: ticket 05 ships `Heuristic` for that reason and \
+         ticket 08 keeps it\nafter deleting the tuned table, because a ladder with only published \
+         tables left could not tell\na measurement from a tie-break. Deleting E0 here would look \
+         tidy and would remove the only\nrung that can lose.\n\n",
+    );
+
     out.push_str("## The table\n\n");
     out.push_str(
         "| row | table | features | toggles | wins | vs winner (b, c, n) | p < 0.01 | mean lines Δ \
@@ -1687,7 +1805,7 @@ pub fn render_markdown(artifact: &Artifact) -> String {
             .position(|pair| pair.judged == row.id)
         {
             match artifact.toggles[index] {
-                ToggleVerdict::Kept => "kept (moves its axis)".to_string(),
+                ToggleVerdict::Kept => "kept (moves something beyond its CI)".to_string(),
                 ToggleVerdict::Deleted => "**deleted from the engine**".to_string(),
             }
         } else {
@@ -1729,8 +1847,10 @@ pub fn render_markdown(artifact: &Artifact) -> String {
 
     out.push_str("\n## The cascade\n\n");
     out.push_str(
-        "§9.4: highest win rate; a difference with exact McNemar `p >= 0.01` is a tie; a tie goes to \
-         fewer\nEvaluations per Solve, then to fewer Features. The legs actually run:\n\n",
+        "§9.4: highest win rate; a difference with exact McNemar `p >= 0.01` is a tie. Every tie is \
+         also\nreported on mean lines, with a paired bootstrap 95 % CI — the spec's second statistic — \
+         and that\nreport decides nothing. The tie-break chain is fewer Evaluations per Solve, then \
+         fewer\nFeatures, then the published table. The legs actually run:\n\n",
     );
     for step in &artifact.verdict.steps {
         out.push_str(&format!("- {step}\n"));
@@ -1749,6 +1869,39 @@ pub fn render_markdown(artifact: &Artifact) -> String {
             .join(", ")
     ));
 
+    // The one comparison on the list that does not point at the winner, said out
+    // loud: "fewer features" favours the control, and only §9.4's order (evaluations
+    // before features) keeps it from deciding. Emitted only when it is true of the
+    // rows in front of us.
+    let shipped_features = artifact.row(artifact.verdict.winner).features;
+    let control_features = artifact
+        .verdict
+        .tied
+        .iter()
+        .filter(|id| **id != artifact.verdict.winner)
+        .filter_map(|id| artifact.rows.iter().find(|row| row.id == *id))
+        .map(|row| row.features)
+        .min();
+    if let Some(control) = control_features.filter(|control| *control < shipped_features) {
+        out.push_str(&format!(
+            "The comparisons do not all point the same way, and the exception is worth naming: \
+             `{}`\nmeasures {} Features against the shipped table's {}, so it would win the \
+             **Features** leg — the\ncontrol is cheaper per score. The evaluations leg separates \
+             first, so §9.4's chain never\nreaches it. A reader who swapped the last two legs would \
+             ship the control instead: that would\nbe a different reading of §9.4 and not a different \
+             measurement, and it is the one place where\nthe order of the chain changes the answer.\n\n",
+            artifact
+                .verdict
+                .tied
+                .iter()
+                .find(|id| **id != artifact.verdict.winner)
+                .copied()
+                .unwrap_or(artifact.verdict.winner),
+            control,
+            shipped_features
+        ));
+    }
+
     out.push_str("## The toggles\n\n");
     out.push_str(
         "One at a time off the winner. A toggle that moves nothing beyond its confidence interval is \
@@ -1757,15 +1910,13 @@ pub fn render_markdown(artifact: &Artifact) -> String {
          told from one that achieved\nnothing without it.\n\n",
     );
     out.push_str(
-        "| toggle | axis | moved seeds | flipped (b, c) | mean lines Δ [95 % CI] | evals Δ \
-         [95 % CI] | verdict |\n|---|---|---|---|---|---|---|\n",
+        "| toggle | moved seeds | flipped (b, c) | mean lines Δ [95 % CI] | verdict |\n\
+         |---|---|---|---|---|\n",
     );
     for (index, pair) in artifact.toggle_pairs.iter().enumerate() {
-        let axis = toggle_axis(pair.judged);
         out.push_str(&format!(
-            "| {} | {} | {}/{} | {}, {} | {:+.4} [{:+.4}, {:+.4}] | {:+.1} [{:+.1}, {:+.1}] | {} |\n",
+            "| {} | {}/{} | {}, {} | {:+.4} [{:+.4}, {:+.4}] | {} |\n",
             pair.judged,
-            axis.as_str(),
             pair.moved_seeds,
             games,
             pair.only_judged,
@@ -1773,10 +1924,27 @@ pub fn render_markdown(artifact: &Artifact) -> String {
             pair.delta_mean_lines,
             pair.ci95[0],
             pair.ci95[1],
-            pair.delta_mean_evals,
-            pair.evals_ci95[0],
-            pair.evals_ci95[1],
             artifact.toggles[index].as_str()
+        ));
+    }
+
+    // The rows the rule deleted are history, not configuration: say so where the
+    // table lists them, or a reader will think the engine still has the switches.
+    let deleted: Vec<&str> = artifact
+        .toggle_pairs
+        .iter()
+        .zip(&artifact.toggles)
+        .filter(|(_, verdict)| **verdict == ToggleVerdict::Deleted)
+        .map(|(pair, _)| pair.judged)
+        .collect();
+    if !deleted.is_empty() {
+        out.push_str(&format!(
+            "\n§9.4's rule deleted `{}` from the engine, so a re-run of the ladder cannot measure \
+             {}: a\nrow the engine cannot reach would be a claim rather than a measurement. The \
+             rows, and the thousand\nseeds behind each, stay in this table because the evidence for \
+             a deletion is the measurement that\njustified it.\n",
+            deleted.join("`, `"),
+            if deleted.len() == 1 { "it" } else { "them" }
         ));
     }
     out.push('\n');

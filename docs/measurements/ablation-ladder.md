@@ -85,6 +85,15 @@ sits above it because §5.7's pre-fill puts a stack on the Board before the firs
 mean 64.92 Lines at goal 65 is the measurement that it is reached rather than assumed.
 Goals from 69 were reached by nobody.
 
+## The control
+
+E0 is the ladder's **control**, and it is in the engine on purpose. §9.4 ranks three Evaluators
+on a bed that has to be hard enough for the weakest of them to fail, and a ladder needs a control
+from a *different* architecture: ticket 05 ships `Heuristic` for that reason and ticket 08 keeps it
+after deleting the tuned table, because a ladder with only published tables left could not tell
+a measurement from a tie-break. Deleting E0 here would look tidy and would remove the only
+rung that can lose.
+
 ## The table
 
 | row | table | features | toggles | wins | vs winner (b, c, n) | p < 0.01 | mean lines Δ [95 % CI] | evals p50 | evals p90 | ms p50 | verdict |
@@ -93,21 +102,32 @@ Goals from 69 were reached by nobody.
 | e1 | E1_PUBLISHED | 8 | dedup+tail+no-suicide | 956/1000 | — | — | — | 89959 | 98145 | 47.47 | **ships** |
 | e2 | E2_TUNED | 8 | dedup+tail+no-suicide | 955/1000 | 11, 12, 23 | no (tie) | -0.0010 [-0.0100, +0.0090] | 89935 | 98850 | 45.32 | not shipped |
 | dedup-off | E1_PUBLISHED | 8 | tail+no-suicide | 950/1000 | 12, 18, 30 | no (tie) | -0.0060 [-0.0170, +0.0050] | 90056 | 98979 | 39.18 | **deleted from the engine** |
-| tail-off | E1_PUBLISHED | 8 | dedup+no-suicide | 943/1000 | 0, 13, 13 | yes | +0.0120 [+0.0000, +0.0240] | 89967 | 91444 | 41.90 | kept (moves its axis) |
+| tail-off | E1_PUBLISHED | 8 | dedup+no-suicide | 943/1000 | 0, 13, 13 | yes | +0.0120 [+0.0000, +0.0240] | 89967 | 91444 | 41.90 | kept (moves something beyond its CI) |
 | no-suicide-off | E1_PUBLISHED | 8 | dedup+tail | 956/1000 | 0, 0, 0 | no (tie) | +0.0000 [+0.0000, +0.0000] | 89959 | 98145 | 42.84 | **deleted from the engine** |
 
 ## The cascade
 
-§9.4: highest win rate; a difference with exact McNemar `p >= 0.01` is a tie; a tie goes to fewer
-Evaluations per Solve, then to fewer Features. The legs actually run:
+§9.4: highest win rate; a difference with exact McNemar `p >= 0.01` is a tie. Every tie is also
+reported on mean lines, with a paired bootstrap 95 % CI — the spec's second statistic — and that
+report decides nothing. The tie-break chain is fewer Evaluations per Solve, then fewer
+Features, then the published table. The legs actually run:
 
 - highest win rate: e1 (956 of 1000)
 - e0 vs e1: b = 14, c = 30, n = 44 -> p >= 0.01, a tie
 - e2 vs e1: b = 11, c = 12, n = 23 -> p >= 0.01, a tie
+- mean lines, paired bootstrap 95 % CI vs e1: e0 -0.0140 [-0.0270, -0.0010], e2 -0.0010 [-0.0100, +0.0090] -> the reported quality statistic; §9.4's tie-break chain is evaluations, then features
 - e2 vs e1: b = 11, c = 12, n = 23 -> the tuned table does not clear p < 0.01, so e1 ships (§9.4)
 - evaluations per solve (median): e1 89959, e0 90123.5 -> kept e1
+- features (recorded after the decision, which evaluations made): e1 8, e0 4 -> kept e1
 
 **Winner: `e1` (E1_PUBLISHED), decided by fewer evaluations per solve.** Tied at the start of the legs: `e1`, `e0`, `e2`.
+
+The comparisons do not all point the same way, and the exception is worth naming: `e0`
+measures 4 Features against the shipped table's 8, so it would win the **Features** leg — the
+control is cheaper per score. The evaluations leg separates first, so §9.4's chain never
+reaches it. A reader who swapped the last two legs would ship the control instead: that would
+be a different reading of §9.4 and not a different measurement, and it is the one place where
+the order of the chain changes the answer.
 
 ## The toggles
 
@@ -121,4 +141,9 @@ nothing without it.
 | dedup-off | 959/1000 | 12, 18 | -0.0060 [-0.0170, +0.0050] | deleted |
 | tail-off | 304/1000 | 0, 13 | +0.0120 [+0.0000, +0.0240] | kept |
 | no-suicide-off | 0/1000 | 0, 0 | +0.0000 [+0.0000, +0.0000] | deleted |
+
+§9.4's rule deleted `dedup-off`, `no-suicide-off` from the engine, so a re-run of the ladder cannot measure them: a
+row the engine cannot reach would be a claim rather than a measurement. The rows, and the thousand
+seeds behind each, stay in this table because the evidence for a deletion is the measurement that
+justified it.
 

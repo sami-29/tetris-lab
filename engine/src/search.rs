@@ -5,6 +5,11 @@
 //! nothing else is legal; the final three pieces are searched exactly; and when
 //! the Goal is reached the Move list is reconstructed by parent pointer.
 //!
+//! Dedup and the No-suicide rule are **unconditional**: ticket 08's ablation turned
+//! each off in turn and §9.4 deleted the ones that moved nothing beyond their
+//! confidence interval, so neither is a switch any more ([`Toggles`] holds one, the
+//! Tail's). Their behaviour is unchanged — the shipped row always had both on.
+//!
 //! Visit order, tie-breaking and Dedup domination are observable contract
 //! (ADR 0002): a change to any of them changes results and is a deliberate
 //! golden-fingerprint update, never an incidental one.
@@ -103,56 +108,36 @@ impl Status {
     }
 }
 
-/// §9.4's three search decisions, in one place: an Ablation is a configuration
-/// change, never a second engine build.
+/// §5.3's one remaining search decision: the exact Tail search.
+///
+/// Ticket 08's ablation turned each search decision off the winner in turn, and
+/// §9.4 deletes the ones that moved nothing beyond their confidence interval —
+/// "deleted from the engine, not kept on the grounds that it might help". On the
+/// ladder's bed (`goal65-p160-cap7`, the tuning Split's thousand seeds, at
+/// `DEFAULT_BEAM`) that was Dedup and the No-suicide rule, so both are now
+/// unconditional and no [`SolveConfig`] can reach a Solve without them.
+///
+/// The Tail stayed because it is load-bearing there: off, it loses 13 seeds of the
+/// thousand and wins none back, which is an exact McNemar `p < 0.01`. Its
+/// off-switch is therefore the evidence of what the Tail buys, not a convenience —
+/// `tail-off` is the one ablation row the engine can still run.
+///
+/// The measurement is `data/measurements/ablation-ladder.json`, and its per-seed
+/// rows are committed beside it, so deleting a switch cannot delete the evidence
+/// for deleting it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Toggles {
-    /// §5.3's per-Layer board Dedup, in the beam and in every Tail layer.
-    pub dedup: bool,
-    /// §5.3's No-suicide rule: drop placements that end the game unless nothing
-    /// else is legal.
-    pub no_suicide: bool,
     /// §5.3's exact Tail search over the final [`TAIL`] pieces.
     pub tail: bool,
 }
 
 impl Toggles {
-    /// The shipped row: every search decision on. The one construction site the
-    /// shipped paths use, so the page, the ABI and the bench cannot drift apart.
-    pub const SHIPPED: Toggles = Toggles {
-        dedup: true,
-        no_suicide: true,
-        tail: true,
-    };
+    /// The shipped row: the Tail on. The one construction site the shipped paths
+    /// use, so the page, the ABI and the bench cannot drift apart.
+    pub const SHIPPED: Toggles = Toggles { tail: true };
 
-    /// The shipped row with exactly one decision off: §9.4's ladder row.
-    pub const fn without(self, feature: Feature) -> Toggles {
-        match feature {
-            Feature::Dedup => Toggles {
-                dedup: false,
-                no_suicide: self.no_suicide,
-                tail: self.tail,
-            },
-            Feature::NoSuicide => Toggles {
-                dedup: self.dedup,
-                no_suicide: false,
-                tail: self.tail,
-            },
-            Feature::Tail => Toggles {
-                dedup: self.dedup,
-                no_suicide: self.no_suicide,
-                tail: false,
-            },
-        }
-    }
-}
-
-/// One of the three decisions §9.4's Ablation switches off, one at a time.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Feature {
-    Dedup,
-    NoSuicide,
-    Tail,
+    /// §9.4's ablation row: the Tail off, every other decision unconditional.
+    pub const BEAM_ONLY: Toggles = Toggles { tail: false };
 }
 
 /// Everything a Solve is asked.
@@ -160,7 +145,7 @@ pub enum Feature {
 pub struct SolveConfig {
     pub goal: u32,
     pub beam_width: u32,
-    /// The three search decisions of §9.4, in one place.
+    /// §9.4's one remaining search decision, in one place.
     pub toggles: Toggles,
 }
 
@@ -604,14 +589,9 @@ fn run(
         let next_piece = sequence.get(layer + 1).copied();
         let rotations = piece.rotations();
         let mut cands: Vec<Cand> = Vec::with_capacity(beam.len());
-        let mut dedup_index = if cfg.toggles.dedup {
-            // Sized for the most placements this Layer can produce.
-            Some(BoardIndex::with_capacity(
-                beam.len().saturating_mul(MAX_PLACEMENTS_PER_PIECE),
-            ))
-        } else {
-            None
-        };
+        // Sized for the most placements this Layer can produce.
+        let mut dedup_index =
+            BoardIndex::with_capacity(beam.len().saturating_mul(MAX_PLACEMENTS_PER_PIECE));
         let mut any_safe = false;
 
         for (parent_rank, parent) in beam.iter().enumerate() {
@@ -676,8 +656,8 @@ fn run(
                     }
 
                     // Game over is spawn-blocked at row 0 (§5.3).
-                    let suicide = cfg.toggles.no_suicide
-                        && next_piece.is_some_and(|next| !next_board.can_place_anywhere(next));
+                    let suicide =
+                        next_piece.is_some_and(|next| !next_board.can_place_anywhere(next));
                     if !suicide {
                         any_safe = true;
                     }
@@ -697,16 +677,13 @@ fn run(
                         mv,
                         suicide,
                     };
-                    match &mut dedup_index {
-                        Some(index) => match index.find(&cands, &next_board) {
-                            Some(position) => {
-                                if dominates(&cand, &cands[position]) {
-                                    cands[position] = cand;
-                                }
+                    match dedup_index.find(&cands, &next_board) {
+                        Some(position) => {
+                            if dominates(&cand, &cands[position]) {
+                                cands[position] = cand;
                             }
-                            None => push_kept(&mut cands, cand, index),
-                        },
-                        None => cands.push(cand),
+                        }
+                        None => push_kept(&mut cands, cand, &mut dedup_index),
                     }
                 }
             }
@@ -714,7 +691,7 @@ fn run(
 
         // §5.3's No-suicide rule is "unless nothing else is legal": game-ending
         // placements only survive a Layer in which every placement ends the game.
-        if any_safe && cfg.toggles.no_suicide {
+        if any_safe {
             cands.retain(|cand| !cand.suicide);
         }
         if cands.is_empty() {
@@ -831,15 +808,11 @@ fn tail_search(
         let remaining = pieces_left - ply;
 
         let mut cands: Vec<Cand> = Vec::new();
-        let mut dedup_index = if cfg.toggles.dedup {
-            Some(BoardIndex::with_capacity(
-                beam.len()
-                    .saturating_mul(MAX_PLACEMENTS_PER_PIECE)
-                    .min(TAIL_STATES_MAX),
-            ))
-        } else {
-            None
-        };
+        let mut dedup_index = BoardIndex::with_capacity(
+            beam.len()
+                .saturating_mul(MAX_PLACEMENTS_PER_PIECE)
+                .min(TAIL_STATES_MAX),
+        );
         let mut any_safe = false;
 
         {
@@ -890,8 +863,8 @@ fn tail_search(
                             };
                         }
 
-                        let suicide = cfg.toggles.no_suicide
-                            && next_piece.is_some_and(|next| !next_board.can_place_anywhere(next));
+                        let suicide =
+                            next_piece.is_some_and(|next| !next_board.can_place_anywhere(next));
                         if !suicide {
                             any_safe = true;
                         }
@@ -912,16 +885,13 @@ fn tail_search(
                             mv,
                             suicide,
                         };
-                        match &mut dedup_index {
-                            Some(index) => match index.find(&cands, &next_board) {
-                                Some(position) => {
-                                    if dominates(&cand, &cands[position]) {
-                                        cands[position] = cand;
-                                    }
+                        match dedup_index.find(&cands, &next_board) {
+                            Some(position) => {
+                                if dominates(&cand, &cands[position]) {
+                                    cands[position] = cand;
                                 }
-                                None => push_kept(&mut cands, cand, index),
-                            },
-                            None => cands.push(cand),
+                            }
+                            None => push_kept(&mut cands, cand, &mut dedup_index),
                         }
                     }
                 }
@@ -941,7 +911,7 @@ fn tail_search(
         // §5.3's No-suicide rule holds in the Tail exactly as in the beam:
         // game-ending placements survive only a layer in which every placement
         // ends the game.
-        if any_safe && cfg.toggles.no_suicide {
+        if any_safe {
             cands.retain(|cand| !cand.suicide);
         }
         if cands.is_empty() {
@@ -1003,16 +973,14 @@ fn lines_bound(board: &Board, pieces: u32) -> u32 {
 ///
 /// Trimming is where the Tail stops being exact, which is why it is counted
 /// (`tail_truncated`) instead of hidden.
-fn trim_frontier(cands: &mut Vec<Cand>, dedup_index: &mut Option<BoardIndex>) {
+fn trim_frontier(cands: &mut Vec<Cand>, dedup_index: &mut BoardIndex) {
     cands.sort_by_key(|cand| std::cmp::Reverse(cand.score));
     cands.truncate(TAIL_STATES_MAX);
-    if dedup_index.is_some() {
-        let mut rebuilt = BoardIndex::with_capacity(cands.len());
-        for position in 0..cands.len() {
-            rebuilt.insert(cands, position);
-        }
-        *dedup_index = Some(rebuilt);
+    let mut rebuilt = BoardIndex::with_capacity(cands.len());
+    for position in 0..cands.len() {
+        rebuilt.insert(cands, position);
     }
+    *dedup_index = rebuilt;
 }
 
 /// The Tail Moves that reach the node at `rank` of Tail level `ply`, oldest first.
