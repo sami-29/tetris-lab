@@ -1,9 +1,9 @@
 {
   "format": 1,
   "kind": "golden-evals",
-  "generated_at": "2026-11-03T01:47:52Z",
-  "reason": "initial golden (ticket 09), pinned from the committed Reference rows at DEFAULT_BEAM 25 on the test Split",
-  "supersedes": null,
+  "generated_at": "2026-11-03T03:35:10Z",
+  "reason": "solve_batch joined the ABI in ticket 15, so the wasm hash moved; the evaluations and Lines vectors are unchanged in shape and the golden is re-pinned on the row appended at 2026-11-03T03:34:42Z",
+  "supersedes": "2026-11-03T01:47:52Z",
   "compare": {
     "rule": "exact",
     "quality_rows": ["win rate", "mean and median Lines on failure", "Evaluations per Solve", "Lines to solve"],
@@ -23,8 +23,8 @@
     "why": "ADR 0002: CI guards the fingerprint, not the clock. A wall-clock assertion on a shared runner is flaky, so this bound exists to catch a catastrophic regression (the tail exploding, an O(n^2) dedup), never a 20 % slowdown"
   },
   "engine": {
-    "commit": "3678958e93706c8cd2006eec6c81ad9616a161c6",
-    "short": "3678958",
+    "commit": "c8bf1a530efa60e9c33080a7b9dc75b1bae855c6",
+    "short": "c8bf1a5",
     "dirty": false,
     "wasm_sha256": "3cb88e38f8d497aa2b080d65386ec92ef0eafec96760e757fb18cd347a473022",
     "wasm_bytes": 58302,
@@ -79,13 +79,13 @@
         "evals_p90": 11414,
         "evals_mean": 9776.799,
         "evals_max": 14334,
-        "ms_p50": 4.870,
-        "ms_p90": 8.311,
-        "ms_max": 31.570,
-        "batch_ms": 5627.394,
-        "cal_ms": 454.229,
-        "cal_ms_before": 475.257,
-        "cal_ms_after": 433.201
+        "ms_p50": 3.576,
+        "ms_p90": 4.542,
+        "ms_max": 8.145,
+        "batch_ms": 3711.607,
+        "cal_ms": 385.878,
+        "cal_ms_before": 384.412,
+        "cal_ms_after": 387.344
       },
       "evals_fnv1a64": "685753d3144408e0",
       "lines_fnv1a64": "8382f1cd4aba6800",
@@ -2107,13 +2107,13 @@
         "evals_p90": 15487,
         "evals_mean": 14212.985,
         "evals_max": 18363,
-        "ms_p50": 5.841,
-        "ms_p90": 8.032,
-        "ms_max": 13.312,
-        "batch_ms": 6275.662,
-        "cal_ms": 435.592,
-        "cal_ms_before": 446.878,
-        "cal_ms_after": 424.307
+        "ms_p50": 5.100,
+        "ms_p90": 6.295,
+        "ms_max": 11.290,
+        "batch_ms": 5329.266,
+        "cal_ms": 386.799,
+        "cal_ms_before": 380.440,
+        "cal_ms_after": 393.158
       },
       "evals_fnv1a64": "1a075f05de2e7027",
       "lines_fnv1a64": "86418fa601f4c279",
@@ -4124,7 +4124,7 @@
     }
   },
   "reference": {
-    "goal8-p40-cap7": "3678958/3cb88e38/E1/w25/2026-11-03T01:43:31Z",
-    "goal12-p100-cap7": "3678958/3cb88e38/E1/w25/2026-11-03T01:43:31Z"
+    "goal8-p40-cap7": "c8bf1a5/3cb88e38/E1/w25/2026-11-03T03:34:42Z",
+    "goal12-p100-cap7": "c8bf1a5/3cb88e38/E1/w25/2026-11-03T03:34:42Z"
   }
 }
