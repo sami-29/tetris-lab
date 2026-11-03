@@ -10,9 +10,10 @@
 //   * **No `Ctrl`/`Meta`/`Alt`.** Those chords are the browser's (find, reload,
 //     zoom); intercepting them would look like a broken page. Shift is the page's
 //     only modifier, and only where the map names it.
-//   * **A focused field or button keeps its keys.** Space would otherwise type a
-//     space or click the button a second time, and the arrow keys drive a focused
-//     slider by themselves.
+//   * **A focused field keeps its keys.** Space would otherwise type a space, and the
+//     arrow keys drive a focused slider by themselves. A focused button owns Space
+//     and the arrows too — but not the drawer's keys, or the control that opens the
+//     drawer would make `E` dead the moment it had been clicked (ticket 16).
 //   * **`Escape` only closes.** It never means anything else, because it is the one
 //     key a visitor expects to get out of an overlay.
 //
@@ -50,11 +51,22 @@ export interface KeyEventLike {
 /** Elements that own their keystrokes. */
 const OWNS_KEYS = new Set(["INPUT", "TEXTAREA", "SELECT", "BUTTON"]);
 
-function takesOwnKeys(target: unknown): boolean {
+/**
+ * Keys a focused control still keeps, in the glossary's terms.
+ *
+ * A `<button>` owns Space and the arrows — they are how it is pressed and moved
+ * between. It does **not** own `E`, `?` or `Escape`: after a click the `How it works`
+ * control holds focus, and if a button swallowed the drawer's keys then `E` would be
+ * dead exactly when a visitor tries it (ticket 16: the drawer closes from either).
+ */
+const BUTTON_OWNS = new Set([" ", "Spacebar", "ArrowLeft", "ArrowRight", "Home", "End"]);
+
+function takesOwnKeys(target: unknown, key: string): boolean {
   if (!target || typeof target !== "object") return false;
   const element = target as { tagName?: unknown; isContentEditable?: unknown };
   if (element.isContentEditable === true) return true;
   const tag = typeof element.tagName === "string" ? element.tagName.toUpperCase() : "";
+  if (tag === "BUTTON") return BUTTON_OWNS.has(key);
   return OWNS_KEYS.has(tag);
 }
 
@@ -62,7 +74,7 @@ function takesOwnKeys(target: unknown): boolean {
 export function resolveKey(event: KeyEventLike): Action | null {
   // A chord belongs to the browser. Shift alone is not a chord.
   if (event.ctrlKey || event.metaKey || event.altKey) return null;
-  if (takesOwnKeys(event.target)) return null;
+  if (takesOwnKeys(event.target, event.key)) return null;
 
   const shift = event.shiftKey === true;
   switch (event.key) {

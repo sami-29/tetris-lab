@@ -408,7 +408,7 @@
 
     <!-- ══ the Explainer drawer, its scrim, and the keyboard sheet ═══════ -->
     <div id="scrim" aria-hidden="true" data-open="false"></div>
-    <aside id="drawer" data-open="false" role="dialog" aria-modal="false" aria-labelledby="drawer-title" aria-hidden="true">
+    <aside id="drawer" data-open="false" role="dialog" aria-modal="false" aria-labelledby="drawer-title" aria-hidden="true" tabindex="-1">
       <div class="dhead">
         <span class="t" id="drawer-title">How the search works</span>
         <button class="iconbtn close" type="button" id="drawer-close" data-tip="Close the explainer (E toggles it, Escape closes it).">
@@ -416,33 +416,10 @@
         </button>
       </div>
       <div class="dbody">
-        <h3>The Board</h3>
-        <p>
-          The Board is ten column words. Bit <i>n</i> of a column is row 19−<i>n</i>, so bit 0 is the
-          floor and row 0 is the top: a filled cell is a set bit, and the whole Board is forty bytes.
-          A cleared row is a row where all ten columns are set at once; removing it drops every bit
-          above it by one, which is the fall you can watch.
-        </p>
-        <h3>The Layer, and the beam</h3>
-        <p>
-          A Layer is the beam stage reached after placing one Piece of the Sequence. Dedup removes
-          duplicate Boards inside one Layer — never across Layers — keeping the state that has cleared
-          more Lines. A Placement becomes a Move when it survives into the returned solution, and the
-          Move list is what the replay consumes.
-        </p>
-        <p class="note">
-          The band in the right-hand inspector is the beam: one row per Layer, and exactly as many
-          states per row as survived it. Each state is placed by its score, not by its rank, because
-          consecutive ranks differ by about a tenth of a point and a rank axis reads as arbitrary
-          seams. The amber line is the winning lineage — it leaves the front and comes back.
-        </p>
-        <h3>Where the numbers come from</h3>
-        <p>
-          Every figure on the page is traceable: the packed Solve result (won or lost, Lines cleared,
-          evaluations, Moves), the trace the engine recorded (one record per kept state), a replay of
-          the Move list, the committed width curve, or this page's own clock — which is why the elapsed
-          time says it is this tab's and not the Reference run's. Nothing is estimated here.
-        </p>
+        <!-- Ticket 16's prose: filled from src/ui/explainer.ts at boot, every
+             figure resolved from the artifacts it names. Never static words here,
+             or a measurement could not move them. -->
+        <div id="explainer-body"></div>
         <div id="sheet" data-open="false" role="dialog" aria-label="Keyboard map">
           <h3>Keys</h3>
           <dl id="sheet-list">

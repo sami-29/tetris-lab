@@ -7,10 +7,12 @@
   "scripts": {
     "build:wasm": "node scripts/build-wasm.mjs",
     "dev": "vite",
-    "build": "npm run build:wasm && tsc --noEmit && vite build",
+    "build": "npm run build:wasm && npm run build:facts && tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "npm run build:wasm && node --test \"test/**/*.test.mjs\"",
-    "gates": "npm run build && cargo test --workspace && node --test \"test/**/*.test.mjs\" && cargo run --release -p bench -- gate all"
+    "test": "npm run build:wasm && npm run build:facts && node --test \"test/**/*.test.mjs\"",
+    "gates": "npm run build && npm run check:words && cargo test --workspace && node --test \"test/**/*.test.mjs\" && cargo run --release -p bench -- gate all",
+    "build:facts": "node scripts/build-facts.mjs",
+    "check:words": "node scripts/check-words.mjs"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

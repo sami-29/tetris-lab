@@ -26,6 +26,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
 
+import { TIER_A, TIER_B, formatHits, scanText } from "./words.mjs";
+
 const HERE = new URL(".", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const WEB = resolve(HERE, "..");
 const DIST = resolve(WEB, "dist");
@@ -296,6 +298,26 @@ const READ = `(() => {
     presets: [...document.querySelectorAll("#playground [data-preset]")].map((el) => el.dataset.preset),
     beamReadout: text("beam-readout"),
     beamTickTitled: document.getElementById("beam-tick")?.getAttribute("title") ?? "",
+    // Ticket 16: the Explainer drawer, opened and read as a visitor reads it.
+    drawerOpen: document.getElementById("drawer")?.dataset.open === "true",
+    drawerText: document.getElementById("drawer")?.innerText ?? "",
+    drawerBody: (() => {
+      const body = document.querySelector("#drawer .dbody");
+      if (!body) return null;
+      const last = body.querySelector("#explainer-body") ?? body.lastElementChild;
+      const padding = parseFloat(getComputedStyle(body).paddingBottom) || 0;
+      return {
+        scrollHeight: body.scrollHeight,
+        clientHeight: body.clientHeight,
+        free: last
+          ? Math.round(body.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom - padding)
+          : 0,
+      };
+    })(),
+    scrollHeight: document.scrollingElement?.scrollHeight ?? 0,
+    bodyScrollHeight: document.body.scrollHeight ?? 0,
+    rootOverflow: getComputedStyle(document.documentElement).overflow,
+    viewport: { w: innerWidth, h: innerHeight },
   };
 })()`;
 
@@ -536,6 +558,88 @@ try {
   check("? opens the keyboard sheet", (await read()).sheetOpen);
   await key("Escape", "Escape", 27);
   check("Escape closes it", !(await read()).sheetOpen);
+
+  // ---- ticket 16: the Explainer drawer, from both doors ----------------------
+  //
+  // The drawer explains the engine that shipped, and it must open from the control
+  // *and* from `E`, close from either, and add no page scroll (it is out of flow by
+  // design). The words are read only while it is open: `innerText` skips what the CSS
+  // hides, so a closed drawer would pass a scan of nothing.
+  console.log("\n── the Explainer drawer ──");
+  const clickHow = async () =>
+    cdp.send(
+      "Runtime.evaluate",
+      { expression: `document.getElementById("how").click()`, returnByValue: true },
+      sessionId,
+    );
+  await clickHow();
+  await sleep(120);
+  check("How it works opens the Explainer", (await read()).drawerOpen);
+  await clickHow();
+  await sleep(120);
+  check("How it works closes it again", !(await read()).drawerOpen);
+
+  // A real click leaves focus on the control; make that condition explicit, because
+  // `E` being dead while the opening button holds focus is the bug this asserts away.
+  await cdp.send(
+    "Runtime.evaluate",
+    { expression: `document.getElementById("how").focus()`, returnByValue: true },
+    sessionId,
+  );
+  await key("e", "KeyE", 69);
+  const drawerFromKey = await read();
+  check("E opens it, even with the control focused", drawerFromKey.drawerOpen);
+  await key("e", "KeyE", 69);
+  check("E closes it again", !(await read()).drawerOpen);
+
+  await key("e", "KeyE", 69);
+  await sleep(120);
+  const drawer = await read();
+  check(
+    "the open drawer introduces no page scroll",
+    drawer.scrollHeight <= drawer.viewport.h + 1 &&
+      drawer.bodyScrollHeight <= drawer.viewport.h + 1 &&
+      drawer.rootOverflow === "hidden",
+    `${drawer.scrollHeight} / ${drawer.viewport.h} · root overflow ${drawer.rootOverflow}`,
+  );
+  check(
+    "the drawer's prose fits the design floor without an internal scroll",
+    drawer.drawerBody !== null && drawer.drawerBody.free >= 0,
+    drawer.drawerBody ? `${drawer.drawerBody.free} px to spare under the last paragraph` : "no .dbody",
+  );
+  const leads = ["The Lab", "Beam width", "Dedup", "Tail search", "No-suicide rule", "Evaluator", "Dataset", "Reference run", "Run"];
+  check(
+    "it explains the beam, Dedup, the Tail search, the No-suicide rule and the shipped Evaluator",
+    leads.every((lead) => drawer.drawerText.includes(`${lead}.`)),
+    leads.filter((lead) => !drawer.drawerText.includes(`${lead}.`)).join(", ") || `${leads.length} sections`,
+  );
+  check(
+    "it names the Evaluator that shipped, and no other",
+    /Dellacherie/.test(drawer.drawerText) && /published weights/.test(drawer.drawerText),
+  );
+  const wordHits = [
+    ...scanText(drawer.drawerText, "#drawer", { tiers: [TIER_A] }),
+    ...scanText(drawer.drawerText, "#drawer", { tiers: [TIER_B] }),
+  ];
+  check(
+    "the drawer's rendered words pass the banned-words gate",
+    wordHits.length === 0,
+    wordHits.length > 0
+      ? formatHits(wordHits, 1)
+      : `${drawer.drawerText.trim().split(/\s+/).length} words, no banned word`,
+  );
+  await key("Escape", "Escape", 27);
+  check("Escape closes it", !(await read()).drawerOpen);
+  // The drawer hands focus back to whatever opened it (a dialog's normal exit), which
+  // here is the `How it works` button. That is the correct behaviour and the reason
+  // `E` must still work from a focused button — but Space on a focused button is the
+  // button's own key, so the harness puts focus back on the page before it tests
+  // Space as play/pause. A visitor who clicks the strip does the same thing.
+  await cdp.send(
+    "Runtime.evaluate",
+    { expression: "document.activeElement?.blur()", returnByValue: true },
+    sessionId,
+  );
 
   // ---- the move strip is the seek bar -----------------------------------------
   await key(" ", "Space", 32); // pause, so the mask holds still while it is read
