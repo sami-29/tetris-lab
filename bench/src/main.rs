@@ -16,6 +16,9 @@
 //! bench tune [--seed <u64|0x...>] [--bed <name>] [--candidates <n>] [--games <n>]
 //!            [--iterations <n>] [--data <dir>] [--out <file>] [--rows <file>]
 //! bench tune --replay [<record>] [--data <dir>]
+//! bench ladder [--seeds <a-b>] [--bed <name>] [--width <n>] [--width-curve <file>]
+//!              [--scan-pieces <n>] [--scan-cap <n>] [--out <file>] [--rows <file>]
+//!              [--docs <file>] [--machine "<label>"]
 //! ```
 //!
 //! Exit codes: `0` clean, `1` the Dataset drifted or a Gate failed, `2` a usage
@@ -29,6 +32,7 @@ use std::process::ExitCode;
 
 use bench::dataset::{self, Config};
 use bench::gate::{self, Options as GateOptions};
+use bench::ladder;
 use bench::tuning;
 use bench::width::{self, MsSource, Options as WidthOptions, WIDTHS};
 use bench::{export, fingerprint, show, verify};
@@ -50,6 +54,9 @@ usage:
   bench tune        [--seed <u64|0x...>] [--bed <name>] [--candidates <n>] [--games <n>]
                     [--iterations <n>] [--data <dir>] [--out <file>] [--rows <file>]
   bench tune        --replay [<record>] [--data <dir>]
+  bench ladder      [--seeds <a-b>] [--bed <name>] [--width <n>] [--width-curve <file>]
+                    [--scan-pieces <n>] [--scan-cap <n>] [--out <file>] [--rows <file>]
+                    [--docs <file>] [--machine \"<label>\"]
 
 configurations: goal8-p40-cap7, goal12-p100-cap7
 width-curve defaults: every doubling point, 3 trials of 200 seeds, 1,000 quality
@@ -152,6 +159,9 @@ fn main() -> ExitCode {
     }
     if command == "tune" {
         return ExitCode::from(tune_command(&argv[1..]));
+    }
+    if command == "ladder" {
+        return ExitCode::from(ladder_command(&argv[1..]));
     }
 
     let args = match parse(&argv[1..]) {
@@ -1134,8 +1144,299 @@ fn tune_command(argv: &[String]) -> u8 {
     }
 }
 
+/// Ticket 08's ladder: the goal scan, the paired statistics, the cascade that
+/// names the shipped Evaluator and the one-at-a-time toggles — all written to
+/// `data/measurements/ablation-ladder.json`, its per-seed rows and the rendered
+/// table in `docs/measurements/`.
+///
+/// `DEFAULT_BEAM`, the width cap and §9.1's saturation result are **read** from
+/// `data/measurements/width-curve.json`, never passed as a flag: the ladder cannot
+/// run at a width the curve did not choose, and it cannot re-decide a saturation
+/// check the curve already made.
+fn ladder_command(argv: &[String]) -> u8 {
+    match ladder_run(argv) {
+        Ok(()) => 0,
+        Err(code) => code,
+    }
+}
+
+fn ladder_run(argv: &[String]) -> Result<(), u8> {
+    let mut options = ladder::Options::defaults();
+    options.engine_commit = engine_commit();
+    options.machine = machine_label();
+    options.date = {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0);
+        width::iso_utc(seconds)
+    };
+    let mut width_curve_path = measurements_path();
+    let mut width_override: Option<u32> = None;
+    let mut index = 0;
+    while index < argv.len() {
+        let flag = argv[index].to_string();
+        let outcome: Result<(), String> = (|| {
+            match flag.as_str() {
+                "--width-curve" => {
+                    width_curve_path = PathBuf::from(flag_value(
+                        argv,
+                        &mut index,
+                        &flag,
+                        "the width-curve artifact",
+                    )?);
+                }
+                "--width" => {
+                    let value = flag_value(argv, &mut index, &flag, "a beam width")?;
+                    width_override = Some(
+                        value
+                            .parse()
+                            .map_err(|_| format!("--width must be a number, found {value:?}"))?,
+                    );
+                }
+                "--seeds" => {
+                    let value = flag_value(argv, &mut index, &flag, "a seed range like 1000-1999")?;
+                    let seeds = parse_seeds(&value)?;
+                    let first = *seeds.first().ok_or("--seeds is empty")?;
+                    let last = *seeds.last().ok_or("--seeds is empty")?;
+                    options.seeds = (first, last);
+                }
+                "--bed" => {
+                    let value = flag_value(argv, &mut index, &flag, "a bed name")?;
+                    options.bed = Some(parse_bed(&value)?);
+                }
+                "--scan-pieces" => {
+                    let value = flag_value(argv, &mut index, &flag, "a piece count")?;
+                    options.scan_pieces = value
+                        .parse()
+                        .map_err(|_| format!("--scan-pieces must be a number, found {value:?}"))?;
+                }
+                "--scan-cap" => {
+                    let value = flag_value(argv, &mut index, &flag, "a height cap")?;
+                    options.scan_cap = value
+                        .parse()
+                        .map_err(|_| format!("--scan-cap must be a number, found {value:?}"))?;
+                }
+                "--out" => {
+                    options.out =
+                        PathBuf::from(flag_value(argv, &mut index, &flag, "the artifact file")?);
+                }
+                "--rows" => {
+                    options.rows_path = PathBuf::from(flag_value(
+                        argv,
+                        &mut index,
+                        &flag,
+                        "the per-seed rows file",
+                    )?);
+                }
+                "--docs" => {
+                    options.docs_path =
+                        PathBuf::from(flag_value(argv, &mut index, &flag, "the rendered table")?);
+                }
+                "--machine" => {
+                    options.machine = flag_value(argv, &mut index, &flag, "a machine label")?;
+                }
+                other => return Err(format!("unknown argument {other:?}")),
+            }
+            Ok(())
+        })();
+        if let Err(message) = outcome {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+        index += 1;
+    }
+
+    let curve = match read_width_curve(&width_curve_path) {
+        Ok(curve) => curve,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return Err(2);
+        }
+    };
+    options.width = width_override.unwrap_or(curve.default_beam);
+    options.width_cap = curve.width_cap;
+    options.quality_fingerprint = curve.quality_fingerprint;
+    options.saturation = curve.saturation;
+
+    println!(
+        "ladder: bed {}, DEFAULT_BEAM {}, Split {}-{}, {} resamples",
+        options.bed.map(|bed| bed.name()).unwrap_or_else(|| format!(
+            "derived at {} pieces and cap {}",
+            options.scan_pieces, options.scan_cap
+        )),
+        options.width,
+        options.seeds.0,
+        options.seeds.1,
+        ladder::BOOTSTRAP_RESAMPLES
+    );
+    match ladder::run(&options) {
+        Ok(outcome) => {
+            let artifact = &outcome.artifact;
+            for row in &artifact.scan {
+                println!(
+                    "  scan goal {:>3}: E0 {}/{} wins{}{}",
+                    row.goal,
+                    row.wins,
+                    row.games,
+                    if row.saturated() { "" } else { "  <-- below 99 %" },
+                    if row.wins == 0 { "  (unreachable)" } else { "" }
+                );
+            }
+            for row in &artifact.rows {
+                println!(
+                    "  {:<14} {:<14} {}/{} wins  lines {:.3}  evals p50 {:.0}  ms p50 {:.2}",
+                    row.id,
+                    row.table,
+                    row.stats.wins,
+                    row.stats.games,
+                    row.stats.mean_lines,
+                    row.stats.evals_median,
+                    row.stats.ms_median
+                );
+            }
+            for pair in artifact.pairs.iter().chain(artifact.toggle_pairs.iter()) {
+                println!(
+                    "  {} vs {}: b={} c={} n={} {}  lines delta {:+.4} [{:+.4}, {:+.4}]",
+                    pair.judged,
+                    pair.reference,
+                    pair.only_judged,
+                    pair.only_reference,
+                    pair.discordant.n(),
+                    if pair.rejects { "p<0.01" } else { "p>=0.01" },
+                    pair.delta_mean_lines,
+                    pair.ci95[0],
+                    pair.ci95[1]
+                );
+            }
+            for step in &artifact.verdict.steps {
+                println!("  cascade: {step}");
+            }
+            println!(
+                "  SHIPPED {} ({}) by {}; toggles deleted: [{}]",
+                artifact.verdict.winner,
+                artifact.row(artifact.verdict.winner).table,
+                artifact.verdict.leg.as_str(),
+                artifact
+                    .deleted_toggles()
+                    .iter()
+                    .map(|id| id.trim_end_matches("-off"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!(
+                "  wrote {}, {} and {}",
+                options.out.display(),
+                options.rows_path.display(),
+                options.docs_path.display()
+            );
+            Ok(())
+        }
+        Err(message) => {
+            eprintln!("error: {message}");
+            Err(2)
+        }
+    }
+}
+
+/// The parts of `data/measurements/width-curve.json` the ladder is not allowed to
+/// re-decide: `DEFAULT_BEAM`, the width cap, and §9.1's saturation pilot.
+struct CurveRef {
+    default_beam: u32,
+    width_cap: u32,
+    quality_fingerprint: String,
+    saturation: ladder::SatSummary,
+}
+
+fn read_width_curve(path: &Path) -> Result<CurveRef, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let value = bench::json::parse(&text)?;
+    let number = |key: &str| -> Result<u32, String> {
+        value
+            .get(key)
+            .and_then(bench::json::Value::as_u32)
+            .ok_or_else(|| format!("{}: {key} is missing", path.display()))
+    };
+    let default_beam = number("default_beam")?;
+    let width_cap = number("width_cap")?;
+    let quality_fingerprint = value
+        .get("quality_fingerprint")
+        .and_then(bench::json::Value::as_str)
+        .unwrap_or("unrecorded")
+        .to_string();
+
+    let saturation = value
+        .get("saturation")
+        .ok_or_else(|| format!("{}: saturation is missing", path.display()))?;
+    let checked_at_width = saturation
+        .get("checked_at_width")
+        .and_then(bench::json::Value::as_u32)
+        .unwrap_or(0);
+    let mut beds = Vec::new();
+    if let Some(entries) = saturation
+        .get("beds")
+        .and_then(bench::json::Value::as_object)
+    {
+        for (name, entry) in entries {
+            let wins = entry
+                .get("wins")
+                .and_then(bench::json::Value::as_u32)
+                .unwrap_or(0);
+            let games = entry
+                .get("games")
+                .and_then(bench::json::Value::as_u32)
+                .unwrap_or(0);
+            beds.push((name.clone(), wins, games));
+        }
+    }
+    Ok(CurveRef {
+        default_beam,
+        width_cap,
+        quality_fingerprint,
+        saturation: ladder::SatSummary {
+            checked_at_width,
+            beds,
+            source: format!(
+                "{} (§9.1's pilot: both shipped beds, run at the width cap)",
+                path.display()
+            ),
+        },
+    })
+}
+
+/// `goal65-p160-cap7` as a bed. Not restricted to the two committed
+/// configurations: the ladder's bed is derived and is not one of them.
+fn parse_bed(name: &str) -> Result<width::Bed, String> {
+    let mut goal = None;
+    let mut pieces = None;
+    let mut cap = None;
+    for field in name.split('-') {
+        let split = field
+            .find(|c: char| c.is_ascii_digit())
+            .ok_or_else(|| format!("--bed: {field:?} has no number"))?;
+        let (prefix, value) = field.split_at(split);
+        let number: u32 = value
+            .parse()
+            .map_err(|_| format!("--bed: {field:?} is not a count"))?;
+        match prefix {
+            "goal" => goal = Some(number),
+            "p" => pieces = Some(number),
+            "cap" => cap = Some(number),
+            other => return Err(format!("--bed: unknown field {other:?}")),
+        }
+    }
+    match (goal, pieces, cap) {
+        (Some(goal), Some(pieces), Some(cap)) => Ok(width::Bed { goal, pieces, cap }),
+        _ => Err(format!(
+            "--bed: {name:?} is not a bed; the shape is goal<goal>-p<pieces>-cap<cap>"
+        )),
+    }
+}
+
 /// One flag's value: `argv[index + 1]`, with the flag named in the error.
 fn flag_value(
+
     argv: &[String],
     index: &mut usize,
     flag: &str,
