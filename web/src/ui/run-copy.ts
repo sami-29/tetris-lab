@@ -86,20 +86,24 @@ export function progressWords(input: {
   readonly workers: number;
   readonly status: "idle" | "running" | "complete" | "stopped" | "failed";
 }): string {
+  // The rail is 236 px and this line sits in the panel head beside `Run`: about 31
+  // monospaced characters fit, so the sentence is the count and the work time and the
+  // rest lives where it has room — the worker count in the `yours` label, the chunk
+  // and Evaluation counters in R9's tooltip, both configurations' totals in R7.
   const games = input.games.toLocaleString("en-US");
   const total = input.total.toLocaleString("en-US");
   const work = `${(input.workMs / 1000).toFixed(1)} s`;
   switch (input.status) {
     case "running":
-      return `${games} of ${total} games · ${work} work · ${input.workers} ${input.workers === 1 ? "worker" : "workers"}`;
+      return `${games}/${total} games · ${work}`;
     case "complete":
-      return `${games} of ${total} games · ${work} work · ${input.workers} workers`;
+      return `${games}/${total} games · ${work}`;
     case "stopped":
       // The word `partial` is the point of the sentence: what is on screen is not the
       // Split, and the ms rows are a mean over a prefix of the seeds.
-      return `partial Run · stopped at ${games} of ${total} games · ${work} work`;
+      return `partial · ${games}/${total} games`;
     case "failed":
-      return `failed at ${games} of ${total} games · ${work} work`;
+      return `failed · ${games}/${total} games`;
     default:
       return "no Run in this tab yet";
   }

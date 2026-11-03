@@ -252,8 +252,10 @@ r9.el.classList.add("nolabel");
 r9.set("no Run in this tab yet", "");
 runPanel.paintNote(null);
 // The assumption is a fixed line under the table, not a tooltip: it qualifies the
-// budget the ms and total rows are read against (notes/14 §6.3).
+// budget the ms and total rows are read against (notes/14 §6.3). Appended after the
+// blocks so the numbers and their labels are the first thing in the panel.
 runAssumption.textContent = ASSUMPTION;
+runBody.append(runAssumption);
 
 let runPool: RunPool | null = null;
 let runStartedAt = 0;

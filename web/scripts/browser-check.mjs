@@ -994,7 +994,7 @@ try {
         done.labels.some((line) => /this browser/.test(line)) && done.labels.some((line) => /Ryzen/.test(line)),
         done.labels.join(" | ").slice(0, 200),
       );
-      check("the Run says the split is measured, in words", /2,000 of 2,000 games/.test(done.state), done.state);
+      check("the Run says the split is measured, in words", /2,000\/2,000 games/.test(done.state), done.state);
       shots.push(await shoot("run-complete"));
     }
   }
