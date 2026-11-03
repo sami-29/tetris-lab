@@ -57,6 +57,16 @@ import { createFigure, adoptFigure, type FigureId, type FigureView } from "./ui/
 import { pieceGlyph, svgIcon, type IconName } from "./ui/icons.ts";
 import { adoptTitles, installTooltips } from "./ui/tooltip.ts";
 import { mountExplainer } from "./ui/explainer.ts";
+// Ticket 15: the Run. `core/pool.ts` owns the workers, the chunk queue and the
+// totals (and is DOM-free, so its properties are asserted in `node --test`);
+// `ui/run-panel.ts` fills the rail's value slots; `ui/run-copy.ts` holds the words
+// that say which machine produced which column.
+import { createRunPool, poolSize, type RunPool } from "./core/pool.ts";
+import { formatCells, statsOf, type ConfigShape } from "./core/run-stats.ts";
+import { referenceFor } from "./core/reference-data.ts";
+import { mountRunPanel } from "./ui/run-panel.ts";
+import { ASSUMPTION, YOURS_DETAIL, partialNote, progressWords, yoursLabel } from "./ui/run-copy.ts";
+import { ENGINE_FACTS } from "./generated/engine-facts.ts";
 import { columnProfile, profileScale, profileTip } from "./ui/readout.ts";
 import { layerRows, logStamp, sparkline } from "./ui/inspector.ts";
 // Ticket 12's drill-down, mounted rather than re-implemented: the same decoded trace
@@ -149,9 +159,11 @@ const sparkHost = must<HTMLElement>("#spark");
 const statusFigures = must<HTMLElement>("#status-figures");
 const engineFigures = must<HTMLElement>("#engine-figures");
 const engineWeights = must<HTMLElement>("#engine-weights");
-const runRows = must<HTMLElement>("#run-rows");
+const runBody = must<HTMLElement>("#run-body");
 const runState = must<HTMLElement>("#run-state");
-const referenceLabels = must<HTMLElement>("#reference-labels");
+const runAssumption = must<HTMLElement>("#run-assumption");
+const runButton = must<HTMLButtonElement>("#run-dataset");
+const stopButton = must<HTMLButtonElement>("#run-stop");
 const moveFigureHost = must<HTMLElement>("#move-figure");
 const inspector = must<HTMLElement>("#inspector");
 
@@ -211,35 +223,183 @@ const evaluatorNote = el("p", "note");
 evaluatorNote.textContent = `${SHIPPED_EVALUATOR.name} — ${SHIPPED_EVALUATOR.source}. Read-only: no ABI export returns a weight, so the page shows the table the engine was built with, and a test compares every integer against the Rust.`;
 engineWeights.append(evaluatorNote);
 
-// The Run panel: the rows exist so the panel is never empty, and every value slot
-// says what would fill it. Ticket 15 makes them real; nothing here guesses.
-for (const [id, label] of [
-  ["r1", "Win rate"],
-  ["r2", "Games won"],
-  ["r3", "Mean Lines on failure"],
-  ["r4", "Median Lines on failure"],
-  ["r5", "Evaluations per Solve"],
-  ["r6", "ms per Solve"],
-  ["r7", "Total"],
-] as const) {
-  const row = el("tr");
-  const name = el("td");
-  name.textContent = label;
-  name.title = "";
-  const cell = el("td");
-  const figure = fig(id, cell, "not measured");
-  figure.el.classList.add("rtable-fig", "nolabel");
-  row.append(name, cell);
-  runRows.append(row);
-}
-referenceLabels.replaceChildren();
-const r8 = fig("r8", referenceLabels);
-r8.set("no Reference row is committed yet", "");
-referenceLabels.dataset.tip = r8.el.dataset.tip ?? "";
+// ── the Run ────────────────────────────────────────────────────────────────
+//
+// The two committed configurations, from the manifests ticket 02 generated into
+// `engine-facts.ts` — never typed here. Both run at the shipped beam width: a
+// comparison across widths is not a comparison, and the Reference rows are at 25.
+const RUN_CONFIGS: readonly ConfigShape[] = ENGINE_FACTS.dataset.configs
+  .map((config) => ({
+    name: config.name,
+    goal: config.goal,
+    pieces: config.pieces,
+    cap: config.cap,
+    beamWidth: DEFAULT_BEAM,
+    first: config.test.first,
+    last: config.test.last,
+  }))
+  .sort((left, right) => left.goal - right.goal)
+  .map((config, index) => ({ ...config, id: index as 0 | 1 }));
+
+const RUN_GAMES = RUN_CONFIGS.reduce((sum, config) => sum + (config.last - config.first + 1), 0);
+
+const runPanel = mountRunPanel({ host: runBody, configs: RUN_CONFIGS, reference: referenceFor });
+// The static words in the markup are the first paint's; from here the figure owns the
+// slot, so the skeleton sentence must not survive underneath it.
 runState.replaceChildren();
 const r9 = fig("r9", runState);
 r9.el.classList.add("nolabel");
 r9.set("no Run in this tab yet", "");
+runPanel.paintNote(null);
+// The assumption is a fixed line under the table, not a tooltip: it qualifies the
+// budget the ms and total rows are read against (notes/14 §6.3).
+runAssumption.textContent = ASSUMPTION;
+
+let runPool: RunPool | null = null;
+let runStartedAt = 0;
+
+/** This thread's clock for the Run, which includes the message hops. */
+const runElapsed = (): number => (runStartedAt === 0 ? 0 : performance.now() - runStartedAt);
+
+function paintRunProgress(
+  status: "idle" | "running" | "complete" | "stopped" | "failed",
+  workers: number,
+): void {
+  const progress = runPool?.progress ?? { chunkDone: 0, gamesDone: 0, evals: 0, ms: 0 };
+  runState.dataset.runStatus = status;
+  runState.dataset.workers = String(workers);
+  r9.set(
+    progressWords({
+      games: progress.gamesDone,
+      total: RUN_GAMES,
+      workMs: progress.ms,
+      workers,
+      status,
+    }),
+    "",
+  );
+}
+
+/** Repaint both configurations' live cells from the pool's own totals. */
+function paintRunCells(partial: boolean): void {
+  const pool = runPool;
+  if (!pool) return;
+  for (const [index, totals] of pool.totals().entries()) {
+    runPanel.paint(
+      index,
+      formatCells(statsOf(totals), {
+        live: true,
+        partial,
+        clock: 0.1,
+        elapsedMs: runElapsed(),
+      }),
+    );
+  }
+}
+
+/** A short, honest browser and OS name: a page cannot read the CPU model. */
+function browserName(): string {
+  const agent = navigator.userAgent;
+  const known: readonly (readonly [RegExp, string])[] = [
+    [/Edg\/(\d+)/, "Edge"],
+    [/OPR\/(\d+)/, "Opera"],
+    [/Firefox\/(\d+)/, "Firefox"],
+    [/Chrome\/(\d+)/, "Chrome"],
+    [/Version\/(\d+)[\d.]* Safari/, "Safari"],
+  ];
+  for (const [pattern, name] of known) {
+    const found = pattern.exec(agent);
+    if (found) return `${name} ${found[1]}`;
+  }
+  return "";
+}
+
+function osName(): string {
+  const agent = navigator.userAgent;
+  if (/Windows NT 10/.test(agent)) return "Windows 10/11";
+  if (/Windows/.test(agent)) return "Windows";
+  if (/Mac OS X/.test(agent)) return "macOS";
+  if (/Android/.test(agent)) return "Android";
+  if (/Linux/.test(agent)) return "Linux";
+  return "";
+}
+
+/** One worker, booting the artifact itself: the wasm is fetched in the worker. */
+function spawnRunWorker(): Worker {
+  const created = new Worker(new URL("./workers/solve.worker.ts", import.meta.url), {
+    type: "module",
+  });
+  const boot: ToWorker = { type: "boot", wasmUrl: engineWasmUrl };
+  created.postMessage(boot);
+  return created;
+}
+
+/**
+ * §2.4's one action: solve the test Split of both configurations in this tab.
+ *
+ * Nothing is measured until this is pressed, and every figure the panel then shows
+ * comes from a chunk the pool applied — never from an estimate. The worker count is
+ * §7's `clamp(hardwareConcurrency - 1, 1, 8)`, and it is *this* machine's fact, which
+ * is why the label under the column names it.
+ */
+function startRun(): void {
+  if (runPool?.status === "running") return;
+  const cores = navigator.hardwareConcurrency ?? 1;
+  const workers = poolSize(cores);
+  runStartedAt = performance.now();
+  runPanel.paintYoursLabel(
+    yoursLabel({ workers, cores, beam: DEFAULT_BEAM, browser: browserName(), os: osName() }),
+    YOURS_DETAIL,
+  );
+  runPanel.paintNote(null);
+  for (const [index] of RUN_CONFIGS.entries()) runPanel.paint(index, null);
+  runButton.disabled = true;
+  stopButton.disabled = false;
+  const pool = createRunPool({
+    spawn: spawnRunWorker,
+    workers,
+    configs: RUN_CONFIGS,
+    onProgress: () => {
+      paintRunProgress("running", workers);
+      paintRunCells(false);
+    },
+    onChunk: () => paintRunCells(false),
+    onLog: (line, tone) => log(line, tone),
+  });
+  runPool = pool;
+  log(`Run started: ${RUN_GAMES} games · ${workers} workers of ${cores} logical cores · beam ${DEFAULT_BEAM}`);
+  paintRunProgress("running", workers);
+
+  void pool.start().then((outcome) => {
+    if (outcome.status === "complete") {
+      paintRunCells(false);
+      paintRunProgress("complete", workers);
+      log(
+        `Run complete: ${outcome.progress.gamesDone} games · ${(outcome.elapsedMs / 1000).toFixed(2)} s wall clock on ${workers} workers · ${outcome.chunks} chunks`,
+      );
+    } else if (outcome.status === "stopped") {
+      // Partial, and labelled as partial: the denominators are in the cells and the
+      // note says the reference column is the whole split.
+      paintRunCells(true);
+      paintRunProgress("stopped", workers);
+      runPanel.paintNote(partialNote({ games: outcome.progress.gamesDone, total: RUN_GAMES }));
+    } else {
+      // A Run that could not measure publishes no rows at all: the slots go back to
+      // their placeholder and the reason is the sentence on screen.
+      for (const [index] of RUN_CONFIGS.entries()) runPanel.paint(index, null);
+      paintRunProgress("failed", workers);
+      runPanel.paintNote(`the Run stopped without a result — ${outcome.reason}`);
+      log(`Run failed: ${outcome.reason}`, "error");
+    }
+    runButton.disabled = false;
+    stopButton.disabled = true;
+  });
+}
+
+runButton.addEventListener("click", () => startRun());
+// Immediate, because it is `terminate()` on every worker rather than a flag a
+// synchronous wasm loop could ignore (§7).
+stopButton.addEventListener("click", () => runPool?.stop());
 
 // The status bar's four figures, in the glossary's words (§2.6, story 9).
 const s1 = fig("s1", statusFigures, "0");

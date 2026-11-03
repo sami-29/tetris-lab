@@ -1581,7 +1581,18 @@
 }
 
 .rtable thead th:first-child {
-  width: 52%;
+  width: 40%;
+}
+
+/* Three columns since ticket 15: figure | yours | reference. The two value columns
+   are equal so the eye compares them down the page, and the reference column is
+   dimmed — it is the yardstick, not the answer. */
+.rtable thead th:last-child {
+  width: 30%;
+}
+
+.rtable thead th:nth-child(2) {
+  width: 30%;
 }
 
 .rtable tbody td {
@@ -1614,6 +1625,45 @@
 }
 
 #panel-run .phead .s {
+  color: var(--ink4);
+}
+
+/* One block per committed configuration: its behaviour, its seven rows, and the two
+   machine labels. `gap` and a hairline are the whole separation — the rail has no
+   room for cards. */
+.run-config {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 6px;
+  border-bottom: 1px solid var(--rowline);
+}
+
+.run-cfg {
+  margin: 0;
+  padding: 2px 9px 3px;
+  font: var(--fs-micro) / 1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  border-bottom: 1px solid var(--line);
+}
+
+/* The sentence under the table — what the 5 s budget is measured on, a partial Run's
+   note, or why a Run failed. A fixed line, not a tooltip: it qualifies the numbers. */
+.run-note {
+  margin: 0;
+  padding: 6px 9px 8px;
+  font: var(--fs-body) / 1.45 var(--sans);
+  color: var(--ink3);
+}
+
+.run-note:empty {
+  display: none;
+}
+
+.run-reference,
+.rtable td.run-reference .fig .num {
   color: var(--ink4);
 }
 
