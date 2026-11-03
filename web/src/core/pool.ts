@@ -42,11 +42,17 @@ import {
   type ConfigStats,
 } from "./run-stats.ts";
 
-/** The minimum a worker has to be, so the scheduler never needs a DOM. */
+/**
+ * The minimum a worker has to be, so the scheduler never needs a DOM.
+ *
+ * `MessageEvent` is a type-only mention — nothing here constructs one — and it is what
+ * makes a real `Worker` assignable: the pool only ever reads `event.data`, and the
+ * protocol is the union the worker file actually posts.
+ */
 export interface WorkerLike {
   postMessage(message: unknown): void;
   terminate(): void;
-  onmessage: ((event: { data: FromWorker }) => void) | null;
+  onmessage: ((event: MessageEvent<FromWorker>) => void) | null;
 }
 
 /** The four counters §2.4 names, aggregated on this thread. */
