@@ -278,6 +278,21 @@ function paintRunProgress(
     }),
     "",
   );
+  // The four counters §2.4 names, each labelled, in the tooltip as well as the status
+  // line: `gamesDone` and work time are the words that fit a 236 px rail, and
+  // `chunkDone` and the Evaluations behind them are what make the work rate readable
+  // (Evaluations per millisecond is a throughput, so a slow machine is distinguishable
+  // from a stuck one rather than guessed at).
+  const cores = navigator.hardwareConcurrency ?? 1;
+  r9.el.dataset.tip =
+    `Run progress — ${progress.gamesDone.toLocaleString("en-US")} of ` +
+    `${RUN_GAMES.toLocaleString("en-US")} games measured or status-coded, across ` +
+    `${progress.chunkDone.toLocaleString("en-US")} chunks, with ` +
+    `${progress.evals.toLocaleString("en-US")} Evaluations behind them and ` +
+    `${(progress.ms / 1000).toFixed(1)} s of work in ${workers} ` +
+    `${workers === 1 ? "worker" : "workers"} of this machine's ${cores} logical cores. ` +
+    "Work time is the sum of the chunks' own clocks — the quantity a Reference row's " +
+    "batch_ms is — not this tab's elapsed wall clock.";
 }
 
 /** Repaint both configurations' live cells from the pool's own totals. */
