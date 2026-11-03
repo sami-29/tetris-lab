@@ -1,16 +1,17 @@
-//! The committed artifact and the committed constant must agree.
+//! `data/measurements/e2-tuning.json` is the only home of the tuned table.
 //!
-//! `data/measurements/e2-tuning.json` is the provenance of `E2_TUNED`, and the
-//! ticket requires two things this file can check mechanically rather than by
-//! review:
+//! Ticket 07 committed that table as a constant beside `E1_PUBLISHED`; ticket 08's
+//! ladder made it lose (955 games to 956, an exact McNemar tie) and §9.4's rule
+//! deleted it from the source — "the losing architecture is removed from the source,
+//! not disabled by a flag". So the constant is gone, the record is what remains, and
+//! these tests moved with it: they read the table from the record, assert that the
+//! engine no longer carries a second shippable table, and keep the reproducibility
+//! ticket 07 promised (the Q16 vector is the rounding of the committed decimals, and
+//! its fingerprint describes it).
 //!
-//! * the run's seed, Split, bed and width are the committed ones — the table was
-//!   tuned on the tuning Split, at the measured default width, and nothing else;
-//! * a table that is worse than published on the tuning Split is **recorded and
-//!   rejected**, visibly: the record says so in a field a reader sees first, and
-//!   the constant says so in the line above the numbers.
-//!
-//! It also holds E2 to being a *configuration swap* on E1: the same Features, the
+//! The template is unchanged: the run's seed, Split, bed and width are the committed
+//! ones — the table was tuned on the tuning Split, at the measured default width,
+//! and nothing else — and E2 is a *configuration swap* on E1, the same Features, the
 //! same trait, the same type, one table apart.
 
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ use std::path::{Path, PathBuf};
 use bench::json::Value;
 use bench::tuning::record::{self, Record};
 use bench::width;
-use engine::{DellacherieThiery, DtWeights, Evaluator, E1_PUBLISHED, E2_TUNED};
+use engine::{DellacherieThiery, DtWeights, Evaluator, E1_PUBLISHED};
 
 fn measurements() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -39,24 +40,40 @@ fn load() -> Record {
     Record::parse(&text).expect("the record parses")
 }
 
+/// The tuned table, as the ladder builds it: the accepted run's `weights_q16`. The
+/// engine has no constant for it any more, so every test here reads it the way the
+/// ladder does.
+fn tuned(record: &Record) -> DtWeights {
+    let accepted = record
+        .accepted
+        .as_ref()
+        .expect("an accepted run is what makes a tuned table");
+    let run = record
+        .runs
+        .iter()
+        .find(|run| run.run == accepted.run)
+        .expect("the accepted run is in the record");
+    DtWeights::from_array(run.weights_q16)
+}
+
 fn width_curve() -> Value {
     let path = measurements().join("width-curve.json");
     let text = std::fs::read_to_string(&path).expect("read the width curve");
     bench::json::parse(&text).expect("parse the width curve")
 }
 
-// ---------------------------------------------------------------- the constant
+// ----------------------------------------------------------------- the table
 
 /// Ticket 07: "E2 is a configuration swap on E1, not a third Evaluator."
 #[test]
 fn e2_is_the_same_type_and_the_same_features_as_e1() {
+    let e2 = tuned(&load());
     let e1: DtWeights = E1_PUBLISHED;
-    let e2: DtWeights = E2_TUNED;
     assert_eq!(e1.as_array().len(), e2.as_array().len());
     assert_eq!(DtWeights::FEATURES.len(), 8);
     // Both are the one `DellacherieThiery` type, so the table is what differs.
     let one = DellacherieThiery(E1_PUBLISHED);
-    let two = DellacherieThiery(E2_TUNED);
+    let two = DellacherieThiery(e2);
     assert_eq!(engine::Evaluator::name(&one), engine::Evaluator::name(&two));
     assert_ne!(
         e1.as_array(),
@@ -81,9 +98,46 @@ fn the_engine_has_one_dellacherie_thiery_evaluator() {
         text.matches("impl Evaluator for DellacherieThiery").count(),
         1
     );
-    // E2 is a second constant of the same type, and nothing else.
+    // One table, and it is the published one: the tuned table lost ticket 08's
+    // ladder and §9.4 deleted it from the source, so no constant switches the
+    // shipped answer.
     assert_eq!(text.matches("pub const E1_PUBLISHED: DtWeights").count(), 1);
-    assert_eq!(text.matches("pub const E2_TUNED: DtWeights").count(), 1);
+}
+
+/// §9.4's other half, and the reason this file changed: the losing table is not in
+/// the engine at all.
+///
+/// Deleting it is only half the rule; the other half is that the evidence survives.
+/// So this asserts both: no `E2_TUNED` anywhere in `engine/src/evaluator.rs`, and the
+/// weights still in the record the ladder reads them from.
+#[test]
+fn the_losing_table_is_not_in_the_engine() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("bench/ has a parent")
+        .join("engine")
+        .join("src")
+        .join("evaluator.rs");
+    let text = std::fs::read_to_string(&source).expect("read the evaluator");
+    assert!(
+        !text.contains("E2_TUNED"),
+        "the tuned table is back in the engine: it lost the ladder 955 to 956 and §9.4 \
+         deletes what the ladder rejects rather than leaving it one match from shipping"
+    );
+    // The deletion loses nothing: the eight integers are the record's, and the
+    // record's fingerprint describes them.
+    let record = load();
+    let run = record
+        .runs
+        .iter()
+        .find(|run| run.weights_q16 == tuned(&record).as_array())
+        .expect("the accepted run's vector");
+    assert_eq!(run.weights_q16.len(), 8);
+    assert_eq!(
+        bench::tuning::table_fnv(&run.weights_q16),
+        run.table_fnv,
+        "the record's fingerprint does not describe the vector it holds"
+    );
 }
 
 /// §9.4's ship rule is ticket 08's: 07 only makes the table selectable.
@@ -144,8 +198,10 @@ fn the_q16_table_is_re_derived_from_the_decimals() {
     }
 }
 
+/// The record names its accepted run and nothing else does, so "which table" is a
+/// field rather than an inference.
 #[test]
-fn the_constant_is_the_accepted_run_and_nothing_else() {
+fn the_record_names_the_accepted_run_and_nothing_else_does() {
     let record = load();
     match &record.accepted {
         Some(accepted) => {
@@ -155,12 +211,17 @@ fn the_constant_is_the_accepted_run_and_nothing_else() {
                 .find(|run| run.run == accepted.run)
                 .expect("the accepted run exists");
             assert_eq!(run.decision, "accepted");
-            assert_eq!(run.weights_q16, E2_TUNED.as_array());
-            assert_eq!(
-                run.table_fnv,
-                bench::tuning::table_fnv(&E2_TUNED.as_array())
-            );
             assert_eq!(run.rejection_kind, None);
+            assert_eq!(
+                record
+                    .runs
+                    .iter()
+                    .filter(|run| run.decision == "accepted")
+                    .count(),
+                1,
+                "two accepted runs would leave the tuned table ambiguous"
+            );
+            assert_eq!(tuned(&record).as_array(), run.weights_q16);
         }
         None => {
             // No run cleared the rule: the newest table is committed as the
@@ -169,45 +230,51 @@ fn the_constant_is_the_accepted_run_and_nothing_else() {
             assert_eq!(last.decision, "rejected");
             assert!(last.rejection_kind.is_some());
             assert!(last.rejection_reason.is_some());
-            assert_eq!(last.weights_q16, E2_TUNED.as_array());
         }
     }
 }
 
-/// The rejection is not a footnote: it is the first field a reader meets, and
-/// the source says it above the numbers.
+/// A rejection is not a footnote: the record files it under fields a reader meets
+/// first, and the reason is words rather than a code.
+///
+/// This used to read the deleted constant's doc comment. With the constant gone, the
+/// record is the only place the rejection can live, which is the point of keeping it:
+/// §9.4 deletes the table and keeps the evidence.
 #[test]
-fn a_rejection_is_visible_in_the_file_and_in_the_constant() {
+fn a_rejection_is_visible_in_the_record() {
     let record = load();
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("bench/ has a parent")
-        .join("engine")
-        .join("src")
-        .join("evaluator.rs");
-    let text = std::fs::read_to_string(&source).expect("read the evaluator");
-    let at = text
-        .find("pub const E2_TUNED")
-        .expect("the constant exists");
-    let head = &text[..at];
-    let doc = head
-        .rsplit_once("pub const ")
-        .map(|(before, _)| before)
-        .unwrap_or(head);
-    let doc = doc.rsplit("}\n").next().unwrap_or(doc);
-
     for run in &record.runs {
-        if run.decision == "rejected" {
-            assert!(
-                doc.contains("REJECTED"),
-                "run {} is rejected but the constant does not say so",
-                run.run
-            );
-            assert!(doc.contains(&run.rejection_kind.clone().unwrap_or_default()));
+        match run.decision.as_str() {
+            "accepted" => {
+                assert_eq!(
+                    run.rejection_kind, None,
+                    "run {}: accepted and rejected",
+                    run.run
+                );
+                assert_eq!(run.rejection_reason, None);
+            }
+            "rejected" => {
+                let kind = run
+                    .rejection_kind
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("run {} was rejected and does not say why", run.run));
+                assert!(!kind.is_empty(), "run {}: an empty rejection kind", run.run);
+                let reason = run
+                    .rejection_reason
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("run {}: a rejection without a sentence", run.run));
+                assert!(
+                    reason.len() > kind.len(),
+                    "run {}: the rejection reason is not a sentence about the kind",
+                    run.run
+                );
+            }
+            other => panic!("run {}: {other} is not a decision", run.run),
         }
     }
     if record.accepted.is_none() {
-        assert!(doc.contains("REJECTED"), "no run was accepted");
+        let last = record.runs.last().expect("a run");
+        assert_eq!(last.decision, "rejected", "no run was accepted");
     }
 }
 

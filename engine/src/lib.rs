@@ -25,7 +25,7 @@ pub mod trace;
 pub use board::Board;
 pub use evaluator::{
     shipped, DellacherieThiery, DtFeatures, DtWeights, Evaluator, Heuristic, HeuristicFeatures,
-    HeuristicWeights, PlacementCtx, E0_HEURISTIC, E1_PUBLISHED, E2_TUNED, Q16,
+    HeuristicWeights, PlacementCtx, E0_HEURISTIC, E1_PUBLISHED, Q16,
 };
 pub use generator::{generate_game, DomainError, Game, Sequence};
 pub use pieces::{Piece, Rotation};

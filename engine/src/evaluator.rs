@@ -10,10 +10,20 @@
 //! Two Evaluators ship behind one trait, and the difference between them is data:
 //! * [`Heuristic`] — E0, the ablation control, ported from `tetris_engine.py`;
 //! * [`DellacherieThiery`] — E1, the eight Features of Thiery & Scherrer at
-//!   Dellacherie's published weights, and E2 once a tuning run rewrites its table.
+//!   Dellacherie's published weights.
 //!
 //! The shipped default is chosen by the ablation ladder (§9.4), so both
 //! implementations ship and the ladder's verdict is the one line in [`shipped`].
+//! The ladder also *deleted* something: the tuned table of ticket 07 lost it, and
+//! §9.4 removes the losing architecture from the source rather than leaving it as a
+//! second constant to be switched on. Its weights are the tuning record's
+//! (`data/measurements/e2-tuning.json`, `weights_q16`), which is what makes the
+//! deletion lose nothing.
+//!
+//! **E0 is kept on purpose.** It is not a fallback and not dead code: §9.4's ladder
+//! needs a control, and a control has to come from a different architecture or
+//! every tie would be settled by the published-over-tuned rule instead of by the
+//! measurement. Ticket 05 ships E0 for that reason and ticket 08 keeps it.
 
 use crate::board::{Board, FIELD, H, W};
 
@@ -327,8 +337,9 @@ impl DtWeights {
     }
 }
 
-/// E1: the eight Features of Thiery & Scherrer at published weights; E2 is the
-/// same type with a tuned table.
+/// E1: the eight Features of Thiery & Scherrer at published weights. One table, and
+/// the only Dellacherie–Thiery table in the engine: the tuned one lost ticket 08's
+/// ladder and went with the losing architecture (§9.4).
 pub struct DellacherieThiery(pub DtWeights);
 
 impl DellacherieThiery {
@@ -442,8 +453,8 @@ fn cumulative_wells(heights: &[i32; W]) -> i32 {
 /// rounding rule is exercised. The two remaining Features are **weight zero on
 /// purpose**: the paper's §4 says hole depth and rows with holes are the "two
 /// original features" BCTS added, i.e. they are not in Dellacherie's hand-tuned
-/// controller. Shipping eight Features with two at zero keeps E2 a pure table
-/// swap (§5.4, ticket 07).
+/// controller. Shipping eight Features with two at zero keeps a tuned table a pure
+/// table swap (§5.4, ticket 07).
 pub const E1_PUBLISHED: DtWeights = DtWeights {
     landing_height: -Q16,  // −1.0 · 65_536 = -65_536
     eroded_cells: Q16,     // +1.0 · 65_536 = 65_536
@@ -455,44 +466,32 @@ pub const E1_PUBLISHED: DtWeights = DtWeights {
     rows_with_holes: 0,    // as above
 };
 
-/// E2 — Dellacherie–Thiery with weights tuned by cross-entropy on the tuning
-/// Split only (spec §9.4, ticket 07).
-///
-/// **Provenance, and do not edit these integers by hand.** They are run 0 of
-/// `data/measurements/e2-tuning.json`: seed `0x9e3779b97f4a7c15`, Split
-/// `1000-1999`, bed `goal12-p100-cap7`, width 25 (`DEFAULT_BEAM`, read from
-/// `data/measurements/width-curve.json`), 9 iterations before the held-out
-/// selection stopped improving. `bench tune --replay` re-derives this vector from
-/// that seed and `bench/tests/tuning_record.rs` fails if these eight `i32` and the
-/// record's `weights_q16` disagree, in either direction.
-///
-/// The run's verdict is `accepted` and it is the weakest kind of acceptance: every
-/// table wins 1,000 of 1,000 tuning games at this width, so the bed has **no
-/// win-rate resolution** (the record's `comparison.win_rate_axis` says
-/// `"no-resolution"`), and E2 was not worse than E1 on the tie-breaks — mean lines
-/// +0.0040 with a paired bootstrap 95 % CI of [−0.0040, +0.0130], evaluations per
-/// solve 14,034 vs 14,244 at p50. §9.4's ship rule is ticket 08's and is untouched:
-/// [`shipped`] still returns E1, and "E1 ships unless E2 clears p < 0.01" is a
-/// comparison ticket 08 makes against this table, not one this ticket makes.
-///
-/// Decimal, for the record: −7.858335, 2.58857, −4.813783, −20.786974, 2.635867,
-/// −6.195437, −1.74439, −11.005263 (Q16 = the integers below, round half away from
-/// zero).
-pub const E2_TUNED: DtWeights = DtWeights {
-    landing_height: -515_004,    // −7.858335 · 65_536
-    eroded_cells: 169_645,       // +2.588570 · 65_536
-    row_transitions: -315_476,   // −4.813783 · 65_536
-    col_transitions: -1_362_295, // −20.786974 · 65_536
-    holes: 172_744,              // +2.635867 · 65_536
-    wells: -406_024,             // −6.195437 · 65_536
-    hole_depth: -114_320,        // −1.744390 · 65_536
-    rows_with_holes: -721_241,   // −11.005263 · 65_536
-};
+// E2 — the table ticket 07's cross-entropy search tuned on the tuning Split — is
+// **not in the engine, and that is the verdict**, not an omission.
+//
+// It lost ticket 08's ladder. On the bed `goal65-p160-cap7` (1,000 tuning seeds,
+// `DEFAULT_BEAM`, identical search) it won 955 games against E1's 956, and
+// e2-vs-e1 is an exact McNemar tie (b = 11, c = 12, n = 23, p >= 0.01), so §9.4's
+// closing sentence — "E1 ships unless E2 clears p < 0.01" — kept the published
+// table. The ticket's rule is then explicit: "the chosen weight table is committed
+// with the engine and the losing architecture is removed from the source, not
+// disabled by a flag". A second `DtWeights` constant here would be a table one
+// `match` away from shipping, so it is gone.
+//
+// Nothing is lost by the deletion. The eight integers are run 0 of
+// `data/measurements/e2-tuning.json` as `weights_q16`, beside the
+// `weights_decimal` they round from and the `table_fnv` that fingerprints them;
+// `bench tune --replay` re-derives the vector from the run's seed
+// `0x9e3779b97f4a7c15`; and the ladder reads the record when it needs the losing
+// row, so the comparison stays reproducible without a shippable constant.
+// `bench/tests/tuning_record.rs` holds the record to that, in both directions.
 
 // ── the shipped one ────────────────────────────────────────────────────────
 
-// Both candidates stay instantiated so §9.4's verdict is a one-word edit below and
-// never a code change; `strip` removes the unused one from the artifact.
+// E0 keeps its instance because it is the ablation's **control**, not a spare: the
+// ladder measures it beside the shipped table on the same seeds, and a control has
+// to be a value the shipped path cannot reach. `strip` removes the unused one from
+// the artifact, and `#[allow(dead_code)]` says that is deliberate.
 #[allow(dead_code)]
 static SHIPPED_HEURISTIC: Heuristic = Heuristic(E0_HEURISTIC);
 static SHIPPED_DT: DellacherieThiery = DellacherieThiery(E1_PUBLISHED);
@@ -501,8 +500,9 @@ static SHIPPED_DT: DellacherieThiery = DellacherieThiery(E1_PUBLISHED);
 ///
 /// §9.4 pre-registers the verdict: "E1 ships unless E2 clears p < 0.01 — E1 is
 /// published, reproducible, and needs no training artifact in the repo", and the
-/// ladder is the only thing allowed to overturn it. So this returns E1, and
-/// ticket 08's verdict lands here as one line: which static, and nothing else.
+/// ladder is the only thing allowed to overturn it. Ticket 08 ran the ladder and
+/// E2 did not clear it (955 to 956, a tie), so the verdict landed here as the line
+/// below and the tuned table left the engine.
 ///
 /// `&'static` so the wasm crate carries no state and the choice cannot drift
 /// between calls — and so this function is the **only** way the ABI can reach an
