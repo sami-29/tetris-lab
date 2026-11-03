@@ -367,7 +367,11 @@ test("the deploy uploads the gated tree as one version, then smokes the live URL
 
 test("two repository secrets, no rollback, and nothing that swallows a failure", () => {
   const { code, raw } = deployText();
-  const secrets = [...code.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+  // `github.token` is injected by the runner, not stored as a repository secret; the
+  // inventory counts what the operator has to provision.
+  const secrets = [...code.matchAll(/secrets\.([A-Za-z0-9_]+)/g)]
+    .map((match) => match[1])
+    .filter((name) => name !== "GITHUB_TOKEN");
   assert.deepEqual([...new Set(secrets)].sort(), ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"]);
   assert.doesNotMatch(code, /continue-on-error/);
   assert.doesNotMatch(code, /wrangler rollback/);
