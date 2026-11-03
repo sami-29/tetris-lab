@@ -129,8 +129,23 @@ export const ENGINE_FACTS: EngineFacts = {
     ]
   },
   "reference": {
-    "status": "pending",
-    "rows": [],
+    "status": "measured",
+    "rows": [
+      {
+        "config": "goal12-p100-cap7",
+        "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB · Microsoft Windows 11 Pro 10.0.22621",
+        "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
+        "date": "2026-11-03T02:03:30Z",
+        "commit": "ffa08fed765e0516d0165869fedff55433448a90"
+      },
+      {
+        "config": "goal8-p40-cap7",
+        "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB · Microsoft Windows 11 Pro 10.0.22621",
+        "runtime": "v24.21.0 (V8 headless, not a browser: the engine headless Chrome runs, without the DOM)",
+        "date": "2026-11-03T02:03:30Z",
+        "commit": "ffa08fed765e0516d0165869fedff55433448a90"
+      }
+    ],
     "source": "data/dataset/<configuration>/reference.jsonl · the latest row"
   }
 };
