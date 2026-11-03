@@ -5,8 +5,9 @@
 //! are one implementation. Three of them are the fire drill in miniature: a
 //! deliberately broken Dataset copy must turn the gate red *and name the game*,
 //! a corrupted Move list must be refused by the independent simulator, and a
-//! committed golden file must make gate 6 fail closed rather than pass by
-//! accident.
+//! missing or malformed golden file must fail gate 6 rather than pass by accident
+//! (ticket 09 replaced ticket 03's placeholder with the exact compare; the compare
+//! itself is exercised in `bench/tests/golden.rs`).
 //!
 //! Gates 4 and 6 read build artifacts (`web/pkg/engine.wasm`, `web/dist`) that
 //! may not exist in a bare checkout. They assert the honest thing either way:
@@ -473,7 +474,9 @@ fn gate_6_fails_over_the_fail_line_and_names_the_budget() {
 }
 
 #[test]
-fn gate_6_skips_the_golden_half_while_it_is_absent() {
+fn gate_6_fails_when_no_golden_is_committed() {
+    // There is no placeholder any more: after ticket 09 the golden *is* committed,
+    // so its absence is a red gate that says how to pin one — never a `·` line.
     let mut paths = Paths::resolve();
     // Point at a measurements directory that certainly has no golden file.
     paths.measurements = std::env::temp_dir().join("tetris-lab-03-no-measurements");
@@ -486,16 +489,16 @@ fn gate_6_skips_the_golden_half_while_it_is_absent() {
     );
     let rendered = report.render();
     let golden = check(&report, "golden evaluations");
-    assert_eq!(golden.state, State::Skip, "{rendered}");
-    assert!(rendered.contains("ticket 09"), "{rendered}");
-    assert_eq!(report.exit_code(), 0, "{rendered}");
+    assert_eq!(golden.state, State::Fail, "{rendered}");
+    assert!(rendered.contains("no golden is committed"), "{rendered}");
+    assert!(rendered.contains("bench golden update"), "{rendered}");
+    assert_eq!(report.exit_code(), 1, "{rendered}");
 }
 
 #[test]
-fn gate_6_refuses_to_pass_once_a_golden_exists() {
-    // The placeholder is fail-closed: the moment ticket 09 commits a value the
-    // stub turns red, so the two tickets cannot both think the other one closed
-    // this half.
+fn gate_6_refuses_a_golden_it_cannot_read() {
+    // A `{}` cannot be compared against anything, and it must not be able to look
+    // like a green gate: the file is named, and so is the field that is missing.
     let mut paths = Paths::resolve();
     let mut dir = std::env::temp_dir();
     dir.push(format!("tetris-lab-03-golden-{}", std::process::id()));
@@ -515,8 +518,7 @@ fn gate_6_refuses_to_pass_once_a_golden_exists() {
     let golden = check(&report, "golden evaluations");
     assert_eq!(golden.state, State::Fail, "{rendered}");
     assert_eq!(report.exit_code(), 1, "{rendered}");
-    assert!(rendered.contains("refusing to pass"), "{rendered}");
-    assert!(rendered.contains("ticket 09"), "{rendered}");
+    assert!(rendered.contains("kind"), "{rendered}");
     let _ = fs::remove_dir_all(&dir);
 }
 
