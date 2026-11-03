@@ -1,0 +1,37 @@
+{
+  // The Lab's deploy config (ticket 17). Wrangler reads this file, uploads
+  // `dist/` — the whole directory — as one Worker version, and attaches the
+  // custom domain.
+  //
+  //   npx wrangler deploy --dry-run     # what would be uploaded, no credentials
+  //   npx wrangler deploy               # one atomic version (CI does this)
+  //
+  // `$schema` resolves only because `wrangler` is a devDependency of this folder.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "tetris-lab",
+  // The value host-probe proved live on this account (ticket 09). Bumping it is a
+  // deliberate act: the runtime's defaults are pinned to the date.
+  "compatibility_date": "2026-11-02",
+
+  // Assets-only: no `main`, and no `build`. Both absences are load-bearing.
+  //   * no `main` — a Worker script would (a) switch static routes to script
+  //     billing and (b) ignore `_headers` on anything it answers, so the wasm MIME
+  //     and `immutable` would stop being configuration and become code;
+  //   * no `build` — a `build` key would make Cloudflare build the site, which
+  //     §10 forbids: it would hide the Gate set outside the repository.
+  // `not_found_handling: "single-page-application"` is the SPA fallback: an unknown
+  // path answers 200 with `index.html` (§8, and assertion 20 of the smoke test).
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+
+  // Both are written out because a `routes` entry silently defaults them to false
+  // (`defaultWorkersDev = routes.length === 0` in wrangler's config resolution), and
+  // host-probe hit exactly that: the `.workers.dev` name 404'd until these were set.
+  // `workers_dev` is the free URL to hand someone; `preview_urls` is what makes
+  // `wrangler versions upload --preview-alias` produce a URL at all (§10 previews).
+  "workers_dev": true,
+  "preview_urls": true,
+  "routes": [{ "pattern": "lab.samibentaleb.com", "custom_domain": true }]
+}
