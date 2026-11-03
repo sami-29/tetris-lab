@@ -28,7 +28,8 @@ games the Playground plays" is a check that runs on every push.
 It regenerates every game from its seed, compares every board and every sequence
 letter to the committed file, recomputes the fingerprint from both the file and the
 regenerated games, and names the first game that moved. It writes nothing. This is
-gate 1 of the build (spec §9.2): a red verify blocks the push.
+gate 1 of the six gates `.github/workflows/gates.yml` runs: a red verify blocks the
+push.
 
 `bench verify --json` prints one line per configuration for CI annotation, and
 
@@ -36,16 +37,16 @@ gate 1 of the build (spec §9.2): a red verify blocks the push.
 
 prints `<config> <fingerprint> <path>` without reading the manifest.
 
-## The cap, and one thing the design spec gets wrong
+## The cap, and the one thing the design spec got wrong
 
-Spec §5.7 and ADR 0003 say every committed board's tallest column *equals* the cap.
-It does not: the pre-fill loop breaks on the first draw whose resting top would
-exceed the cap, and the crossing piece can overshoot by more than one row (a
-pre-fill line clear lowers the stack further), so a board may be shorter than the
-cap. Measured over seeds 0-1999 at cap 7: 1074 boards reach exactly 7, 926 are
-shorter, 0 exceed it. The gate asserts `tallest <= cap` for every game and
-`max over the configuration == cap` — never per-game equality. The spec amendment
-is carried by tickets 06/18.
+ADR 0003 says every committed board's tallest column is **at most** the cap, and
+*equals* it only for the maximum over a configuration. Per game it is not equal: the
+pre-fill loop breaks on the first draw whose resting top would exceed the cap, and
+the crossing piece can overshoot by more than one row (a pre-fill line clear lowers
+the stack further), so a board may be shorter than the cap. Measured over seeds
+0-1999 at cap 7: 1074 boards reach exactly 7, 926 are shorter, 0 exceed it. The gate
+asserts `tallest <= cap` for every game and `max over the configuration == cap` —
+never per-game equality.
 
 ## When the generator legitimately changes
 
