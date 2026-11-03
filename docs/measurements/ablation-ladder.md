@@ -10,7 +10,7 @@ Every number here is measured, and the per-seed rows behind every number are in
 | Split | 1,000–1,999 (the tuning Split that §6 reserves for weight tuning, ablations and width curves) |
 | Width | `DEFAULT_BEAM` = 25 (from `data/measurements/width-curve.json`, quality fingerprint `fnv1a64:af9f8a8c76b93ad5`), width cap 800 |
 | Machine | AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB, Microsoft Windows 11 Pro |
-| Dataset | generated from `engine::generate_game` (generator_version 1), bed fingerprint `e4e91a6320ca6148`, engine commit `11b7bdd`, 2026-11-03T00:22:59Z |
+| Dataset | generated from `engine::generate_game` (generator_version 1), bed fingerprint `e4e91a6320ca6148`, engine commit `e3ed7c1`, 2026-11-03T00:27:25Z |
 | Rules | game over = spawn-blocked; no-suicide fallback on (§5.3); goal reached ⇒ search stops |
 | Statistics | paired per seed; exact McNemar (two-sided sign test, α = 1/100); paired bootstrap 95 % CI over 10000 resamples with a pinned stream |
 
@@ -89,12 +89,12 @@ Goals from 69 were reached by nobody.
 
 | row | table | features | toggles | wins | vs winner (b, c, n) | p < 0.01 | mean lines Δ [95 % CI] | evals p50 | evals p90 | ms p50 | verdict |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| e0 | E0_HEURISTIC | 4 | dedup+tail+no-suicide | 940/1000 | 7, 22, 29 | yes | -0.0130 [-0.0240, -0.0020] | 90123 | 102581 | 18.87 | not shipped |
-| e1 | E1_PUBLISHED | 8 | dedup+tail+no-suicide | 956/1000 | 12, 11, 23 | no (tie) | +0.0010 [-0.0080, +0.0100] | 89959 | 98145 | 45.90 | not shipped |
-| e2 | E2_TUNED | 8 | dedup+tail+no-suicide | 955/1000 | — | — | — | 89935 | 98850 | 45.51 | **ships** |
-| dedup-off | E2_TUNED | 8 | tail+no-suicide | 944/1000 | 7, 18, 25 | no (tie) | -0.0140 [-0.0270, -0.0020] | 90026 | 103159 | 40.31 | kept (moves its axis) |
-| tail-off | E2_TUNED | 8 | dedup+no-suicide | 939/1000 | 0, 16, 16 | yes | +0.0090 [-0.0040, +0.0220] | 89948 | 91473 | 44.52 | kept (moves its axis) |
-| no-suicide-off | E2_TUNED | 8 | dedup+tail | 955/1000 | 0, 0, 0 | no (tie) | +0.0000 [+0.0000, +0.0000] | 89935 | 98850 | 47.11 | **deleted from the engine** |
+| e0 | E0_HEURISTIC | 4 | dedup+tail+no-suicide | 940/1000 | 14, 30, 44 | no (tie) | -0.0140 [-0.0270, -0.0010] | 90123 | 102581 | 20.76 | not shipped |
+| e1 | E1_PUBLISHED | 8 | dedup+tail+no-suicide | 956/1000 | — | — | — | 89959 | 98145 | 47.47 | **ships** |
+| e2 | E2_TUNED | 8 | dedup+tail+no-suicide | 955/1000 | 11, 12, 23 | no (tie) | -0.0010 [-0.0100, +0.0090] | 89935 | 98850 | 45.32 | not shipped |
+| dedup-off | E1_PUBLISHED | 8 | tail+no-suicide | 950/1000 | 12, 18, 30 | no (tie) | -0.0060 [-0.0170, +0.0050] | 90056 | 98979 | 39.18 | **deleted from the engine** |
+| tail-off | E1_PUBLISHED | 8 | dedup+no-suicide | 943/1000 | 0, 13, 13 | yes | +0.0120 [+0.0000, +0.0240] | 89967 | 91444 | 41.90 | kept (moves its axis) |
+| no-suicide-off | E1_PUBLISHED | 8 | dedup+tail | 956/1000 | 0, 0, 0 | no (tie) | +0.0000 [+0.0000, +0.0000] | 89959 | 98145 | 42.84 | **deleted from the engine** |
 
 ## The cascade
 
@@ -104,9 +104,10 @@ Evaluations per Solve, then to fewer Features. The legs actually run:
 - highest win rate: e1 (956 of 1000)
 - e0 vs e1: b = 14, c = 30, n = 44 -> p >= 0.01, a tie
 - e2 vs e1: b = 11, c = 12, n = 23 -> p >= 0.01, a tie
-- evaluations per solve (median): e1 89959, e0 90123.5, e2 89935 -> kept e2
+- e2 vs e1: b = 11, c = 12, n = 23 -> the tuned table does not clear p < 0.01, so e1 ships (§9.4)
+- evaluations per solve (median): e1 89959, e0 90123.5 -> kept e1
 
-**Winner: `e2` (E2_TUNED), decided by fewer evaluations per solve.** Tied at the start of the legs: `e1`, `e0`, `e2`.
+**Winner: `e1` (E1_PUBLISHED), decided by fewer evaluations per solve.** Tied at the start of the legs: `e1`, `e0`, `e2`.
 
 ## The toggles
 
@@ -117,7 +118,7 @@ nothing without it.
 
 | toggle | moved seeds | flipped (b, c) | mean lines Δ [95 % CI] | verdict |
 |---|---|---|---|---|
-| dedup-off | 946/1000 | 7, 18 | -0.0140 [-0.0270, -0.0020] | kept |
-| tail-off | 318/1000 | 0, 16 | +0.0090 [-0.0040, +0.0220] | kept |
+| dedup-off | 959/1000 | 12, 18 | -0.0060 [-0.0170, +0.0050] | deleted |
+| tail-off | 304/1000 | 0, 13 | +0.0120 [+0.0000, +0.0240] | kept |
 | no-suicide-off | 0/1000 | 0, 0 | +0.0000 [+0.0000, +0.0000] | deleted |
 

@@ -1,9 +1,9 @@
 {
   "format": 1,
   "kind": "ablation-ladder",
-  "generated_at": "2026-11-03T00:22:59Z",
+  "generated_at": "2026-11-03T00:27:25Z",
   "engine": {
-    "commit": "11b7bdd",
+    "commit": "e3ed7c1",
     "profile": "release: lto=fat, codegen-units=1, panic=abort, strip=true"
   },
   "machine": { "label": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB, Microsoft Windows 11 Pro" },
@@ -85,43 +85,44 @@
   "resamples": 10000,
   "alpha_inverse": 100,
   "rows": [
-    { "id": "e0", "table": "E0_HEURISTIC", "features": 4, "toggles": "dedup+tail+no-suicide", "wins": 940, "games": 1000, "win_rate": 0.940000, "win_rate_ci95": [0.923529, 0.953104], "mean_lines": 64.9170, "mean_lines_on_wins": 65.0000, "evals_median": 90123.5, "evals_p90": 102581.0, "evals_mean": 93962.5, "ms_median": 18.8742, "ms_p90": 25.6553 },
-    { "id": "e1", "table": "E1_PUBLISHED", "features": 8, "toggles": "dedup+tail+no-suicide", "wins": 956, "games": 1000, "win_rate": 0.956000, "win_rate_ci95": [0.941448, 0.967062], "mean_lines": 64.9310, "mean_lines_on_wins": 65.0000, "evals_median": 89959.0, "evals_p90": 98145.0, "evals_mean": 92326.4, "ms_median": 45.9008, "ms_p90": 63.4849 },
-    { "id": "e2", "table": "E2_TUNED", "features": 8, "toggles": "dedup+tail+no-suicide", "wins": 955, "games": 1000, "win_rate": 0.955000, "win_rate_ci95": [0.940317, 0.966200], "mean_lines": 64.9300, "mean_lines_on_wins": 65.0000, "evals_median": 89935.0, "evals_p90": 98850.0, "evals_mean": 92823.0, "ms_median": 45.5067, "ms_p90": 62.2352 },
-    { "id": "dedup-off", "table": "E2_TUNED", "features": 8, "toggles": "tail+no-suicide", "wins": 944, "games": 1000, "win_rate": 0.944000, "win_rate_ci95": [0.927977, 0.956625], "mean_lines": 64.9160, "mean_lines_on_wins": 65.0000, "evals_median": 90026.5, "evals_p90": 103159.0, "evals_mean": 93925.4, "ms_median": 40.3064, "ms_p90": 54.9057 },
-    { "id": "tail-off", "table": "E2_TUNED", "features": 8, "toggles": "dedup+no-suicide", "wins": 939, "games": 1000, "win_rate": 0.939000, "win_rate_ci95": [0.922420, 0.952220], "mean_lines": 64.9390, "mean_lines_on_wins": 65.0000, "evals_median": 89948.5, "evals_p90": 91473.0, "evals_mean": 90008.7, "ms_median": 44.5155, "ms_p90": 60.3044 },
-    { "id": "no-suicide-off", "table": "E2_TUNED", "features": 8, "toggles": "dedup+tail", "wins": 955, "games": 1000, "win_rate": 0.955000, "win_rate_ci95": [0.940317, 0.966200], "mean_lines": 64.9300, "mean_lines_on_wins": 65.0000, "evals_median": 89935.0, "evals_p90": 98850.0, "evals_mean": 92823.0, "ms_median": 47.1106, "ms_p90": 69.4929 }
+    { "id": "e0", "table": "E0_HEURISTIC", "features": 4, "toggles": "dedup+tail+no-suicide", "wins": 940, "games": 1000, "win_rate": 0.940000, "win_rate_ci95": [0.923529, 0.953104], "mean_lines": 64.9170, "mean_lines_on_wins": 65.0000, "evals_median": 90123.5, "evals_p90": 102581.0, "evals_mean": 93962.5, "ms_median": 20.7588, "ms_p90": 30.0552 },
+    { "id": "e1", "table": "E1_PUBLISHED", "features": 8, "toggles": "dedup+tail+no-suicide", "wins": 956, "games": 1000, "win_rate": 0.956000, "win_rate_ci95": [0.941448, 0.967062], "mean_lines": 64.9310, "mean_lines_on_wins": 65.0000, "evals_median": 89959.0, "evals_p90": 98145.0, "evals_mean": 92326.4, "ms_median": 47.4747, "ms_p90": 65.7735 },
+    { "id": "e2", "table": "E2_TUNED", "features": 8, "toggles": "dedup+tail+no-suicide", "wins": 955, "games": 1000, "win_rate": 0.955000, "win_rate_ci95": [0.940317, 0.966200], "mean_lines": 64.9300, "mean_lines_on_wins": 65.0000, "evals_median": 89935.0, "evals_p90": 98850.0, "evals_mean": 92823.0, "ms_median": 45.3193, "ms_p90": 59.2657 },
+    { "id": "dedup-off", "table": "E1_PUBLISHED", "features": 8, "toggles": "tail+no-suicide", "wins": 950, "games": 1000, "win_rate": 0.950000, "win_rate_ci95": [0.934686, 0.961870], "mean_lines": 64.9250, "mean_lines_on_wins": 65.0000, "evals_median": 90056.5, "evals_p90": 98979.0, "evals_mean": 93125.7, "ms_median": 39.1808, "ms_p90": 53.3431 },
+    { "id": "tail-off", "table": "E1_PUBLISHED", "features": 8, "toggles": "dedup+no-suicide", "wins": 943, "games": 1000, "win_rate": 0.943000, "win_rate_ci95": [0.926863, 0.955747], "mean_lines": 64.9430, "mean_lines_on_wins": 65.0000, "evals_median": 89967.0, "evals_p90": 91444.0, "evals_mean": 90010.2, "ms_median": 41.9035, "ms_p90": 55.8965 },
+    { "id": "no-suicide-off", "table": "E1_PUBLISHED", "features": 8, "toggles": "dedup+tail", "wins": 956, "games": 1000, "win_rate": 0.956000, "win_rate_ci95": [0.941448, 0.967062], "mean_lines": 64.9310, "mean_lines_on_wins": 65.0000, "evals_median": 89959.0, "evals_p90": 98145.0, "evals_mean": 92326.4, "ms_median": 42.8403, "ms_p90": 56.9172 }
   ],
   "pairs": [
-    { "judged": "e0", "reference": "e2", "both": 933, "only_judged": 7, "only_reference": 22, "neither": 38, "games": 1000, "n_disc": 29, "rejects_1_100": true, "delta_mean_lines": -0.0130, "ci95": [-0.0240, -0.0020], "ci95_excludes_zero": true, "boot_seed": "0xa79a4da6e37f702e", "resamples": 10000, "evals_median": [90123.5, 89935.0], "evals_differ_seeds": 975, "moved_seeds": 975 },
-    { "judged": "e1", "reference": "e2", "both": 944, "only_judged": 12, "only_reference": 11, "neither": 33, "games": 1000, "n_disc": 23, "rejects_1_100": false, "delta_mean_lines": 0.0010, "ci95": [-0.0080, 0.0100], "ci95_excludes_zero": false, "boot_seed": "0x4738ac4209bd0377", "resamples": 10000, "evals_median": [89959.0, 89935.0], "evals_differ_seeds": 962, "moved_seeds": 962 },
-    { "judged": "dedup-off", "reference": "e2", "both": 937, "only_judged": 7, "only_reference": 18, "neither": 38, "games": 1000, "n_disc": 25, "rejects_1_100": false, "delta_mean_lines": -0.0140, "ci95": [-0.0270, -0.0020], "ci95_excludes_zero": true, "boot_seed": "0x3c75597a0fdee047", "resamples": 10000, "evals_median": [90026.5, 89935.0], "evals_differ_seeds": 946, "moved_seeds": 946 },
-    { "judged": "tail-off", "reference": "e2", "both": 939, "only_judged": 0, "only_reference": 16, "neither": 45, "games": 1000, "n_disc": 16, "rejects_1_100": true, "delta_mean_lines": 0.0090, "ci95": [-0.0040, 0.0220], "ci95_excludes_zero": false, "boot_seed": "0x6fa8baf689e56a0f", "resamples": 10000, "evals_median": [89948.5, 89935.0], "evals_differ_seeds": 318, "moved_seeds": 318 },
-    { "judged": "no-suicide-off", "reference": "e2", "both": 955, "only_judged": 0, "only_reference": 0, "neither": 45, "games": 1000, "n_disc": 0, "rejects_1_100": false, "delta_mean_lines": 0.0000, "ci95": [0.0000, 0.0000], "ci95_excludes_zero": false, "boot_seed": "0x7da952bba28917db", "resamples": 10000, "evals_median": [89935.0, 89935.0], "evals_differ_seeds": 0, "moved_seeds": 0 }
+    { "judged": "e0", "reference": "e1", "both": 926, "only_judged": 14, "only_reference": 30, "neither": 30, "games": 1000, "n_disc": 44, "rejects_1_100": false, "delta_mean_lines": -0.0140, "ci95": [-0.0270, -0.0010], "ci95_excludes_zero": true, "boot_seed": "0x6b2dd1033bb3aefd", "resamples": 10000, "evals_median": [90123.5, 89959.0], "evals_differ_seeds": 975, "moved_seeds": 975 },
+    { "judged": "e2", "reference": "e1", "both": 944, "only_judged": 11, "only_reference": 12, "neither": 33, "games": 1000, "n_disc": 23, "rejects_1_100": false, "delta_mean_lines": -0.0010, "ci95": [-0.0100, 0.0090], "ci95_excludes_zero": false, "boot_seed": "0x027c8a05f24fe47b", "resamples": 10000, "evals_median": [89935.0, 89959.0], "evals_differ_seeds": 962, "moved_seeds": 962 },
+    { "judged": "dedup-off", "reference": "e1", "both": 938, "only_judged": 12, "only_reference": 18, "neither": 32, "games": 1000, "n_disc": 30, "rejects_1_100": false, "delta_mean_lines": -0.0060, "ci95": [-0.0170, 0.0050], "ci95_excludes_zero": false, "boot_seed": "0x3c75597a0fdee047", "resamples": 10000, "evals_median": [90056.5, 89959.0], "evals_differ_seeds": 959, "moved_seeds": 959 },
+    { "judged": "tail-off", "reference": "e1", "both": 943, "only_judged": 0, "only_reference": 13, "neither": 44, "games": 1000, "n_disc": 13, "rejects_1_100": true, "delta_mean_lines": 0.0120, "ci95": [0.0000, 0.0240], "ci95_excludes_zero": false, "boot_seed": "0x6fa8baf689e56a0f", "resamples": 10000, "evals_median": [89967.0, 89959.0], "evals_differ_seeds": 304, "moved_seeds": 304 },
+    { "judged": "no-suicide-off", "reference": "e1", "both": 956, "only_judged": 0, "only_reference": 0, "neither": 44, "games": 1000, "n_disc": 0, "rejects_1_100": false, "delta_mean_lines": 0.0000, "ci95": [0.0000, 0.0000], "ci95_excludes_zero": false, "boot_seed": "0x7da952bba28917db", "resamples": 10000, "evals_median": [89959.0, 89959.0], "evals_differ_seeds": 0, "moved_seeds": 0 }
   ],
   "cascade": {
     "rule": "highest win rate, where a difference with exact McNemar p >= 0.01 is a tie; a tie goes to fewer evaluations per solve, then to fewer features, then to the published table (\u00a79.4: E1 ships unless E2 clears p < 0.01)",
-    "winner": "e2",
+    "winner": "e1",
     "leg": "fewer evaluations per solve",
     "tied": ["e1", "e0", "e2"],
     "steps": [
       "highest win rate: e1 (956 of 1000)",
       "e0 vs e1: b = 14, c = 30, n = 44 -> p >= 0.01, a tie",
       "e2 vs e1: b = 11, c = 12, n = 23 -> p >= 0.01, a tie",
-      "evaluations per solve (median): e1 89959, e0 90123.5, e2 89935 -> kept e2"
+      "e2 vs e1: b = 11, c = 12, n = 23 -> the tuned table does not clear p < 0.01, so e1 ships (§9.4)",
+      "evaluations per solve (median): e1 89959, e0 90123.5 -> kept e1"
     ]
   },
   "toggles": [
-    { "id": "dedup-off", "off": "dedup", "verdict": "kept", "moved_seeds": 946, "n_disc": 25, "rejects_1_100": false, "ci95": [-0.0270, -0.0020], "ci95_excludes_zero": true },
-    { "id": "tail-off", "off": "tail", "verdict": "kept", "moved_seeds": 318, "n_disc": 16, "rejects_1_100": true, "ci95": [-0.0040, 0.0220], "ci95_excludes_zero": false },
+    { "id": "dedup-off", "off": "dedup", "verdict": "deleted", "moved_seeds": 959, "n_disc": 30, "rejects_1_100": false, "ci95": [-0.0170, 0.0050], "ci95_excludes_zero": false },
+    { "id": "tail-off", "off": "tail", "verdict": "kept", "moved_seeds": 304, "n_disc": 13, "rejects_1_100": true, "ci95": [0.0000, 0.0240], "ci95_excludes_zero": false },
     { "id": "no-suicide-off", "off": "no-suicide", "verdict": "deleted", "moved_seeds": 0, "n_disc": 0, "rejects_1_100": false, "ci95": [0.0000, 0.0000], "ci95_excludes_zero": false }
   ],
   "shipped": {
-    "evaluator": "e2",
-    "table": "E2_TUNED",
+    "evaluator": "e1",
+    "table": "E1_PUBLISHED",
     "features": 8,
     "toggles": "dedup+tail+no-suicide",
-    "deleted_toggles": ["no-suicide-off"],
+    "deleted_toggles": ["dedup-off", "no-suicide-off"],
     "decided_by": "\u00a79.4 cascade on the bed above, leg: fewer evaluations per solve",
     "read_by": "ticket 09 (Reference run) and ticket 16 (Explainer) read this block; docs/measurements/ablation-ladder.md prints the same verdict"
   },
@@ -130,7 +131,7 @@
     "split": "1,000–1,999 (the tuning Split that §6 reserves for weight tuning, ablations and width curves)",
     "width": "DEFAULT_BEAM = 25 (from data/measurements/width-curve.json, quality fingerprint fnv1a64:af9f8a8c76b93ad5), width cap 800",
     "machine": "AMD Ryzen 7 5700X 8-Core Processor (8C/16T), 31.9 GB, Microsoft Windows 11 Pro",
-    "dataset": "generated from engine::generate_game (generator_version 1), bed fingerprint e4e91a6320ca6148, engine commit 11b7bdd, 2026-11-03T00:22:59Z",
+    "dataset": "generated from engine::generate_game (generator_version 1), bed fingerprint e4e91a6320ca6148, engine commit e3ed7c1, 2026-11-03T00:27:25Z",
     "rules": "game over = spawn-blocked; no-suicide fallback on (\u00a75.3); goal reached => search stops; lines on failure are the beam's high-water mark"
   }
 }
