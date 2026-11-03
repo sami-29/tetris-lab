@@ -58,3 +58,7 @@ web/.wrangler/
 !data/
 !data/dataset/
 !data/dataset/**
+
+# ticket 06 spike measurements: 2.2 MB of jsonl that must never be committed.
+# The directory rule above did not match on this box; this one does.
+prototype/data/**
