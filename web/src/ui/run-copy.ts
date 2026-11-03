@@ -95,7 +95,9 @@ export function progressWords(input: {
     case "complete":
       return `${games} of ${total} games · ${work} work · ${input.workers} workers`;
     case "stopped":
-      return `stopped at ${games} of ${total} games · ${work} work`;
+      // The word `partial` is the point of the sentence: what is on screen is not the
+      // Split, and the ms rows are a mean over a prefix of the seeds.
+      return `partial Run · stopped at ${games} of ${total} games · ${work} work`;
     case "failed":
       return `failed at ${games} of ${total} games · ${work} work`;
     default:
