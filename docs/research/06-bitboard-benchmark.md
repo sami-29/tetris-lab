@@ -78,28 +78,11 @@ Worker-restart cost, wasm u32 (was 05's open question): compile a module from by
 
 ## 7. Reproduce
 
-```bash
-# everything: build all variants, export games, run Python + 15 interleaved kernel sweeps, write the table
-SESSIONS=3 REPS=5 bash prototype/run-bench.sh
-
-# rows for the shipped Python solver and the lines-live variant (1000 games each, ~3 min)
-python prototype/py/baseline.py bench --variant asis       --count 1000 --out prototype/data/py-asis.jsonl
-python prototype/py/baseline.py bench --variant lines_live --count 1000 --out prototype/data/py-lines_live.jsonl
-
-# one native row (Rust, u32, target-cpu=native), with the eval-count gate
-./prototype/artifacts/bench-native-u32-native.exe --games prototype/data/games_goal8_p40_seed0-999.txt \
-  --goal 8 --out prototype/data/rs-native-u32-native.jsonl --check prototype/data/py-asis.jsonl
-
-# one wasm row (u32, scalar), including batch, instance restart and SIMD parity
-node prototype/wasm/bench.mjs --wasm prototype/artifacts/wasm-u32.wasm \
-  --games prototype/data/games_goal8_p40_seed0-999.txt --goal 8 --reps 5 \
-  --out prototype/data/wasm-u32.jsonl --check prototype/data/py-asis.jsonl
-
-# one C++ row
-g++ -O3 -march=native -std=c++20 -o prototype/cpp/t06_bench_native.exe prototype/cpp/t06_bench.cpp
-./prototype/cpp/t06_bench_native.exe --games prototype/data/games_goal8_p40_seed0-999.txt --goal 8 \
-  --out prototype/data/cpp-native-march.jsonl --check prototype/data/py-asis.jsonl
-```
+The harness is deleted at cutover, so nothing here runs on a fresh clone. Recover
+each file with `git show 4bb9354:prototype/<path>` — the `run-bench.sh` orchestrator,
+the Python baselines, the native and wasm kernels, the C++ kernel, and the exported
+games file — then run the harness's own commands. The table above is the preserved
+evidence; the commands were never re-run after the cutover.
 
 Per-game rows (one JSON object per seed) landed in the spike's `data/*.jsonl`; the aggregated table was `results.md` beside them. Both were deleted with the harness; recover them with `git show 4bb9354:prototype/<path>` when they were tracked, and see the status line for the rest.
 

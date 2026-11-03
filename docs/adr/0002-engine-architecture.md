@@ -2,7 +2,7 @@
 
 The solver searches a known piece sequence, so each beam layer is one piece index and no sampling is needed. We ship a **layered beam search over u32 column bitboards with per-layer deduplication, a no-suicide rule, an exact 3-piece tail search, and an evaluator behind a trait** — two implementations (`Heuristic` as the ablation control, `DellacherieThiery` with eight fixed-point features), with the shipped default decided by the ablation rather than by preference.
 
-The code lives in one Rust workspace plus the web app: `engine/` (board, pieces, beam, dedup, evaluators, tail — pure, no I/O, host-testable), `engine-wasm/` (the exported ABI and nothing else), `bench/` (native CI and ablation runner reusing `engine/` exactly as the wasm build does), `web/` (Vite, vanilla TypeScript, Canvas 2D). `engine/` never imports wasm or JS types; `engine-wasm/` never contains search or scoring logic. That split is what makes "the browser number is not a guess" structural.
+The code lives in one Rust workspace plus the web Lab: `engine/` (board, pieces, beam, dedup, evaluators, tail — pure, no I/O, host-testable), `engine-wasm/` (the exported ABI and nothing else), `bench/` (native CI and ablation runner reusing `engine/` exactly as the wasm build does), `web/` (Vite, vanilla TypeScript, Canvas 2D). `engine/` never imports wasm or JS types; `engine-wasm/` never contains search or scoring logic. That split is what makes "the browser number is not a guess" structural.
 
 ## Considered Options
 

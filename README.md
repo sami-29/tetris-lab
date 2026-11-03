@@ -28,7 +28,7 @@ bench/             native binary: Dataset verify/export/fingerprint, the Referen
 web/               Vite + vanilla TypeScript + Canvas 2D, zero runtime dependencies.
   src/core/        the only code that touches WebAssembly
   src/workers/     the worker entry and the message protocol
-  src/ui/          the workbench shell, board, band, tree, inspector, Explainer
+  src/ui/          the Lab's shell, board, band, tree, inspector, Explainer
   scripts/         build-wasm.mjs, build-facts.mjs, manifest.mjs, verify.sh,
                    browser-check.mjs, check-words.mjs, the gate helpers
 data/dataset/      the committed Dataset, two configurations × 2,000 seeds —
@@ -171,10 +171,11 @@ observed, is in [`docs/measurements/delivery.md`](docs/measurements/delivery.md)
 
 ## Where the decisions live
 
-- `docs/adr/` — `docs/adr/0001` (Rust on wasm32, scalar u32 column
-  bitboards, raw exports), `docs/adr/0002` (the engine's architecture),
-  `docs/adr/0003` (the generator contract). Each records what was measured, what
-  was rejected and why. Read the ADR that touches the area you are about to change.
+- `docs/adr/` — `0001-rust-wasm32-scalar-bitboards.md` (Rust on wasm32, scalar u32 column
+  bitboards, raw exports), `0002-engine-architecture.md` (the engine's architecture),
+  `0003-generator-contract.md` (the generator contract). Each records what was
+  measured, what was rejected and why. Read the ADR that touches the area you are
+  about to change.
 - `docs/research/01..06` — the surveys and benchmarks the ADRs cite: language and
   toolchain, the host, the browser compute ceiling, the algorithm frontier, the
   app architecture, and the bitboard benchmark that decided ADR 0001.
