@@ -13,12 +13,12 @@ The data is a **real beam trace**: `trace.js` is a layered beam solve at width 2
 Dataset game `seed 0` (goal 8, 40 pieces), dumped layer by layer. Every layer, parent
 link, score, line count and board is what the search emitted.
 
-It is **not** the shipped engine (that does not exist yet). It models the shape
-ADR-0002 describes — layered beam, per-layer dedup by board, Dellacherie–Thiery
-evaluator, 10×u32 column bitboards — and leaves out things that do not change what
-the tree looks like: the exact 3-piece tail, the no-suicide height cap, worker
-scheduling. Dedup here keeps the highest score; the glossary says dedup keeps the
-state that cleared more lines.
+It is **not** the shipped engine's code. It models the shape ADR-0002 describes —
+layered beam, per-layer dedup by board, Dellacherie–Thiery evaluator, 10×u32 column
+bitboards — and leaves out things that do not change what the tree looks like: the
+exact 3-piece tail, the no-suicide height cap, worker scheduling. The shipped
+engine (`engine/`) has that shape. Dedup here keeps the highest score; the glossary
+says dedup keeps the state that cleared more lines.
 
 The viewer itself is honest: no fabricated nodes, no synthetic growth curve like the
 t10 mockup's.
@@ -68,8 +68,7 @@ index.html?z=7&l=4                    # zoomed into one layer
 ## Files
 
 ```text
-prototype/t14-tree/
-├── gen_trace.py     beam search + metrics -> trace.js   (the only real code)
+docs/design/t14-tree/
 ├── index.html       the viewer: canvas tree / band / cloud, no dependencies
 ├── trace.js         the dumped trace + per-layer metrics (generated)
 ├── shots/           screenshots of each configuration, for the review

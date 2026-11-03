@@ -38,8 +38,15 @@ If the token is scoped to Workers Scripts:Edit only, attaching
 exists, and only then re-run both checks against the custom domain.
 
 **Close when:** `verify.sh` prints `PASS n checks` with 0 failed and
-`browser-check.mjs` prints `PASS`, including a live Run whose win rate and timings
-are the Reference row's.
+`browser-check.mjs` prints `PASS the page solves, plays back, and can be driven`.
+That PASS is the script's own assertions: the live win rate and Evaluations equal
+the Reference row's, the millisecond rows differ from it (this machine's own, and
+say so), and the Run completes inside the script's 5 s budget. The script times
+that budget from the click to the last game applied — 1.73 s on the maintainer box
+on 2026-11-03 — while the page's own readout for the same 2,000 games reads 12.3 s
+because it includes Worker start-up. `docs/measurements/delivery.md` records both
+numbers, and labels which is which; do not compare the readout against the
+script's budget.
 
 ## 2. Delete the probe Worker
 
@@ -62,11 +69,11 @@ Prove the requirement rather than assuming it:
 
 ```bash
 curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://<service>.onrender.com
-dig +short <service>.onrender.com
 ```
 
-**Close when:** the `curl` reports no response (DNS failure) and `dig` prints
-nothing. A *suspended* service can still answer; a parked hostname would need a
+**Close when:** the `curl` fails with a DNS error (curl exit code 6) and prints no
+HTTP status line — the name is dead, nothing answers, and there is no redirect to
+record. A *suspended* service can still answer; a parked hostname would need a
 support request, and the fact belongs in the release note.
 
 ## 4. Rename the repository

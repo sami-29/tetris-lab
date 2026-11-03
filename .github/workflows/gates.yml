@@ -122,6 +122,15 @@ jobs:
       - name: fmt
         run: cargo fmt --all --check
 
+      # `web/scripts/gen-replay-vectors` declares its own workspace (a fixture
+      # generator, not a member of the repo workspace), so the root `cargo fmt
+      # --all --check` never touches it. Check it from its own manifest with the
+      # same pinned toolchain.
+      - name: fmt (gen-replay-vectors)
+        run: >-
+          cargo fmt --manifest-path
+          web/scripts/gen-replay-vectors/Cargo.toml --check
+
       # The build comes first because gates 4 and 6 measure
       # `web/pkg/engine.wasm` and `web/dist`, which are not committed.
       - name: six gates

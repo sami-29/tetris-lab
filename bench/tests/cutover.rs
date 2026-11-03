@@ -201,7 +201,7 @@ fn the_workflows_use_no_python() {
 /// The extensions a committed document cites as a *repository* path.
 const EXTENSIONS: &[&str] = &[
     ".md", ".rs", ".ts", ".mjs", ".sh", ".json", ".jsonl", ".txt", ".toml", ".html", ".css",
-    ".wasm", ".yml", ".yaml", ".png",
+    ".wasm", ".yml", ".yaml", ".png", ".py",
 ];
 
 /// The directories this repository has, plus the ones the cutover deletes. A
@@ -227,7 +227,7 @@ const ROOTS: &[&str] = &[
     "web",
 ];
 
-/// Is this backticked token a repository-relative file path?
+/// Is this token a repository-relative file path?
 ///
 /// Deliberately narrow. It has to be, because the documents also contain commands
 /// (`cargo test -p bench ...`), build output relative to `web/dist`
@@ -237,6 +237,13 @@ const ROOTS: &[&str] = &[
 /// ordinary `docs/...` references -- all have a slash, a known extension, and no
 /// syntax marker in them.
 fn is_path_citation(token: &str) -> bool {
+    // A trailing `:line` (e.g. `docs/runbook.md:40`) points into a file, not to a
+    // different path; check the file it names.
+    let token = token
+        .rsplit_once(':')
+        .filter(|(_, suffix)| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
+        .map(|(path, _)| path)
+        .unwrap_or(token);
     if !token.contains('/') || token.starts_with('/') {
         return false;
     }
@@ -246,9 +253,7 @@ fn is_path_citation(token: &str) -> bool {
     if !ROOTS.contains(&root) {
         return false;
     }
-    if token.contains([
-        '<', '>', '{', '}', '*', '$', ':', '=', '#', '|', '\\', '"', '\'',
-    ]) {
+    if token.contains(['<', '>', '{', '}', '*', '$', '=', '#', '|', '\\', '"', '\'']) {
         return false;
     }
     if token.starts_with("assets/") || token.starts_with("dist/") {
@@ -259,8 +264,9 @@ fn is_path_citation(token: &str) -> bool {
         .any(|extension| token.ends_with(extension))
 }
 
-/// Every inline code span on a line. Fenced blocks are skipped by the caller: they
-/// are commands to type, not citations of files the clone has.
+/// Every inline code span on a line. Used for prose; a fenced code block is
+/// scanned line by line instead, because its contents are commands and tree
+/// diagrams rather than inline code.
 fn spans(line: &str) -> Vec<&str> {
     let mut spans = Vec::new();
     let mut rest = line;
@@ -275,6 +281,47 @@ fn spans(line: &str) -> Vec<&str> {
     spans
 }
 
+/// A citation token with the punctuation prose may wrap around it. A leading dot
+/// is kept: `.scratch/` is a real prefix, and `.github/` must not be shortened to
+/// a path that does not exist.
+fn trim_citation(word: &str) -> &str {
+    let token = word.trim_start_matches(['(', '"', '\'']);
+    let token = token.trim_end_matches([',', ';', ')', ':', '"', '\'']);
+    token.strip_suffix('.').unwrap_or(token)
+}
+
+/// Record one candidate citation; a miss is reported with the document and line.
+fn record_citation(
+    document: &str,
+    number: usize,
+    token: &str,
+    cites: &mut usize,
+    misses: &mut Vec<String>,
+) {
+    if !is_path_citation(token) {
+        return;
+    }
+    *cites += 1;
+    if !resolves(document, token) {
+        misses.push(format!("{document}:{}: `{token}`", number + 1));
+    }
+}
+
+/// The first entry of a tree-diagram line (`├── name …`, `└── name …`, or an
+/// indented continuation `│   name …`), after the box-drawing prefix is stripped.
+/// Returns `None` when the line has no such entry.
+fn tree_entry(line: &str) -> Option<&str> {
+    let has_box = line.contains('├') || line.contains('└') || line.contains('│');
+    if !has_box {
+        return None;
+    }
+    let stripped = line.trim_start_matches([' ', '│', '├', '└', '─']);
+    if stripped.is_empty() {
+        return None;
+    }
+    stripped.split_whitespace().next()
+}
+
 #[test]
 fn every_committed_markdown_citation_resolves() {
     let mut misses = Vec::new();
@@ -283,31 +330,53 @@ fn every_committed_markdown_citation_resolves() {
     for path in tracked().iter().filter(|path| path.ends_with(".md")) {
         let text = read(&repo().join(path));
         let mut in_fence = false;
+        let mut tree_root: Option<String> = None;
         for (number, line) in text.lines().enumerate() {
             let trimmed = line.trim_start();
             if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
                 in_fence = !in_fence;
+                tree_root = None;
                 continue;
             }
+
             if in_fence {
+                // A bare `dir/` line opens a tree diagram; the entries below it
+                // are files relative to it, so `gen_trace.py` under
+                // `prototype/t14-tree/` is the citation
+                // `prototype/t14-tree/gen_trace.py`.
+                let bare = line.trim();
+                if !bare.contains('├')
+                    && !bare.contains('└')
+                    && !bare.contains('│')
+                    && !bare.contains(char::is_whitespace)
+                    && bare.ends_with('/')
+                    && bare.contains('/')
+                {
+                    tree_root = Some(bare.trim_end_matches('/').to_string());
+                    continue;
+                }
+
+                // Commands and tree entries alike: every whitespace-separated
+                // token may be a repository path (`prototype/run-bench.sh`).
+                for word in line.split_whitespace() {
+                    record_citation(path, number, trim_citation(word), &mut cites, &mut misses);
+                }
+                if let (Some(root), Some(entry)) = (tree_root.as_deref(), tree_entry(line)) {
+                    let joined = format!("{root}/{entry}");
+                    record_citation(
+                        path,
+                        number,
+                        trim_citation(&joined),
+                        &mut cites,
+                        &mut misses,
+                    );
+                }
                 continue;
             }
 
             for span in spans(line) {
                 for word in span.split_whitespace() {
-                    // Punctuation the prose puts around a citation, never part of it.
-                    // A leading dot is kept: `.scratch/` is a real prefix, and
-                    // `.github/` must not be shortened to a path that does not exist.
-                    let token = word.trim_start_matches(['(', '"', '\'']);
-                    let token = token.trim_end_matches([',', ';', ')', ':', '"', '\'']);
-                    let token = token.strip_suffix('.').unwrap_or(token);
-                    if !is_path_citation(token) {
-                        continue;
-                    }
-                    cites += 1;
-                    if !resolves(path, token) {
-                        misses.push(format!("{path}:{}: `{token}`", number + 1));
-                    }
+                    record_citation(path, number, trim_citation(word), &mut cites, &mut misses);
                 }
             }
 
@@ -442,15 +511,12 @@ fn the_deleted_host_is_not_cited() {
         if !text_like.iter().any(|extension| path.ends_with(extension)) {
             continue;
         }
-        // The survivors that may name the host on purpose: the research note that
-        // surveyed free hosts (it predates the decision and is evidence, not a
-        // citation), the banned-words list that exists to forbid the word, this
-        // test, whose assertion is where the token is written down, and the
-        // runbook, whose retirement step must spell the URL it is proving dead
-        // (the spec's own §11 sentence does too).
-        let allowed = path.starts_with("docs/research/")
-            || path == "web/scripts/words.mjs"
-            || path == "bench/tests/cutover.rs";
+        // The survivors that may name the host on purpose: the banned-words
+        // list that exists to forbid the word, this test (whose assertion is
+        // where the token is written down), and the runbook, whose retirement
+        // step must spell the URL it is proving dead (the spec's own §11
+        // sentence does too).
+        let allowed = path == "web/scripts/words.mjs" || path == "bench/tests/cutover.rs";
         let may_name_the_retired_url = allowed || path == "docs/runbook.md";
         let text = read(&repo().join(&path)).to_lowercase();
         assert!(
@@ -460,7 +526,7 @@ fn the_deleted_host_is_not_cited() {
         if !may_name_the_retired_url {
             assert!(
                 !text.contains("render.com"),
-                "{path} names the retired host; only docs/research/, the banned-words list and the runbook may"
+                "{path} names the retired host; only the banned-words list and the runbook may"
             );
         }
     }
@@ -486,7 +552,7 @@ fn the_readme_is_the_developer_entry() {
         "cargo run -p bench --release -- verify",
         "npm --prefix web run build",
         "npx wrangler deploy",
-        "docs/adr/0001",
+        "0001-rust-wasm32-scalar-bitboards.md",
         "Explainer",
     ] {
         assert!(readme.contains(needed), "README.md never mentions {needed}");

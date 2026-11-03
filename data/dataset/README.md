@@ -12,7 +12,7 @@ Each directory holds exactly three committed files:
                      seed, ten 8-digit lowercase hex column words, sequence letters
     manifest.json    the configuration, both splits, generator_version, description,
                      and the Dataset fingerprint (FNV-1a-64 over seed + words + letters)
-    reference.jsonl  the append-only Reference run; empty until a Reference run lands
+    reference.jsonl  the append-only Reference run, one JSON object per measurement
 
 Bit *n* of a column word is row 19-n, so bit 0 is the bottom row. The fingerprint
 is semantic: reformatting a file cannot move it, changing any game must.
@@ -95,5 +95,6 @@ exactly once; `notes` grown by exactly one line carrying the reason; no
     goal8-p40-cap7/games.txt      270 949 B   (2 001 lines)
     goal12-p100-cap7/games.txt    390 951 B   (2 001 lines)
 
-`manifest.json` is ~550 B and human-readable; `reference.jsonl` is 0 B. A generator
-change adds one archive file of the same size as the `games.txt` it replaced.
+`manifest.json` is ~550 B and human-readable; `reference.jsonl` holds the append-only
+Reference run, and index 3 is the live row. A generator change adds one archive file
+of the same size as the `games.txt` it replaced.

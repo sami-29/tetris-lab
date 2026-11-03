@@ -123,7 +123,7 @@ core/                         # native C++ (language per ticket 07; C++ leaning)
 **Message shapes (sketch, TypeScript):**
 
 ```ts
-// web/src/engine/protocol.ts
+// web/src/core/protocol.ts
 export type JobId = number;
 
 export type Board = Uint8Array;          // 200 cells, row-major, 0 = empty
@@ -159,7 +159,7 @@ Notes on the sketch:
 **Pool (sketch):**
 
 ```ts
-// web/src/engine/pool.ts
+// web/src/core/pool.ts
 export interface Job<T> { id: JobId; progress: ReadableStream<Progress>; result: Promise<T>; cancel(): void }
 export interface Pool { size: number; submit<T>(spec: JobSpec): Job<T>; dispose(): void }
 ```
