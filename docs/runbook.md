@@ -15,7 +15,14 @@ condition is what the ticket asks for, not a feeling that it worked.
   clean on that commit. Record it: `git rev-parse HEAD`.
 - `npm --prefix web ci` has run on this box.
 - A `gates` run exists in the repository (the deploy workflow cannot name a check
-  that has never completed), and the two repository secrets below exist.
+  that has never completed), and both repository secrets are set. `deploy.yml`'s
+  first step fails on a missing secret with the two commands in the annotation:
+
+  ```bash
+  gh secret set CLOUDFLARE_API_TOKEN --repo sami-29/tetris-lab
+  gh secret set CLOUDFLARE_ACCOUNT_ID --repo sami-29/tetris-lab
+  gh secret list --repo sami-29/tetris-lab   # both names, both updated today
+  ```
 - `npx wrangler login` has been done once; `npx wrangler whoami` answers.
 
 ## 1. Deploy the Lab, before moving the domain — **run 2026-11-03**

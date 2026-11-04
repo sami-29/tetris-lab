@@ -27,7 +27,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 
-import { FIGURES, FIGURE_SOURCES, REQUIRED_FIGURES } from "../src/ui/figure.ts";
+import { FIGURES, FIGURE_SOURCES, REQUIRED_FIGURES, STATIC_FIGURES } from "../src/ui/figure.ts";
 
 const WEB = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const read = (...parts) => readFileSync(join(WEB, ...parts), "utf8");
@@ -110,13 +110,16 @@ test("no emoji, no dingbats, no stock furniture: the icons are hand-made SVG", (
       assert.equal(text.includes(glyph), false, `${file} carries ${JSON.stringify(glyph)}, which is an icon here`);
     }
   }
-  // The icon set is the notes' eleven, each drawn here and not fetched.
+  // The icon set is the notes' eleven, each drawn here and not fetched. The ban is
+  // on an *asset*: a file reference or a fetch. It is deliberately not `https?:`,
+  // which would fire on the SVG namespace URI a hand-built `<svg>` legitimately
+  // carries.
   const icons = read("src", "ui", "icons.ts");
   for (const name of ["brand-mark", "help", "play", "pause", "step-back", "step-forward",
     "restart", "close", "expert-chevron", "tree-toggle", "stop"]) {
     assert.ok(icons.includes(`"${name}"`) || icons.includes(`'${name}'`), `the ${name} icon exists`);
   }
-  assert.doesNotMatch(icons, /<img|\.png|\.svg"|https?:/, "hand-made, not an image or a font");
+  assert.doesNotMatch(icons, /<img|\.(png|jpe?g|gif|webp)\b|new URL\(|fetch\(|@import/, "hand-made, not an image or a font");
 });
 
 test("every control in the markup carries a tooltip", () => {
@@ -190,10 +193,15 @@ test("the ids the headless harness drives survive the shell being replaced", () 
 });
 
 test("a static figure says exactly what the registry says it says", () => {
-  // The toolbar's four fields and the keyboard map are in the markup so the first
-  // paint has words in it. They are still *registry* figures: label, provenance,
-  // kind and tooltip must be the registry's, or the page has two tables to keep in
-  // step and one of them is a lie.
+  // Two figures live in the markup so the first paint has words in it. They are still
+  // *registry* figures: label, provenance, kind and tooltip must be the registry's, or
+  // the page has two tables to keep in step and one of them is a lie.
+  //
+  // `STATIC_FIGURES` is the ceiling: a third duplicate is a test failure, not a
+  // review note, so the cheap path for a new figure is `createFigure` at boot.
+  const pasted = [...html.matchAll(/data-figure="([a-z0-9-]+)"/g)].map((match) => match[1]);
+  assert.deepEqual([...pasted].sort(), [...STATIC_FIGURES].sort(),
+    "the markup mirrors exactly the figures STATIC_FIGURES names");
   for (const [, id, attrs] of html.matchAll(/data-figure="([a-z0-9-]+)"([^>]*)>/g)) {
     const spec = FIGURES[id];
     assert.ok(spec, `${id} is a figure the registry knows`);

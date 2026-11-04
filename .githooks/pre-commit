@@ -1,0 +1,6 @@
+#!/bin/sh
+# The fast gate: typecheck plus the UI tests that pin copy and layout numbers.
+# `npm run gates` stays the bar for CI; this is the bar for a commit, and it costs
+# about five seconds instead of five minutes.
+cd "$(git rev-parse --show-toplevel)/web" || exit 1
+exec npm run --silent check:fast

@@ -30,9 +30,11 @@ bench/             native binary: Dataset verify/export/fingerprint, the Referen
 web/               Vite + vanilla TypeScript + Canvas 2D, zero runtime dependencies.
   src/core/        the only code that touches WebAssembly
   src/workers/     the worker entry and the message protocol
-  src/ui/          the Lab's shell, board, band, tree, inspector, Explainer
+  src/ui/          the Lab's shell, board, band, tree, inspector, Explainer;
+                   src/ui/README.md maps it before a UI change
   scripts/         build-wasm.mjs, build-facts.mjs, manifest.mjs, verify.sh,
-                   browser-check.mjs, check-words.mjs, the gate helpers
+                   browser-check.mjs, shot.mjs (one screenshot, for looking),
+                   check-words.mjs, the gate helpers
 data/dataset/      the committed Dataset, two configurations × 2,000 seeds; read
                    data/dataset/README.md before touching it
 data/measurements/ the committed width curve, ladder, tuning record and golden
@@ -41,7 +43,9 @@ docs/research/     01-06: the surveys and benchmarks those decisions rest on
 docs/design/       the two prototype artifacts the UI was judged against
 docs/measurements/ the delivery sizes and the ablation write-up
 docs/runbook.md    the cutover steps only a maintainer can run
+PRODUCT.md         the audience and the three things a visitor does
 .github/workflows/ gates.yml (every push), deploy.yml (a green gates run on main)
+.githooks/         pre-commit: the fast gate (typecheck plus the copy-pinning tests)
 ```
 
 `engine/` never imports wasm or JS types; `engine-wasm/` never contains search or

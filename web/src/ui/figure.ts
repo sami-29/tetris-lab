@@ -191,6 +191,17 @@ export const REQUIRED_FIGURES: readonly FigureId[] = [
   "s1", "s5",
 ];
 
+/**
+ * The figures whose words live in `index.html` as well as here: the first paint has to
+ * say something before any script runs, so these two repeat the registry, and
+ * `web/test/shell.test.mjs` fails if the repetition drifts.
+ *
+ * The list is a ceiling, not a note. Every other figure is built by `createFigure` at
+ * boot, so a third entry is a decision to maintain a second copy. If a new static
+ * figure is tempting, stamp its attributes at boot instead.
+ */
+export const STATIC_FIGURES = ["m4", "s5"] as const satisfies readonly FigureId[];
+
 /** What an empty slot says before its first solve. It means the same on every run. */
 export const NOT_MEASURED = "not measured yet";
 export const AWAITING_SOLVE = "no solve yet";

@@ -75,6 +75,28 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
+      # Fail in ten seconds with the remedy in the annotation, not in thirty at
+      # `wrangler deploy` behind a wall of ANSI. A missing secret is a
+      # precondition, and a precondition written in prose is not a check: the
+      # deploy was red on every push for a day and nothing on the run said why.
+      - name: the two secrets exist
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=""
+          if [ -z "$TOKEN" ]; then missing="CLOUDFLARE_API_TOKEN"; fi
+          if [ -z "$ACCOUNT" ]; then missing="${missing:+$missing and }CLOUDFLARE_ACCOUNT_ID"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::Repository secret $missing is empty. Set both, then re-run this job:"
+            echo "  gh secret set CLOUDFLARE_API_TOKEN --repo ${{ github.repository }}"
+            echo "  gh secret set CLOUDFLARE_ACCOUNT_ID --repo ${{ github.repository }}"
+            echo "README.md, 'The two secrets', names the scope each one needs."
+            exit 1
+          fi
+          echo "both secrets are present"
+
       - uses: actions/checkout@v4
         with:
           # NOT `github.sha`: see the header. This is the gated commit.
