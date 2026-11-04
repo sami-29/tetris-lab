@@ -89,7 +89,11 @@ jobs:
           if [ -z "$TOKEN" ]; then missing="CLOUDFLARE_API_TOKEN"; fi
           if [ -z "$ACCOUNT" ]; then missing="${missing:+$missing and }CLOUDFLARE_ACCOUNT_ID"; fi
           if [ -n "$missing" ]; then
-            echo "::error::Repository secret $missing is empty. Set both, then re-run this job:"
+            if [ "$missing" = "CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID" ]; then
+              echo "::error::Both repository secrets are empty. Set them, then re-run this job:"
+            else
+              echo "::error::Repository secret $missing is empty. Set both, then re-run this job:"
+            fi
             echo "  gh secret set CLOUDFLARE_API_TOKEN --repo ${{ github.repository }}"
             echo "  gh secret set CLOUDFLARE_ACCOUNT_ID --repo ${{ github.repository }}"
             echo "README.md, 'The two secrets', names the scope each one needs."
