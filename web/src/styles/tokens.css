@@ -60,6 +60,10 @@
   --fs-title: 16px;
   --fs-brand: 14px;
 
+  /* one control height, so a button and the field beside it are the same object;
+     44 px takes over in the stacked layout (see the 1100 px block) */
+  --ctl: 28px;
+
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --sans: ui-sans-serif, system-ui, "Segoe UI", Inter, Roboto, sans-serif;
 

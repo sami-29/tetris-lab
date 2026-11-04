@@ -534,8 +534,8 @@ runCustomNote.textContent = "Nothing measured yet.";
 // The status bar's Evaluations count: the one solve number shown nowhere else.
 const s1 = fig("s1", statusFigures, "0");
 
-// The move figures in the transport.
-const m1 = fig("m1", moveFigureHost, "0");
+// The move figure in the transport. The strip's aria-valuemax already carries the
+// total for assistive technology, so this is the only visible one.
 const m2 = fig("m2", moveFigureHost, "0");
 m2.el.classList.add("nolabel");
 
@@ -1067,12 +1067,17 @@ function paintStrip(k: number, total: number): void {
         word === undefined
           ? `Move ${index + 1}`
           : `Move ${index + 1} · ${letterOf((word >>> 16) & 0xff)} → column ${word & 0xff}${clears ? " · cleared rows" : ""}`;
-      if (mode === "tick") cell.dataset.tick = "true";
+      if (mode === "tick") {
+        cell.dataset.tick = "true";
+      } else if (word !== undefined) {
+        // Glyph mode: the cell is wide enough to say which piece the move placed.
+        // A tick at 60+ moves is the same information squeezed past legibility.
+        cell.append(pieceGlyph(letterOf((word >>> 16) & 0xff), 5));
+      }
       strip.append(cell);
     }
     strip.dataset.mode = mode;
     strip.setAttribute("aria-valuemax", String(total));
-    m1.set(String(total), "");
     painted = { k: -1, total };
   }
   strip.setAttribute("aria-valuenow", String(k));
@@ -1122,7 +1127,6 @@ function newGameStrip(words: string): void {
   caret.style.left = "0px";
   painted = { k: 0, total: 0 };
   clearedMoveFlag = [];
-  m1.set("0", "");
   m2.set("0", "of 0 moves");
 }
 

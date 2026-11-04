@@ -133,6 +133,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
   padding: 0 13px;
   border-left: 1px solid var(--line);
   font: 500 var(--fs-data) / 1 var(--sans);
@@ -294,6 +295,28 @@
   display: none;
 }
 
+/* The small toggles — Expert, the drawer's close, the view tabs — are controls
+   too: one height, with padding, so none of them is a bare 22 px word. */
+.iconbtn,
+#expert {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--ctl);
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--ink2);
+  font: 500 var(--fs-data) / 1 var(--sans);
+  transition: background var(--t-hover) linear, color var(--t-hover) linear;
+}
+
+.iconbtn:hover,
+#expert:hover {
+  background: var(--panel2);
+  color: var(--ink);
+}
+
 #expert .chev {
   transition: transform var(--t-hover) linear;
 }
@@ -320,9 +343,11 @@
   color: var(--ink4);
 }
 
+/* One per row: the label names the goal and the piece count, so it needs the rail's
+   full width to stay on one line at the control height. */
 #playground .presets {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 1px;
   background: var(--line);
 }
@@ -332,7 +357,11 @@
 }
 
 #playground .presets button {
-  padding: 6px 0;
+  padding: 0 8px;
+  min-height: var(--ctl);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: var(--panel2);
   border: 0;
   border-radius: 0;
@@ -372,6 +401,7 @@
 #playground .fields input[type="number"] {
   width: 100%;
   grid-column: 1 / -1;
+  min-height: var(--ctl);
 }
 
 /* One field per row, label above the control, in the rail's width. */
@@ -756,9 +786,24 @@
 
 #strip i {
   position: relative;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--panel2);
-  transition: background var(--t-hover) linear;
+  color: var(--ink3);
+  transition: background var(--t-hover) linear, color var(--t-hover) linear;
+}
+
+#strip i .glyph {
+  opacity: 0.55;
+}
+
+#strip i[data-played="true"] .glyph {
+  opacity: 1;
+}
+
+#strip i[data-played="true"] {
+  color: var(--teal2);
 }
 
 #strip i[data-played="true"] {
@@ -810,7 +855,9 @@
 }
 
 .transport .tbtn {
-  height: 24px;
+  height: var(--ctl);
+  min-width: var(--ctl);
+  justify-content: center;
   padding: 0 8px;
   border: 1px solid var(--line2);
   border-radius: 2px;
@@ -965,6 +1012,7 @@
 }
 
 #views button {
+  min-height: var(--ctl);
   font: var(--fs-chip) / 1 var(--mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1620,10 +1668,21 @@
 
 .run-form {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   flex-wrap: wrap;
   gap: 6px;
   padding: 4px 9px 8px;
+}
+
+.run-form .tbtn {
+  height: var(--ctl);
+  padding: 0 12px;
+  border: 1px solid var(--line2);
+  border-radius: 2px;
+}
+
+.run-form .tbtn.go {
+  border-color: var(--amber-edge);
 }
 
 .rfield {
@@ -1636,6 +1695,7 @@
 
 .rfield input {
   width: 74px;
+  height: var(--ctl);
   padding: 5px 7px;
   border: 1px solid var(--line2);
   border-radius: 2px;
@@ -1652,15 +1712,17 @@
 
 .run-startrow {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 1px;
   padding: 0 9px 6px;
 }
 
 .run-startrow .tbtn {
+  height: var(--ctl);
   border: 1px solid var(--line);
   border-left-width: 0;
-  padding: 8px 13px;
+  padding: 0 13px;
+  justify-content: center;
 }
 
 .run-startrow .tbtn:first-child {
@@ -1836,6 +1898,16 @@
     width: 5.5em;
   }
 
+  /* The Playground's own controls are touch targets here, not desk furniture. */
+  #playground .fields input[type="number"],
+  #playground .presets button {
+    min-height: 44px;
+  }
+
+  #playground #pg-beam {
+    height: 44px;
+  }
+
   .tbtn,
   .run-startrow .tbtn {
     min-height: 44px;
@@ -1867,12 +1939,8 @@
   }
 
   .brandtext,
-  .clock p:first-child {
-    display: none;
-  }
-
   .clock {
-    border: 0;
+    display: none;
   }
 
   #kbdmap span:not(:first-child) {
