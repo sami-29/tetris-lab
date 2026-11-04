@@ -778,7 +778,7 @@ function writeUrl(input: GameInput): void {
 
 /** The Engine panel's width figure and the Playground head's seed line. */
 function paintIdentity(): void {
-  e1.set(String(game.beamWidth), `of ${BOUNDS.widthCap} states per layer`);
+  e1.set(String(game.beamWidth), `of ${BOUNDS.widthCap}`);
   presetName.textContent = `seed ${game.seed} · ${game.pieces} pieces · goal ${game.goal}`;
 }
 
