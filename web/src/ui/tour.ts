@@ -62,7 +62,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
 ];
 
 /** The flag that says this browser has seen the tour; storage may be missing. */
-const SEEN_KEY = "tetris-lab:tour-seen";
+export const SEEN_KEY = "tetris-lab:tour-seen";
 
 export function tourSeen(): boolean {
   try {
@@ -72,7 +72,7 @@ export function tourSeen(): boolean {
   }
 }
 
-function markSeen(): void {
+export function markSeen(): void {
   try {
     globalThis.localStorage?.setItem(SEEN_KEY, "1");
   } catch {
@@ -81,7 +81,6 @@ function markSeen(): void {
 }
 
 export interface TourOptions {
-  readonly stops?: readonly TourStop[];
   /** Called before a stop is shown, so the page can put the right view on screen. */
   readonly prepare?: (stop: TourStop, index: number) => void;
   /** Called when the tour closes, whether finished or left. */
@@ -95,7 +94,6 @@ const EDGE = 12;
 const DOCK_BELOW = 700;
 
 export class Tour {
-  private readonly stops: readonly TourStop[];
   private readonly options: TourOptions;
   private readonly ring: HTMLElement;
   private readonly card: HTMLElement;
@@ -112,7 +110,6 @@ export class Tour {
 
   constructor(options: TourOptions = {}) {
     this.options = options;
-    this.stops = options.stops ?? TOUR_STOPS;
 
     this.ring = document.createElement("div");
     this.ring.id = "tour-ring";
@@ -148,7 +145,7 @@ export class Tour {
     this.skipButton.addEventListener("click", () => this.close());
     this.backButton.addEventListener("click", () => this.go(this.at - 1));
     this.nextButton.addEventListener("click", () => {
-      if (this.at >= this.stops.length - 1) this.close();
+      if (this.at >= TOUR_STOPS.length - 1) this.close();
       else this.go(this.at + 1);
     });
 
@@ -187,15 +184,15 @@ export class Tour {
   }
 
   private go(index: number): void {
-    const at = Math.max(0, Math.min(this.stops.length - 1, index));
+    const at = Math.max(0, Math.min(TOUR_STOPS.length - 1, index));
     this.at = at;
-    const stop = this.stops[at];
+    const stop = TOUR_STOPS[at];
     this.options.prepare?.(stop, at);
     this.title.textContent = stop.title;
     this.body.textContent = stop.body;
-    this.count.textContent = `${at + 1} of ${this.stops.length}`;
+    this.count.textContent = `${at + 1} of ${TOUR_STOPS.length}`;
     this.backButton.disabled = at === 0;
-    const last = at === this.stops.length - 1;
+    const last = at === TOUR_STOPS.length - 1;
     this.nextButton.textContent = last ? "Done" : at === 0 ? "Start" : "Next";
     this.nextButton.dataset.tip = last ? "Close the tour." : "The next stop (→).";
     const anchor = this.anchorOf(stop);
@@ -231,7 +228,7 @@ export class Tour {
     if (!this.openNow) return;
     const width = globalThis.innerWidth;
     const height = globalThis.innerHeight;
-    const anchor = this.anchorOf(this.stops[this.at]);
+    const anchor = this.anchorOf(TOUR_STOPS[this.at]);
     const docked = width < DOCK_BELOW;
     this.card.dataset.docked = String(docked);
 
@@ -291,7 +288,7 @@ export class Tour {
         this.close();
         break;
       case "ArrowRight":
-        if (this.at < this.stops.length - 1) this.go(this.at + 1);
+        if (this.at < TOUR_STOPS.length - 1) this.go(this.at + 1);
         break;
       case "ArrowLeft":
         this.go(this.at - 1);

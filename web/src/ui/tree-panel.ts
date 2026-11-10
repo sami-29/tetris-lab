@@ -50,7 +50,7 @@ export interface TreePanelOptions {
   /** The view buttons, which sit beside the tree's section rather than in it. */
   views: HTMLElement;
   /** The per-layer table's section, shown while "Layers" is the view. */
-  layersPanel?: HTMLElement;
+  layersPanel: HTMLElement;
   /** The selected state moved; the page may keep other views in step. */
   onSelection?: (ref: TreeRef | null) => void;
 }
@@ -61,7 +61,7 @@ export class TreePanel {
   private readonly options: TreePanelOptions;
   private readonly beamButton: HTMLButtonElement;
   private readonly treeButton: HTMLButtonElement;
-  private readonly layersButton: HTMLButtonElement | null;
+  private readonly layersButton: HTMLButtonElement;
   private readonly boundSlider: HTMLInputElement;
   private readonly boundReadout: HTMLOutputElement;
   private readonly caption: HTMLElement;
@@ -85,7 +85,7 @@ export class TreePanel {
     this.options = options;
     this.beamButton = must(options.views, "[data-view='beam']");
     this.treeButton = must(options.views, "[data-view='tree']");
-    this.layersButton = options.views.querySelector<HTMLButtonElement>("[data-view='layers']");
+    this.layersButton = must(options.views, "[data-view='layers']");
     this.boundSlider = must(root, "#tree-bound");
     this.boundReadout = must(root, "#tree-bound-readout");
     this.caption = must(root, "#tree-caption");
@@ -100,7 +100,7 @@ export class TreePanel {
     this.treeButton.textContent = TREE_COPY.views[1];
     this.beamButton.addEventListener("click", () => this.setView("beam"));
     this.treeButton.addEventListener("click", () => this.setView("tree"));
-    this.layersButton?.addEventListener("click", () => this.setView("layers"));
+    this.layersButton.addEventListener("click", () => this.setView("layers"));
 
     this.boundSlider.min = String(Math.min(TREE_BOUND_DEFAULT, 60));
     this.boundSlider.max = "60";
@@ -165,22 +165,20 @@ export class TreePanel {
 
   /** Switch views. The band is the default; the tree and the table are on demand. */
   setView(view: TreeViewName): void {
-    const next = view === "layers" && !this.options.layersPanel ? "beam" : view;
-    this.view = next;
-    this.options.bandPanel.hidden = next !== "beam";
-    this.root.hidden = next !== "tree";
-    if (this.options.layersPanel) this.options.layersPanel.hidden = next !== "layers";
-    const buttons: Array<[HTMLButtonElement | null, TreeViewName]> = [
+    this.view = view;
+    this.options.bandPanel.hidden = view !== "beam";
+    this.root.hidden = view !== "tree";
+    this.options.layersPanel.hidden = view !== "layers";
+    const buttons: Array<[HTMLButtonElement, TreeViewName]> = [
       [this.beamButton, "beam"],
       [this.treeButton, "tree"],
       [this.layersButton, "layers"],
     ];
     for (const [button, name] of buttons) {
-      if (!button) continue;
-      button.setAttribute("aria-selected", String(next === name));
-      button.dataset.selected = String(next === name);
+      button.setAttribute("aria-selected", String(view === name));
+      button.dataset.selected = String(view === name);
     }
-    if (next === "tree") this.draw();
+    if (view === "tree") this.draw();
   }
 
   /** Move the bound and rebuild from the trace in memory. Calls nothing. */

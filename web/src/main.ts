@@ -1419,6 +1419,11 @@ document.addEventListener("visibilitychange", () => {
 globalThis.addEventListener("resize", () => {
   resizeBoard();
   relayoutInspector();
+  redrawBoard();
+});
+
+/** Repaint the Board and the strip at their current size, from the replay or the loose Board. */
+function redrawBoard(): void {
   if (playback) {
     playback.draw();
     painted = { k: -1, total: painted.total };
@@ -1426,10 +1431,15 @@ globalThis.addEventListener("resize", () => {
   } else {
     view.draw(shownBoard);
   }
-});
+}
 
 /* ---- the two modes: watch one solve, or measure many ------------------- */
 type Mode = "watch" | "measure";
+
+/** The mode a tab button stands for; anything but "measure" is Watch. */
+function modeOf(button: HTMLElement): Mode {
+  return button.dataset.mode === "measure" ? "measure" : "watch";
+}
 
 /**
  * Measure takes the centre and the inspector's width for the Run; Watch gives them
@@ -1450,17 +1460,11 @@ function setMode(mode: Mode): void {
   }
   resizeBoard();
   relayoutInspector();
-  if (playback) {
-    playback.draw();
-    painted = { k: -1, total: painted.total };
-    paintStrip(currentK(), painted.total);
-  } else {
-    view.draw(shownBoard);
-  }
+  redrawBoard();
 }
 
 for (const button of modeButtons) {
-  button.addEventListener("click", () => setMode(button.dataset.mode === "measure" ? "measure" : "watch"));
+  button.addEventListener("click", () => setMode(modeOf(button)));
   // A tablist: the arrow keys move between the two tabs, and nothing else sees them.
   button.addEventListener("keydown", (event) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -1469,7 +1473,7 @@ for (const button of modeButtons) {
     const other = modeButtons.find((candidate) => candidate !== button);
     if (!other) return;
     other.focus();
-    setMode(other.dataset.mode === "measure" ? "measure" : "watch");
+    setMode(modeOf(other));
   });
 }
 

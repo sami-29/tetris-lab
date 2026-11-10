@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// The workbench's headless acceptance pass: §2's five regions, at three sizes, in
+// The workbench's headless acceptance pass: §2's five regions, at six sizes, in
 // three states, with the structural half of §2.1 asserted and the rest left to the eye.
 //
-//   node scripts/shell-check.mjs                  # serves dist/, three sizes
+//   node scripts/shell-check.mjs                  # serves dist/, six sizes
 //   node scripts/shell-check.mjs --shot /tmp/x   # also writes a screenshot per size
 //   node scripts/shell-check.mjs --sizes 1440x900
 //
 // Why a second script rather than more of `browser-check.mjs`: that one drives one
 // game at one size and reads the board's pixels at Move k. This one never plays
-// anything — it reloads the page at 2560×1440, 1920×1080 and 1440×900, in each of
+// anything — it reloads the page at 2560×1440, 1920×1080, 1536×864, 1440×900, 1366×768 and
+// 1280×720, in each of
 // notes/14 §3's three states (S0 before a Solve, S1 solved, S2 lost), and asks
 // whether the *shell* is there. It shares the harness's shape — a static server, the
 // DevTools protocol over Node's WebSocket, a `check()` accumulator, a teardown that
@@ -32,6 +33,8 @@
 //   A12 the figures' sources are honest: `measured` is the clock and nothing else,
 //       and no figure is a bare dash
 //   A13 a first visit opens the tour, Skip closes it and is remembered
+//   A14 the four inner scrollers (readout, layer table, drawer body, Measure body)
+//       are never scrolled — Watch, the open drawer and Measure, at every size
 //
 // What is *not* here, and is judged by eye (notes/14 §8.2): whether 2560×1440 looks
 // deliberate, whether each tooltip is true and useful, whether the six-step type
@@ -75,8 +78,8 @@ const CHROME_CANDIDATES = [
   "/usr/bin/chromium",
 ].filter(Boolean);
 
-/** The three sizes: the target, the laptop, and the design floor (notes/14 §1.5). */
-const SIZES = (option("sizes", "2560x1440,1920x1080,1440x900") ?? "")
+/** The target, the laptops, and the design floor (notes/14 §1.5); the 864, 768 and 720 rows are the common laptop heights. */
+const SIZES = (option("sizes", "2560x1440,1920x1080,1536x864,1440x900,1366x768,1280x720") ?? "")
   .split(",")
   .map((pair) => pair.split("x").map(Number))
   .filter(([w, h]) => w > 0 && h > 0);
@@ -133,6 +136,25 @@ function connect(url) {
     });
   return { ws, ready, send };
 }
+
+/**
+ * The four inner scrollers, wherever they are showing. A scroller that has anything to
+ * scroll is a scrollbar a visitor can reach, and the owner's brief is none: each of
+ * these must hold its content at every size. The drawer's body only counts while the
+ * drawer is open, and the Measure body only while Measure is.
+ */
+const SCROLLERS = ["#readout", ".tablewrap", ".dbody", ".measure-body"];
+const SCROLL_PROBE = `(() => {
+  const out = [];
+  for (const selector of ${JSON.stringify(SCROLLERS)}) {
+    for (const el of document.querySelectorAll(selector)) {
+      if (el.getClientRects().length === 0 || el.clientHeight === 0) continue;
+      if (el.closest("#drawer") && document.getElementById("drawer").dataset.open !== "true") continue;
+      out.push({ selector, over: el.scrollHeight - el.clientHeight, overX: el.scrollWidth - el.clientWidth, clientHeight: el.clientHeight });
+    }
+  }
+  return out;
+})()`;
 
 /**
  * Everything the shell says about itself, in one evaluation.
@@ -446,6 +468,36 @@ try {
     layoutChecks(s1, size);
     check("S1b", `the solved outcome is the toolbar's · ${label}`, /^Win · \d+ of \d+ lines · [\d.]+ ms$/.test(s1.outcome), s1.outcome);
     await shoot(`s1-${width}x${height}`);
+
+    // A14: the inner scrollers hold their content — Watch, then the drawer, then Measure.
+    const probe = async (view) => {
+      const found = (await cdp.send("Runtime.evaluate", { expression: SCROLL_PROBE, returnByValue: true }, sessionId)).result?.value ?? [];
+      const spilled = found.filter((entry) => entry.over > 0 || entry.overX > 0);
+      check("A14", `no inner scroller scrolls · ${view} · ${label}`, found.length > 0 && spilled.length === 0,
+        spilled.map((entry) => `${entry.selector} +${entry.over}px tall${entry.overX > 0 ? ` +${entry.overX}px wide` : ""} (of ${entry.clientHeight})`).join("; ")
+          || `${found.map((entry) => entry.selector).join(", ")} fit`);
+    };
+    const press = (expression) => cdp.send("Runtime.evaluate", { expression, returnByValue: true }, sessionId);
+    await probe("Watch");
+    await press(`document.getElementById("view-layers").click()`);
+    await sleep(250);
+    await probe("Watch + Layers");
+    await press(`document.getElementById("view-beam").click()`);
+    await dispatch("e", "KeyE", 69);
+    await probe("Watch + drawer");
+    await dispatch("Escape", "Escape", 27);
+    await press(`document.getElementById("mode-measure").click()`);
+    await sleep(250);
+    await probe("Measure");
+    // The same page with a Run's result on it: thirty seeds, a second or so.
+    await press(`(document.getElementById("run-count").value = "30", document.getElementById("run-start").click())`);
+    for (let i = 0; i < 100; i += 1) {
+      await sleep(200);
+      const status = (await press(`document.getElementById("run-state").textContent`)).result?.value ?? "";
+      if (/^(\d+)\/\1 games/.test(status)) break;
+    }
+    await probe("Measure + a Run");
+    await shoot(`measure-${width}x${height}`);
 
     // S2: a lost game — seed 7 at goal 20 is a game the shipped Evaluator loses
     // (established by `browser-check.mjs`'s "a game the search cannot win" check).

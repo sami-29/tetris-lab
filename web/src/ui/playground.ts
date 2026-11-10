@@ -79,6 +79,14 @@ export interface PlaygroundOptions {
 }
 
 /** A node the Playground just built, or a loud failure rather than a `!`. */
+/** One cell of the rail: a wrapper that stacks a field's label above its control. */
+function fieldCell(className: string, ...children: HTMLElement[]): HTMLElement {
+  const cell = document.createElement("div");
+  cell.className = className;
+  cell.append(...children);
+  return cell;
+}
+
 function mustBuild<T extends Element>(root: Element, selector: string): T {
   const element = root.querySelector<T>(selector);
   if (!element) throw new Error(`the Playground did not build ${selector}`);
@@ -214,10 +222,7 @@ export class Playground {
 
     // One cell per field, label above its control, so the rail lays four of them
     // out as two by two rather than one tall column.
-    const cell = document.createElement("div");
-    cell.className = "field";
-    cell.append(label, input);
-    parent.append(cell);
+    parent.append(fieldCell("field", label, input));
     return { input, field };
   }
 
@@ -273,10 +278,7 @@ export class Playground {
     output.title = widthTooltip();
 
     wrap.append(input, tick);
-    const cell = document.createElement("div");
-    cell.className = "field field-beam";
-    cell.append(label, wrap, output);
-    parent.append(cell);
+    parent.append(fieldCell("field field-beam", label, wrap, output));
     return { input, field };
   }
 
