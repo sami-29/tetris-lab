@@ -14,8 +14,15 @@
  * `<b class="num">16.6</b><i class="unit">ms</i>`.
  *
  * No stock furniture: panels are 1 px rectangles with a 2 px radius at most, no drop
- * shadows except on the drawer and the tooltip (the two things that float over the
- * page), and the only gradient is the four-value ink step on a panel head.
+ * shadows except on the three things that float over the page (the drawer, the
+ * tooltip and the tour card, all `--float-shadow` or lighter), and the only gradient
+ * is the four-value ink step on a panel head. The tour's ring carries the one other
+ * shadow: a spread with no blur, `--tour-scrim`, which darkens the page around the
+ * region it names and leaves that region lit and clickable.
+ *
+ * The browser's own furniture is in the same ink: scrollbars are a hairline thumb on
+ * no track, a text selection is an amber wash (`--amber-select`), and the caret is
+ * amber. All three are set once, below.
  */
 
 :root {
@@ -51,6 +58,11 @@
   --tier3: #3a4249;
   --tipbg: #080a0b;
   --on-amber: #14100a;
+  --amber-select: rgba(224, 163, 62, 0.28);
+
+  /* the tour's two surfaces: the page dimmed around its ring, and the card's lift */
+  --tour-scrim: rgba(5, 6, 7, 0.62);
+  --float-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
 
   /* six steps of type — floored at 11 px on the smallest step, the legibility bar */
   --fs-micro: 12px;
@@ -109,6 +121,49 @@ button {
   border: 0;
   padding: 0;
   cursor: pointer;
+}
+
+/* `hidden` always wins: a panel's own `display: flex` must never keep a hidden view
+   on screen. */
+[hidden] {
+  display: none !important;
+}
+
+/* Scrollbars, selection and the caret, in the page's own ink. A region that scrolls
+   at all does so with a hairline, not the platform's grey slab. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line2) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line2);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ink4);
+}
+
+::selection {
+  background: var(--amber-select);
+  color: var(--ink);
+}
+
+input,
+textarea {
+  caret-color: var(--amber);
 }
 
 :focus-visible {

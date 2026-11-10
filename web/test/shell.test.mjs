@@ -52,10 +52,12 @@ test("the five regions of §2 exist, in document order", () => {
 });
 
 test("the layout arithmetic is in the stylesheet: three tracks, one flexible row and column", () => {
-  // The notes' §1.1 contract. The inspector is 420–620 px, *not* the mockup's 326:
-  // at 326 the per-layer pitch falls under the 14 px floor ticket 12 sets.
-  assert.match(css, /grid-template-columns:\s*236px\s+minmax\(0,\s*1fr\)\s+clamp\(420px,\s*24vw,\s*620px\)/,
-    "rail 236 · centre 1fr · inspector clamp(420px, 24vw, 620px)");
+  // The centre is as wide as the board it holds (`auto`, sized from the viewport
+  // height), and the inspector takes the rest with a 400 px floor: at less the
+  // per-layer pitch falls under the 14 px floor ticket 12 sets.
+  assert.match(css, /--rail-w:\s*236px/, "the rail is 236 px");
+  assert.match(css, /grid-template-columns:\s*var\(--rail-w\)\s+auto\s+minmax\(400px,\s*1fr\)/,
+    "rail · centre sized to the board · inspector minmax(400px, 1fr)");
   assert.match(css, /grid-template-rows:\s*48px\s+minmax\(0,\s*1fr\)\s+28px/, "toolbar 48 · stage 1fr · status 28");
   assert.match(css, /grid-template-areas:\s*"bar bar bar"\s+"rail stage inspect"\s*"status status status"/,
     "the regions are the grid, so nothing floats");

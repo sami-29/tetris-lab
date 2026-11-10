@@ -73,6 +73,7 @@ import { layerRows } from "./ui/inspector.ts";
 // the band read, drawn as the top states of each Layer. It owns its own view switch
 // and its own bound, and it never reaches the solver (its module comment says so).
 import { TreePanel } from "./ui/tree-panel.ts";
+import { Tour, tourSeen } from "./ui/tour.ts";
 import { reconstruct } from "./ui/timeline.ts";
 import type { TreeRef } from "./ui/tree-model.ts";
 
@@ -127,7 +128,6 @@ const scrim = must<HTMLElement>("#scrim");
 const drawerClose = must<HTMLButtonElement>("#drawer-close");
 const explainerBody = must<HTMLElement>("#explainer-body");
 const playgroundRoot = must<HTMLElement>("#playground");
-const presetName = must<HTMLElement>("#preset-name");
 const runFirstInput = must<HTMLInputElement>("#run-first");
 const runCountInput = must<HTMLInputElement>("#run-count");
 const runStartButton = must<HTMLButtonElement>("#run-start");
@@ -161,17 +161,23 @@ const runState = must<HTMLElement>("#run-state");
 const runButton = must<HTMLButtonElement>("#run-dataset");
 const stopButton = must<HTMLButtonElement>("#run-stop");
 const moveFigureHost = must<HTMLElement>("#move-figure");
-const inspector = must<HTMLElement>("#inspector");
+const panelRun = must<HTMLElement>("#panel-run");
+const layerPanel = must<HTMLElement>("#layer-panel");
+const modeButtons = [...must<HTMLElement>("#modes").querySelectorAll<HTMLButtonElement>("[data-mode]")];
+const tourOpenButton = must<HTMLButtonElement>("#tour-open");
+const tourStartButton = must<HTMLButtonElement>("#tour-start");
 
 const view = new BoardView(canvas);
 const bandView = new BandView(bandCanvas);
 /**
- * The inspector's two views: the band (default) and the tree (drill-down). Ticket
- * 12's panel owns the switch — `options.views` is the strip above both panels — and
- * the selected state's card, whose Board this page answers from the replay.
+ * The inspector's three views: the band (default), the tree (drill-down) and the
+ * per-layer table. Ticket 12's panel owns the switch — `options.views` is the tab strip
+ * above all three — and the selected state's card, whose Board this page answers from
+ * the replay.
  */
 const treePanel = new TreePanel(treePanelRoot, {
   bandPanel,
+  layersPanel: layerPanel,
   views: inspectorViews,
   onSelection: () => syncTreeNote(),
 });
@@ -561,9 +567,8 @@ const c11 = fig("c11", roPlacement, "0");
 const c12 = createFigure("c12");
 c12.el.classList.add("fig-picture");
 const nextSeq = el("span", "seq");
-const nextWords = el("span", "chip");
 c12.el.classList.add("nolabel");
-c12.el.append(nextSeq, nextWords);
+c12.el.append(nextSeq);
 roNext.append(c12.el);
 FI.c12 = c12;
 
@@ -779,7 +784,6 @@ function writeUrl(input: GameInput): void {
 /** The Engine panel's width figure and the Playground head's seed line. */
 function paintIdentity(): void {
   e1.set(String(game.beamWidth), `of ${BOUNDS.widthCap}`);
-  presetName.textContent = `seed ${game.seed} · ${game.pieces} pieces · goal ${game.goal}`;
 }
 
 /** The outcome line: a word, the lines against the goal, and the solve time. */
@@ -880,7 +884,7 @@ function paintNext(k: number): void {
     const letter = sequence[at];
     letters.push(letter);
     const glyph = el("span");
-    glyph.append(pieceGlyph(letter, 6));
+    glyph.append(pieceGlyph(letter, 9));
     const steps = at - k + 1;
     glyph.dataset.tip = `${letter} — ${steps === 1 ? "next" : `${steps} ahead`}.`;
     nextSeq.append(glyph);
@@ -890,7 +894,6 @@ function paintNext(k: number): void {
     none.textContent = "the Sequence is spent";
     nextSeq.append(none);
   }
-  nextWords.textContent = `${k} of ${sequence.length} pieces drawn`;
   c12.num.textContent = `${Math.min(4, Math.max(0, sequence.length - k))} of ${sequence.length}`;
   c12.unit.textContent = "pieces";
 }
@@ -938,7 +941,6 @@ function showBand(message: GameMessage): void {
   traced = trace;
   const model = buildBand(trace, { sequence: message.sequence, shippedBeam: DEFAULT_BEAM });
   bandModel = model;
-  sizeInspector();
   bandView.resize();
   bandView.draw(model);
   say(bandLabel, model.label);
@@ -1003,21 +1005,29 @@ function syncTreeNote(): void {
 }
 
 /**
- * The inspector's vertical arithmetic (notes/14 §1.4): the band takes
- * `min(Layers × 22, 45 % of the inspector)`, the table gets `1fr`, the log is 96.
- * 45 % rather than 55 % so the per-layer table still shows the game at 1440×900.
+ * The board's row numbers, one per row: the gutter is a grid of twenty `--cell`
+ * rows, padded down to where the board's first row starts, so "0" sits beside row 0
+ * whatever whole-pixel cell the canvas settled on.
  */
-function sizeInspector(): void {
-  const inner = inspector.clientHeight;
-  if (inner <= 0) return;
-  const layers = traced?.layerCount ?? 0;
-  // The *canvas* gets the notes' budget, not the panel: one row per Layer at 22 px,
-  // capped at 45 % of the inspector so the per-layer table and the log keep their
-  // room at 1440×900 (notes/14 §1.4 — 55 % leaves the table 11 rows).
-  const bandH = Math.min(Math.max(120, layers * 22 || 120), Math.round(inner * 0.45));
-  bandCanvas.style.height = `${bandH}px`;
-  bandCanvas.style.flex = "0 0 auto";
-  bandPanel.style.height = "";
+function alignGutter(): void {
+  const cell = Number(canvas.dataset.cell ?? 0);
+  const top = Number(canvas.dataset.originY ?? 0);
+  gutter.style.setProperty("--cell", `${cell}px`);
+  gutter.style.paddingTop = `${top}px`;
+}
+
+/** Size the board to its box and line the row numbers up with it. */
+function resizeBoard(): void {
+  view.resize();
+  alignGutter();
+}
+
+/** Redraw the inspector's canvases at their current boxes (after a view or mode change). */
+function relayoutInspector(): void {
+  bandView.resize();
+  bandView.draw(bandModel);
+  treePanel.draw();
+  syncTreeNote();
 }
 
 // ── painting the whole page from one state ─────────────────────────────────
@@ -1147,15 +1157,12 @@ function show(message: GameMessage): void {
   log(
     `${outcome} · ${message.outcome.lines} of ${input.goal} Lines · ${message.outcome.moveCount} Moves · ${message.outcome.evaluations.toLocaleString("en-US")} Evaluations · ${message.elapsedMs.toFixed(1)} ms`,
   );
-  say(
-    statusLine,
-    `${describeGame(input)} · beam ${input.beamWidth}`,
-  );
+  say(statusLine, describeGame(input));
 
   if (playback) playback.stop();
   playback = null;
   shownBoard = fieldFrom(message.board);
-  view.resize();
+  resizeBoard();
   view.draw(shownBoard);
   traced = null;
   showBand(message);
@@ -1376,7 +1383,7 @@ solveButton.addEventListener("click", () => requestGame(game));
 // The two view buttons are ticket 12's; these listeners only keep the head's figures
 // in step, and they run after the panel's own because they are bound later.
 for (const button of inspectorViews.querySelectorAll("button")) {
-  button.addEventListener("click", () => syncTreeNote());
+  button.addEventListener("click", () => relayoutInspector());
 }
 treeBoundSlider.addEventListener("input", () => syncTreeNote());
 howButton.addEventListener("click", () => setDrawer(drawer.dataset.open !== "true"));
@@ -1410,12 +1417,13 @@ document.addEventListener("visibilitychange", () => {
 
 /* ---- resize ----------------------------------------------------------- */
 globalThis.addEventListener("resize", () => {
-  sizeInspector();
-  view.resize();
-  bandView.resize();
-  bandView.draw(bandModel);
-  treePanel.draw();
-  syncTreeNote();
+  resizeBoard();
+  relayoutInspector();
+  redrawBoard();
+});
+
+/** Repaint the Board and the strip at their current size, from the replay or the loose Board. */
+function redrawBoard(): void {
   if (playback) {
     playback.draw();
     painted = { k: -1, total: painted.total };
@@ -1423,7 +1431,64 @@ globalThis.addEventListener("resize", () => {
   } else {
     view.draw(shownBoard);
   }
+}
+
+/* ---- the two modes: watch one solve, or measure many ------------------- */
+type Mode = "watch" | "measure";
+
+/** The mode a tab button stands for; anything but "measure" is Watch. */
+function modeOf(button: HTMLElement): Mode {
+  return button.dataset.mode === "measure" ? "measure" : "watch";
+}
+
+/**
+ * Measure takes the centre and the inspector's width for the Run; Watch gives them
+ * back. The board and the band were drawn at their old boxes, so returning to Watch
+ * resizes and redraws them.
+ */
+function setMode(mode: Mode): void {
+  if (app.dataset.mode === mode) return;
+  app.dataset.mode = mode;
+  panelRun.hidden = mode !== "measure";
+  for (const button of modeButtons) {
+    button.setAttribute("aria-selected", String(button.dataset.mode === mode));
+    button.tabIndex = button.dataset.mode === mode ? 0 : -1;
+  }
+  if (mode === "measure") {
+    if (playback?.playing) playback.pause();
+    return;
+  }
+  resizeBoard();
+  relayoutInspector();
+  redrawBoard();
+}
+
+for (const button of modeButtons) {
+  button.addEventListener("click", () => setMode(modeOf(button)));
+  // A tablist: the arrow keys move between the two tabs, and nothing else sees them.
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const other = modeButtons.find((candidate) => candidate !== button);
+    if (!other) return;
+    other.focus();
+    setMode(modeOf(other));
+  });
+}
+
+/* ---- the tour ---------------------------------------------------------- */
+// Every stop except the last points at the Watch view, so the tour puts it on
+// screen. A first visit opens it (see the end of this file); closing it by any
+// route — Skip, Done or Escape — is remembered, and the toolbar reopens it.
+const tour = new Tour({
+  prepare: (stop) => {
+    if (stop.anchor !== "#mode-measure") setMode("watch");
+    if (drawer.dataset.open === "true") setDrawer(false);
+  },
 });
+tourOpenButton.addEventListener("click", () => tour.open());
+tourStartButton.addEventListener("click", () => tour.open());
 
 /* ---- the Playground and the load path --------------------------------- */
 const playground = new Playground(playgroundRoot, {
@@ -1448,9 +1513,11 @@ setSpeed(speed);
 sheet.dataset.open = "false";
 drawer.dataset.open = "false";
 scrim.dataset.open = "false";
-sizeInspector();
-view.resize();
+app.dataset.mode = "watch";
+resizeBoard();
 view.draw(shownBoard);
 paintAll();
 log("page loaded");
 spawn();
+// A browser that has never closed the tour gets it now, over the first solve.
+if (!tourSeen()) tour.open();

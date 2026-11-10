@@ -10,6 +10,10 @@
         toolbar · left rail · centre · right inspector · status bar
         plus the Explainer drawer, which a no-scroll page has nowhere else to put.
 
+      The toolbar's two modes swap what the centre shows: "Watch a solve" is the
+      board and the inspector, "Measure win rate" is the Run with the full width.
+      The tour (`src/ui/tour.ts`) is built at boot and points at these regions.
+
       This file is the skeleton: panel heads, section labels, column heads and the
       keyboard chips. Every value slot is filled by `src/main.ts` from the engine's
       own numbers, so a region cannot collapse, because it never had children to
@@ -27,40 +31,70 @@
       <header class="bar" data-region="toolbar" id="toolbar">
         <div class="brand">
           <span data-icon="brand-mark"></span>
-          <div class="brandtext"><b>Tetris Lab</b><span>solver workbench</span></div>
+          <div class="brandtext"><b>Tetris Lab</b><span>a beam search, solving in your tab</span></div>
+        </div>
+
+        <!-- The two things a visitor does here: watch one solve, or measure many. -->
+        <div class="modes" id="modes" role="tablist" aria-label="What the Lab shows">
+          <button
+            class="mode"
+            type="button"
+            role="tab"
+            id="mode-watch"
+            data-mode="watch"
+            aria-selected="true"
+            aria-controls="centre"
+            data-tip="Watch one game: the search's answer replayed move by move, with the beam it kept beside it."
+          >Watch a solve</button>
+          <button
+            class="mode"
+            type="button"
+            role="tab"
+            id="mode-measure"
+            data-mode="measure"
+            aria-selected="false"
+            aria-controls="panel-run"
+            data-tip="Measure many games: a win rate for the Playground's settings, or the committed benchmark beside the reference machine."
+          >Measure win rate</button>
+        </div>
+
+        <div class="clock">
+          <p id="outcome" data-outcome="solving" aria-live="polite">Solving seed 0…</p>
+          <p id="status" aria-live="off">seed 0 · goal 8 lines · 40 pieces · height 7 · beam 25</p>
         </div>
 
         <div class="baractions">
           <button
             class="tbtn"
             type="button"
-            id="how"
-            data-tip="How the search works. Opens with E; E or Escape closes it."
-          ><span data-icon="help"></span>How it works</button>
+            id="tour-open"
+            data-tip="A one-minute walk through the Lab, stop by stop. Escape leaves it."
+          ><span data-icon="play"></span>Tour</button>
           <button
             class="tbtn"
             type="button"
-            id="solve"
-            data-tip="Solve the game shown in the Playground, again."
-          ><span data-icon="play"></span>Solve</button>
-        </div>
-
-        <div class="clock">
-          <p id="status" aria-live="off">seed 0 · goal 8 lines · 40 pieces · height 7 · beam 25</p>
-          <p id="outcome" data-outcome="solving" aria-live="polite">Solving seed 0…</p>
+            id="how"
+            data-tip="How the search works. Opens with E; E or Escape closes it."
+          ><span data-icon="help"></span>How it works</button>
         </div>
       </header>
 
-      <!-- ══ left rail: Playground, Engine, Run ═══════════════════════════ -->
+      <!-- ══ left rail: the Playground, the Engine, and what this is ═══════ -->
       <aside class="rail" data-region="rail" id="rail">
         <section class="panel" id="panel-playground" aria-label="Playground">
           <div class="phead">
             <span class="t">Playground</span>
-            <span class="s" id="preset-name">the default game</span>
+            <span class="sp">
+              <button
+                class="iconbtn"
+                type="button"
+                id="solve"
+                data-tip="Solve the game shown in the Playground again. Any change here already re-solves."
+              ><span data-icon="restart"></span>Solve</button>
+            </span>
           </div>
           <!-- All the controls whose job is to change the game: `src/ui/playground.ts`
-               builds them, every change here re-solves. -->
-          <!-- Ticket 13's controls; `src/ui/playground.ts` builds them here. -->
+               builds them, and every change here re-solves. -->
           <div id="playground"></div>
         </section>
 
@@ -75,52 +109,34 @@
                 aria-expanded="false"
                 aria-controls="engine-weights"
                 data-tip="Show the evaluator's eight weights and the bound of each feature. Read-only."
-              >Expert<span data-icon="expert-chevron"></span></button>
+              >Weights<span data-icon="expert-chevron"></span></button>
             </span>
           </div>
-          <div class="rows" id="engine-figures"></div>
+          <p class="engine-lede">Every board the search keeps is scored by one evaluator: eight board features, each with a fixed weight.</p>
+          <div class="rows sr-only" id="engine-figures"></div>
           <div class="rows" id="engine-weights" hidden></div>
         </section>
 
-        <!-- The Run: first your own runs over seeds you pick, then the committed
-             Dataset benchmark as a secondary action. `src/ui/run-panel.ts` builds the
-             benchmark's skeleton (column heads, figure labels, label slots) at boot
-             and fills only the value slots afterwards. -->
-        <section class="panel" id="panel-run" aria-label="Run">
-          <div class="phead">
-            <span class="t">Run</span>
-            <span class="s" id="run-state" data-run-status="idle">not run yet</span>
-          </div>
-          <div id="run-yours">
-            <p class="run-lede" id="run-lede">
-              Solve many seeds with the settings on the Playground and report the win rate and
-              timings.
-            </p>
-            <div class="run-form">
-              <label class="rfield">First seed
-                <input id="run-first" type="number" min="0" max="4294967295" step="1" value="0"
-                  data-tip="The first seed of your run. Seeds run up from it."
-                  aria-label="First seed of your run" />
-              </label>
-              <label class="rfield">Runs
-                <input id="run-count" type="number" min="1" max="4000" step="1" value="100"
-                  data-tip="How many seeds to solve, starting at the first seed."
-                  aria-label="How many seeds to solve" />
-              </label>
-              <button class="tbtn go" type="button" id="run-start" data-tip="Start solving your seeds in a pool of workers."><span data-icon="play"></span>Run</button>
-              <button class="tbtn" type="button" id="run-yours-stop" disabled data-tip="Stop the run. Workers end immediately."><span data-icon="stop"></span>Stop</button>
-            </div>
-            <p class="run-note" id="run-yours-note"></p>
-          </div>
-          <div class="run-body" id="run-body">
-            <p class="run-note" id="run-assumption">
-              The benchmark solves both committed configurations' 2,000 test games beside the
-              reference machine's results. Its budget is a sized assumption, not a measurement.
-            </p>
-            <div class="run-startrow">
-              <button class="tbtn" type="button" id="run-dataset" data-tip="Run the benchmark: 2,000 games from the committed Dataset, then show them beside the reference machine's results."><span data-icon="play"></span>Run benchmark</button>
-              <button class="tbtn" type="button" id="run-stop" disabled data-tip="Stop the benchmark. Workers end immediately, and what was measured is labelled partial."><span data-icon="stop"></span>Stop</button>
-            </div>
+        <!-- What this is, how to use it in three steps, and the way into the tour. -->
+        <section class="panel guide" id="guide" aria-labelledby="guide-title">
+          <h2 id="guide-title">What you are looking at</h2>
+          <p>
+            The seed fixes the whole game before the first move: the starting board and
+            every piece to come. A beam search plays it in your browser, keeping only the
+            best boards at each step, and tries to clear the goal with the pieces it has.
+          </p>
+          <ol class="guide-steps">
+            <li><b>Watch.</b> Press play or step with the arrow keys. The Beam view shows every board the search kept.</li>
+            <li><b>Change.</b> Pick a preset, type a seed, or narrow the beam width and watch the search start to lose.</li>
+            <li><b>Measure.</b> Measure win rate solves many seeds with your settings and compares the result with the reference machine.</li>
+          </ol>
+          <div class="guide-actions">
+            <button
+              class="tbtn"
+              type="button"
+              id="tour-start"
+              data-tip="A one-minute walk through the Lab, stop by stop. Escape leaves it."
+            >Take the tour</button>
           </div>
         </section>
       </aside>
@@ -134,6 +150,7 @@
             <span class="sp"><span class="piece-now" id="piece-now"><span class="word">next</span></span></span>
           </div>
           <div class="boardbody">
+            <div class="well">
             <div class="gutter" id="gutter" aria-label="Board rows, 0 at the top and 19 on the floor"></div>
             <div class="cvwrap">
               <canvas
@@ -142,21 +159,22 @@
                 aria-label="The Board: ten columns by twenty rows, drawn from the engine's ten column words"
               ></canvas>
             </div>
+            </div>
             <div class="readout" id="readout">
               <section class="ro-pane">
-                <p class="ro-sec">Score</p>
-                <div class="ro-body" id="ro-charge">
-                  <p class="ro-empty">
-                    The evaluator charges this position one total score. It appears at the first
-                    solve; the feature-by-feature split is the Engine panel's Expert table.
-                  </p>
-                  <div class="ro-total" id="ro-score"></div>
-                </div>
+                <p class="ro-sec">Next pieces</p>
+                <div class="ro-body"><div class="nxt" id="ro-next"></div></div>
               </section>
 
               <section class="ro-pane">
-                <p class="ro-sec">Columns</p>
-                <div class="ro-body" id="ro-columns"></div>
+                <p class="ro-sec">Score</p>
+                <div class="ro-body" id="ro-charge">
+                  <div class="ro-total" id="ro-score"></div>
+                  <p class="ro-empty">
+                    The evaluator's one number for this board. Higher is better; the search
+                    keeps the best.
+                  </p>
+                </div>
               </section>
 
               <section class="ro-pane">
@@ -164,9 +182,9 @@
                 <div class="ro-body place" id="ro-placement"></div>
               </section>
 
-              <section class="ro-pane">
-                <p class="ro-sec">Next pieces</p>
-                <div class="ro-body"><div class="nxt" id="ro-next"></div></div>
+              <section class="ro-pane ro-columns">
+                <p class="ro-sec">Column heights</p>
+                <div class="ro-body" id="ro-columns"></div>
               </section>
             </div>
           </div>
@@ -235,13 +253,68 @@
             <p id="progress" aria-hidden="true" hidden></p>
           </div>
         </section>
+        <!-- Measure: the Run, with the room it needs. The Playground's settings on the
+             left feed "your seeds"; the benchmark is the committed Dataset.
+             `src/ui/run-panel.ts` builds the benchmark's tables at boot. -->
+        <section class="panel measure" id="panel-run" aria-labelledby="measure-title" hidden>
+          <div class="phead">
+            <span class="t">Run</span>
+            <span class="s" id="run-state" data-run-status="idle">not run yet</span>
+          </div>
+          <div class="measure-body">
+            <header class="measure-head">
+              <h2 id="measure-title">How often does the search win?</h2>
+              <p>
+                One solve shows what the search did on one seed. A win rate needs many: solve a
+                range of seeds with your Playground settings, or the committed benchmark of
+                2,000 games, and compare it with the reference machine's results.
+              </p>
+            </header>
+            <section class="mcol" id="run-yours" aria-labelledby="run-yours-title">
+              <h3 id="run-yours-title">Your settings</h3>
+              <p class="run-lede" id="run-lede">
+                Solves the seeds you pick with the goal, pieces, starting height and beam width
+                on the left, and reports the win rate and the time per game in this browser.
+              </p>
+              <div class="run-form">
+                <label class="rfield">First seed
+                  <input id="run-first" type="number" min="0" max="4294967295" step="1" value="0"
+                    data-tip="The first seed of your run. Seeds run up from it."
+                    aria-label="First seed of your run" />
+                </label>
+                <label class="rfield">Runs
+                  <input id="run-count" type="number" min="1" max="4000" step="1" value="100"
+                    data-tip="How many seeds to solve, starting at the first seed."
+                    aria-label="How many seeds to solve" />
+                </label>
+                <button class="tbtn go" type="button" id="run-start" data-tip="Start solving your seeds in a pool of workers."><span data-icon="play"></span>Run</button>
+                <button class="tbtn" type="button" id="run-yours-stop" disabled data-tip="Stop the run. Workers end immediately."><span data-icon="stop"></span>Stop</button>
+              </div>
+              <p class="run-result" id="run-yours-note"></p>
+            </section>
+            <section class="mcol mcol-bench" aria-labelledby="run-bench-title">
+              <h3 id="run-bench-title">The benchmark</h3>
+              <div class="run-body" id="run-body">
+                <p class="run-note" id="run-assumption">
+                  The benchmark solves both committed configurations' 2,000 test games beside the
+                  reference machine's results. Its budget is a sized assumption, not a measurement.
+                </p>
+                <div class="run-startrow">
+                  <button class="tbtn go" type="button" id="run-dataset" data-tip="Run the benchmark: 2,000 games from the committed Dataset, then show them beside the reference machine's results."><span data-icon="play"></span>Run benchmark</button>
+                  <button class="tbtn" type="button" id="run-stop" disabled data-tip="Stop the benchmark. Workers end immediately, and what was measured is labelled partial."><span data-icon="stop"></span>Stop</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
       </main>
 
-      <!-- ══ right inspector: the band, the tree, the table, the log ══════ -->
+      <!-- ══ right inspector: the beam, the tree, the table — one at a time ══ -->
       <aside class="inspector" data-region="inspector" id="inspector">
-        <!-- Two views of one recording. The band is the default and the tree is the
-             drill-down (ticket 12's `ui/tree-panel.ts` owns the switch); the band *is*
-             the beam, so neither view is ever called a band on screen. -->
+        <!-- Three views of one recording, each with the whole column. The band is the
+             default, the tree is the drill-down and Layers is the table
+             (`ui/tree-panel.ts` owns the switch); the band *is* the beam, so no view is
+             ever called a band on screen. -->
         <div id="views" role="tablist" aria-label="Which picture of the search">
           <button
             id="view-beam"
@@ -261,6 +334,15 @@
             data-view="tree"
             data-tip="The same search as a drill-down: the top states of each layer, with the lines the winning path took."
           >Tree</button>
+          <button
+            id="view-layers"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="layer-panel"
+            data-view="layers"
+            data-tip="The same search as a table: one row per layer, with its piece, best score, lines cleared and states kept."
+          >Layers</button>
         </div>
         <section class="panel bandpanel" id="band-panel" aria-label="The band">
           <div class="phead">
@@ -272,9 +354,9 @@
             role="img"
             aria-label="Score band: one row per layer with its states placed by score, and the winning lineage drawn through them"
           ></canvas>
-          <p id="band-caption">Waiting for a traced solve.</p>
+          <p id="band-caption" class="sr-only">Waiting for a traced solve.</p>
           <div class="legend" id="band-legend"></div>
-          <ol id="band-counts" aria-label="Per-layer counts"></ol>
+          <ol id="band-counts" class="sr-only" aria-label="Per-layer counts"></ol>
         </section>
 
         <section class="panel treepanel" id="tree-panel" hidden aria-label="The tree">
@@ -310,7 +392,7 @@
           </div>
         </section>
 
-        <section class="panel layerpanel" aria-label="Per-layer table">
+        <section class="panel layerpanel" id="layer-panel" hidden aria-label="Per-layer table">
           <div class="phead">
             <span class="t">Layers</span>
             <span class="s" id="layer-count">no layers yet</span>

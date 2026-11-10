@@ -1,4 +1,5 @@
-// The inspector's two views: the beam (the default) and the tree (the drill-down).
+// The inspector's three views: the beam (the default), the tree (the drill-down) and
+// the per-layer table. Each takes the whole column while it is the view.
 //
 // This file is the wiring between `tree-model.ts` (the picture as data) and the
 // page: it owns the view toggle, the tree's **own** bound control, the canvas, the
@@ -38,7 +39,7 @@ import {
 } from "./tree-model.ts";
 import { TreeView } from "./tree-canvas.ts";
 
-export type TreeViewName = "beam" | "tree";
+export type TreeViewName = "beam" | "tree" | "layers";
 
 /** Where a state's Board can come from, when anything holds it. */
 export type BoardAt = (layer: number, rank: number) => ArrayLike<number> | null;
@@ -46,8 +47,10 @@ export type BoardAt = (layer: number, rank: number) => ArrayLike<number> | null;
 export interface TreePanelOptions {
   /** The band's own section, shown while "Beam" is the view. */
   bandPanel: HTMLElement;
-  /** The two view buttons, which sit beside the tree's section rather than in it. */
+  /** The view buttons, which sit beside the tree's section rather than in it. */
   views: HTMLElement;
+  /** The per-layer table's section, shown while "Layers" is the view. */
+  layersPanel: HTMLElement;
   /** The selected state moved; the page may keep other views in step. */
   onSelection?: (ref: TreeRef | null) => void;
 }
@@ -58,6 +61,7 @@ export class TreePanel {
   private readonly options: TreePanelOptions;
   private readonly beamButton: HTMLButtonElement;
   private readonly treeButton: HTMLButtonElement;
+  private readonly layersButton: HTMLButtonElement;
   private readonly boundSlider: HTMLInputElement;
   private readonly boundReadout: HTMLOutputElement;
   private readonly caption: HTMLElement;
@@ -81,6 +85,7 @@ export class TreePanel {
     this.options = options;
     this.beamButton = must(options.views, "[data-view='beam']");
     this.treeButton = must(options.views, "[data-view='tree']");
+    this.layersButton = must(options.views, "[data-view='layers']");
     this.boundSlider = must(root, "#tree-bound");
     this.boundReadout = must(root, "#tree-bound-readout");
     this.caption = must(root, "#tree-caption");
@@ -95,6 +100,7 @@ export class TreePanel {
     this.treeButton.textContent = TREE_COPY.views[1];
     this.beamButton.addEventListener("click", () => this.setView("beam"));
     this.treeButton.addEventListener("click", () => this.setView("tree"));
+    this.layersButton.addEventListener("click", () => this.setView("layers"));
 
     this.boundSlider.min = String(Math.min(TREE_BOUND_DEFAULT, 60));
     this.boundSlider.max = "60";
@@ -157,15 +163,21 @@ export class TreePanel {
     this.draw();
   }
 
-  /** Switch views. The band is the default; the tree is the drill-down. */
+  /** Switch views. The band is the default; the tree and the table are on demand. */
   setView(view: TreeViewName): void {
     this.view = view;
     this.options.bandPanel.hidden = view !== "beam";
     this.root.hidden = view !== "tree";
-    this.beamButton.setAttribute("aria-selected", String(view === "beam"));
-    this.treeButton.setAttribute("aria-selected", String(view === "tree"));
-    this.beamButton.dataset.selected = String(view === "beam");
-    this.treeButton.dataset.selected = String(view === "tree");
+    this.options.layersPanel.hidden = view !== "layers";
+    const buttons: Array<[HTMLButtonElement, TreeViewName]> = [
+      [this.beamButton, "beam"],
+      [this.treeButton, "tree"],
+      [this.layersButton, "layers"],
+    ];
+    for (const [button, name] of buttons) {
+      button.setAttribute("aria-selected", String(view === name));
+      button.dataset.selected = String(view === name);
+    }
     if (view === "tree") this.draw();
   }
 

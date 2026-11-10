@@ -74,7 +74,7 @@ export function mountRunPanel(options: RunPanelOptions): RunPanel {
     const head = document.createElement("p");
     head.className = "run-cfg";
     head.textContent =
-      `${config.name} · goal ${config.goal} · ${config.pieces} pieces · ` +
+      `goal ${config.goal} · ${config.pieces} pieces · ` +
       `height ${config.cap} · beam ${config.beamWidth}`;
     head.dataset.tip =
       `One of the two committed configurations. Its test seeds are ${config.first}–${config.last} ` +
@@ -109,6 +109,7 @@ export function mountRunPanel(options: RunPanelOptions): RunPanel {
 
       const mine = document.createElement("td");
       const mineFigure = createFigure(row.id, NOT_MEASURED);
+      mineFigure.set(NOT_MEASURED, "");
       mineFigure.el.classList.add("rtable-fig", "nolabel");
       mineFigure.el.dataset.runCell = `${config.id}-${row.id}-yours`;
       mine.append(mineFigure.el);

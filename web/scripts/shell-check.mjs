@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// The workbench's headless acceptance pass: §2's five regions, at three sizes, in
+// The workbench's headless acceptance pass: §2's five regions, at six sizes, in
 // three states, with the structural half of §2.1 asserted and the rest left to the eye.
 //
-//   node scripts/shell-check.mjs                  # serves dist/, three sizes
+//   node scripts/shell-check.mjs                  # serves dist/, six sizes
 //   node scripts/shell-check.mjs --shot /tmp/x   # also writes a screenshot per size
 //   node scripts/shell-check.mjs --sizes 1440x900
 //
 // Why a second script rather than more of `browser-check.mjs`: that one drives one
 // game at one size and reads the board's pixels at Move k. This one never plays
-// anything — it reloads the page at 2560×1440, 1920×1080 and 1440×900, in each of
+// anything — it reloads the page at 2560×1440, 1920×1080, 1536×864, 1440×900, 1366×768 and
+// 1280×720, in each of
 // notes/14 §3's three states (S0 before a Solve, S1 solved, S2 lost), and asks
 // whether the *shell* is there. It shares the harness's shape — a static server, the
 // DevTools protocol over Node's WebSocket, a `check()` accumulator, a teardown that
@@ -27,10 +28,13 @@
 //   A8  no emoji, no banned words
 //   A9  the keyboard map works, including the guard against a focused field
 //   A10 the drawer opens without introducing a page scroll
-//   A11 the status bar names Evaluations, Layers, Lines cleared, elapsed, and shows
-//       at least two keyboard chips
+//   A11 the status bar names Evaluations and shows at least two keyboard chips
+//       (Lines and the elapsed time are in the toolbar's outcome line)
 //   A12 the figures' sources are honest: `measured` is the clock and nothing else,
 //       and no figure is a bare dash
+//   A13 a first visit opens the tour, Skip closes it and is remembered
+//   A14 the four inner scrollers (readout, layer table, drawer body, Measure body)
+//       are never scrolled — Watch, the open drawer and Measure, at every size
 //
 // What is *not* here, and is judged by eye (notes/14 §8.2): whether 2560×1440 looks
 // deliberate, whether each tooltip is true and useful, whether the six-step type
@@ -74,8 +78,8 @@ const CHROME_CANDIDATES = [
   "/usr/bin/chromium",
 ].filter(Boolean);
 
-/** The three sizes: the target, the laptop, and the design floor (notes/14 §1.5). */
-const SIZES = (option("sizes", "2560x1440,1920x1080,1440x900") ?? "")
+/** The target, the laptops, and the design floor (notes/14 §1.5); the 864, 768 and 720 rows are the common laptop heights. */
+const SIZES = (option("sizes", "2560x1440,1920x1080,1536x864,1440x900,1366x768,1280x720") ?? "")
   .split(",")
   .map((pair) => pair.split("x").map(Number))
   .filter(([w, h]) => w > 0 && h > 0);
@@ -132,6 +136,25 @@ function connect(url) {
     });
   return { ws, ready, send };
 }
+
+/**
+ * The four inner scrollers, wherever they are showing. A scroller that has anything to
+ * scroll is a scrollbar a visitor can reach, and the owner's brief is none: each of
+ * these must hold its content at every size. The drawer's body only counts while the
+ * drawer is open, and the Measure body only while Measure is.
+ */
+const SCROLLERS = ["#readout", ".tablewrap", ".dbody", ".measure-body"];
+const SCROLL_PROBE = `(() => {
+  const out = [];
+  for (const selector of ${JSON.stringify(SCROLLERS)}) {
+    for (const el of document.querySelectorAll(selector)) {
+      if (el.getClientRects().length === 0 || el.clientHeight === 0) continue;
+      if (el.closest("#drawer") && document.getElementById("drawer").dataset.open !== "true") continue;
+      out.push({ selector, over: el.scrollHeight - el.clientHeight, overX: el.scrollWidth - el.clientWidth, clientHeight: el.clientHeight });
+    }
+  }
+  return out;
+})()`;
 
 /**
  * Everything the shell says about itself, in one evaluation.
@@ -214,7 +237,7 @@ const READ = `(() => {
     drawerOpen: drawer?.dataset.open === "true",
     sheetOpen: sheet?.dataset.open === "true",
     text: (document.body.innerText || "").slice(0, 4000),
-    stripText: (document.getElementById("progress")?.textContent || "").trim(),
+    playing: document.getElementById("play")?.getAttribute("aria-pressed") === "true",
     seek: Number(document.getElementById("strip")?.getAttribute("aria-valuenow") ?? -1),
     gridTracks: (() => {
       const app = document.getElementById("app");
@@ -278,6 +301,10 @@ try {
   await cdp.send("Target.activateTarget", { targetId });
   await cdp.send("Page.enable", {}, sessionId);
   await cdp.send("Runtime.enable", {}, sessionId);
+  // A first visit opens the tour. Every check but A13 arrives as a returning visitor
+  // (the key is `SEEN_KEY` in `src/ui/tour.ts`); A13 drops this script to be new.
+  const SEEN = `try { localStorage.setItem("tetris-lab:tour-seen", "1"); } catch {}`;
+  const returning = await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: SEEN }, sessionId);
 
   const read = async () => {
     const result = await cdp.send("Runtime.evaluate", { expression: READ, returnByValue: true }, sessionId);
@@ -309,11 +336,11 @@ try {
     return read();
   };
 
-  /** Wait until the toolbar names an answer rather than "solving · …". */
+  /** Wait until the toolbar names an answer rather than "Solving seed …". */
   const solved = async () => {
     for (let i = 0; i < 80; i += 1) {
       const state = await read();
-      if (state && state.outcome.length > 0 && !state.outcome.startsWith("solving · ")) return state;
+      if (state && state.outcome.length > 0 && !state.outcome.startsWith("Solving ")) return state;
       await sleep(100);
     }
     return read();
@@ -351,9 +378,10 @@ try {
     check("A3", `no empty region · ${label}`, empty.length === 0,
       empty.map((region) => `${region.name}: ${region.words} chars, ${region.figures} figures`).join("; ") || state.regions.map((region) => `${region.name} ${region.words}c/${region.figures}f`).join(" · "));
     const words = state.statusWords;
-    const named = ["Evaluations", "Layers", "Lines cleared", "elapsed"].filter((word) => words.includes(word));
-    check("A11", `the status bar names the four words · ${label}`, named.length === 4 && state.kbdChips >= 2,
-      `${named.join(", ") || "none"} · ${state.kbdChips} chips`);
+    // The outcome line carries Lines and the elapsed time; the status bar keeps the
+    // one solve number shown nowhere else, beside the keyboard map.
+    check("A11", `the status bar names Evaluations beside the keyboard map · ${label}`, words.includes("Evaluations") && state.kbdChips >= 2,
+      `${words.includes("Evaluations") ? "Evaluations" : "no Evaluations"} · ${state.kbdChips} chips`);
   };
 
   /** A4–A8, A12: the figure and tooltip lints, once per state. */
@@ -390,26 +418,24 @@ try {
   };
 
   const layoutChecks = (state, size) => {
-    // The notes' arithmetic, read back from the page: rail 236, inspector
-    // clamp(420, 24vw, 620), rows 48 / 1fr / 28.
+    // The stylesheet's arithmetic, read back from the page: the rail is 236 px (212
+    // at 1280 and under), the centre is as wide as the board it holds, the inspector
+    // takes the rest with a 400 px floor, and the rows are 48 / 1fr / 28.
     const [width, height] = size;
-    const inspectorWidth = Math.min(620, Math.max(420, 0.24 * width));
-    const expect = {
-      inspector: Math.round(inspectorWidth),
-      stage: height - 48 - 28,
-      centre: width - 236 - Math.round(inspectorWidth) - 2,
-    };
+    const rail = width <= 1280 ? 212 : 236;
     const byName = Object.fromEntries(state.regions.map((region) => [region.name, region]));
-    const okInspector = Math.abs(byName.inspector.w - expect.inspector) <= 1;
+    const expectInspector = width - rail - byName.centre.w;
+    const okInspector = byName.inspector.w >= 399 && Math.abs(byName.inspector.w - expectInspector) <= 2;
     const okToolbar = Math.abs(byName.toolbar.h - 48) <= 1;
     const okStatus = Math.abs(byName.status.h - 28) <= 1;
-    const okRail = Math.abs(byName.rail.w - 236) <= 1;
-    const okStage = Math.abs(byName.centre.h - expect.stage) <= 1;
+    const okRail = Math.abs(byName.rail.w - rail) <= 1;
+    const stage = height - 48 - 28;
+    const okStage = Math.abs(byName.centre.h - stage) <= 1;
     check(
       "A2b",
-      `the grid is the notes' arithmetic · ${width}×${height}`,
+      `the grid is the stylesheet's arithmetic · ${width}×${height}`,
       okInspector && okToolbar && okStatus && okRail && okStage,
-      `rail ${Math.round(byName.rail.w)}/236 · inspector ${Math.round(byName.inspector.w)}/${expect.inspector} · toolbar ${Math.round(byName.toolbar.h)}/48 · status ${Math.round(byName.status.h)}/28 · stage ${Math.round(byName.centre.h)}/${expect.stage}`,
+      `rail ${Math.round(byName.rail.w)}/${rail} · inspector ${Math.round(byName.inspector.w)}/${Math.round(expectInspector)} (≥400) · toolbar ${Math.round(byName.toolbar.h)}/48 · status ${Math.round(byName.status.h)}/28 · stage ${Math.round(byName.centre.h)}/${stage}`,
     );
   };
 
@@ -430,7 +456,7 @@ try {
     // A6 asks for a painted well and the geometry contract, not for filled cells.
     figureChecks(s0, `S0 · ${label}`, { drawn: false });
     layoutChecks(s0, size);
-    check("A3b", `S0 says it is solving, not that it is broken · ${label}`, /solving · /.test(s0.outcome) && s0.canvas.lit >= 0,
+    check("A3b", `S0 says it is solving, not that it is broken · ${label}`, /^Solving seed \d+…$/.test(s0.outcome) && s0.canvas.lit >= 0,
       s0.outcome.slice(0, 60));
     await shoot(`s0-${width}x${height}`);
 
@@ -440,8 +466,38 @@ try {
     regionChecks(s1, `S1 · ${label}`);
     figureChecks(s1, `S1 · ${label}`);
     layoutChecks(s1, size);
-    check("S1b", `the solved outcome is the toolbar's · ${label}`, /^solved · \d+ of \d+ Lines cleared · [\d.]+ ms$/.test(s1.outcome), s1.outcome);
+    check("S1b", `the solved outcome is the toolbar's · ${label}`, /^Win · \d+ of \d+ lines · [\d.]+ ms$/.test(s1.outcome), s1.outcome);
     await shoot(`s1-${width}x${height}`);
+
+    // A14: the inner scrollers hold their content — Watch, then the drawer, then Measure.
+    const probe = async (view) => {
+      const found = (await cdp.send("Runtime.evaluate", { expression: SCROLL_PROBE, returnByValue: true }, sessionId)).result?.value ?? [];
+      const spilled = found.filter((entry) => entry.over > 0 || entry.overX > 0);
+      check("A14", `no inner scroller scrolls · ${view} · ${label}`, found.length > 0 && spilled.length === 0,
+        spilled.map((entry) => `${entry.selector} +${entry.over}px tall${entry.overX > 0 ? ` +${entry.overX}px wide` : ""} (of ${entry.clientHeight})`).join("; ")
+          || `${found.map((entry) => entry.selector).join(", ")} fit`);
+    };
+    const press = (expression) => cdp.send("Runtime.evaluate", { expression, returnByValue: true }, sessionId);
+    await probe("Watch");
+    await press(`document.getElementById("view-layers").click()`);
+    await sleep(250);
+    await probe("Watch + Layers");
+    await press(`document.getElementById("view-beam").click()`);
+    await dispatch("e", "KeyE", 69);
+    await probe("Watch + drawer");
+    await dispatch("Escape", "Escape", 27);
+    await press(`document.getElementById("mode-measure").click()`);
+    await sleep(250);
+    await probe("Measure");
+    // The same page with a Run's result on it: thirty seeds, a second or so.
+    await press(`(document.getElementById("run-count").value = "30", document.getElementById("run-start").click())`);
+    for (let i = 0; i < 100; i += 1) {
+      await sleep(200);
+      const status = (await press(`document.getElementById("run-state").textContent`)).result?.value ?? "";
+      if (/^(\d+)\/\1 games/.test(status)) break;
+    }
+    await probe("Measure + a Run");
+    await shoot(`measure-${width}x${height}`);
 
     // S2: a lost game — seed 7 at goal 20 is a game the shipped Evaluator loses
     // (established by `browser-check.mjs`'s "a game the search cannot win" check).
@@ -449,7 +505,7 @@ try {
     const s2 = await solved();
     regionChecks(s2, `S2 · ${label}`);
     figureChecks(s2, `S2 · ${label}`);
-    check("S2b", `a loss is an outcome and says the Lines it reached · ${label}`, /^lost · \d+ of 20 Lines cleared · [\d.]+ ms$/.test(s2.outcome), s2.outcome);
+    check("S2b", `a loss is an outcome and says the Lines it reached · ${label}`, /^Loss · reached \d+ of 20 lines · [\d.]+ ms$/.test(s2.outcome), s2.outcome);
     check("S2c", `a loss still fills every region · ${label}`, s2.regions.every((region) => region.words > 20 && region.figures + region.controls > 0),
       s2.regions.map((region) => `${region.name} ${region.words}c`).join(" · "));
     await shoot(`s2-${width}x${height}`);
@@ -460,7 +516,7 @@ try {
   const floor = SIZES.find(([w, h]) => w === 1440 && h === 900) ?? SIZES[SIZES.length - 1];
   await load(floor, "/");
   const solvedState = await solved();
-  check("A9a", "the page starts paused on Move 0", solvedState.seek === 0 && /paused/.test(solvedState.stripText), `${solvedState.stripText.slice(0, 60)}`);
+  check("A9a", "the page starts paused on Move 0", solvedState.seek === 0 && !solvedState.playing, `Move ${solvedState.seek} · ${solvedState.playing ? "playing" : "paused"}`);
 
   await dispatch("ArrowRight", "ArrowRight", 39);
   const stepped = await read();
@@ -496,13 +552,29 @@ try {
     "A9g",
     "Space in a focused field is not play/pause",
     focused.result?.value === "pg-seed" && afterSpace.seek === beforeSpace.seek && afterSpace.seek === paused.seek,
-    `focus ${focused.result?.value} · Move ${beforeSpace.seek} → ${afterSpace.seek} · ${afterSpace.stripText.slice(-12)}`,
+    `focus ${focused.result?.value} · Move ${beforeSpace.seek} → ${afterSpace.seek} · ${afterSpace.playing ? "playing" : "paused"}`,
   );
   await cdp.send("Runtime.evaluate", { expression: `document.getElementById("pg-seed").blur()`, returnByValue: true }, sessionId);
   await dispatch(" ", "Space", 32);
   await sleep(700);
   const played = await read();
-  check("A9h", "Space plays from a blurred page", played.seek >= 1 && /playing|paused/.test(played.stripText), played.stripText.slice(0, 60));
+  check("A9h", "Space plays from a blurred page", played.seek >= 1 && played.playing, `Move ${played.seek} · ${played.playing ? "playing" : "paused"}`);
+
+  // ── A13: a first visit gets the tour; Skip is remembered ─────────────────────
+  console.log("\n── first visit · 1440×900 ──");
+  const tourOpen = `!document.getElementById("tour")?.hidden`;
+  const evaluate = async (expression) =>
+    (await cdp.send("Runtime.evaluate", { expression, returnByValue: true }, sessionId)).result?.value;
+  await cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: returning.identifier }, sessionId);
+  await evaluate(`localStorage.removeItem("tetris-lab:tour-seen")`);
+  await load(floor, "/");
+  await sleep(300);
+  check("A13a", "a first visit opens the tour", await evaluate(tourOpen) === true);
+  await evaluate(`document.getElementById("tour-skip").click()`);
+  check("A13b", "Skip closes it and remembers", await evaluate(`${tourOpen} === false && localStorage.getItem("tetris-lab:tour-seen") === "1"`) === true);
+  await load(floor, "/");
+  await sleep(300);
+  check("A13c", "a returning visitor is not shown it again", await evaluate(tourOpen) === false);
 
   const failed = checks.filter((entry) => !entry.ok);
   exitCode = failed.length === 0 ? 0 : 1;
