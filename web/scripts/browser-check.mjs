@@ -280,6 +280,9 @@ const READ = `(() => {
     playText: (play?.textContent ?? "").trim(),
     pressed: play?.getAttribute("aria-pressed") ?? "",
     speed: text("speed-readout"),
+    // The visible unit is "Moves/s"; the seconds per Move are in the control's
+    // aria-label (the transport is too narrow for both at 1280).
+    speedLabel: document.getElementById("speed-readout")?.getAttribute("aria-label") ?? "",
     sheetOpen: sheet?.dataset.open === "true",
     sheetRows: document.querySelectorAll("#sheet dt").length,
     stripCells: document.querySelectorAll("#strip i").length,
@@ -441,9 +444,10 @@ try {
   };
 
   // The solve arrives in the worker; wait for the page to name an outcome. The toolbar
-  // slot reads "solving · seed 0 · goal 8 Lines" while a solve is in flight (notes/14
-  // §3's S0), so an answer is an outcome that is not that.
-  const settled = (state) => state && state.outcome.length > 0 && !state.outcome.startsWith("solving · ");
+  // slot reads "Solving seed 0…" while a solve is in flight (notes/14 §3's S0), so
+  // an answer is an outcome that is not that. The old sentence was "solving · seed
+  // 0 · goal 8 Lines"; both forms count as in flight.
+  const settled = (state) => state && state.outcome.length > 0 && !/^solving\b/i.test(state.outcome);
   let solved = null;
   for (let i = 0; i < 160 && !solved; i += 1) {
     await sleep(250);
@@ -459,10 +463,10 @@ try {
 
   check("the page reports an outcome instead of an error", solved.tone !== "error", solved.tone || "ok");
   // Ticket 13's words: "Won: the Goal of 8 lines was reached, 8 Lines cleared."
-  // Ticket 14's words: "solved · 8 of 8 Lines cleared · 9.3 ms" — the outcome word,
-  // the Lines against the Goal, and the page's own clock. The engine's evaluations and
-  // the outcome's full sentence are in the log and the status bar.
-  check("the outcome came from wasm", /^(solved|lost) · \d+ of \d+ Lines cleared · [\d.]+ ms$/.test(solved.outcome), solved.outcome);
+  // The page's words now: "Win · 8 of 8 lines · 9.3 ms", and for a loss "Loss ·
+  // reached 17 of 20 lines · … ms" — the outcome word, the Lines against the Goal,
+  // and the page's own clock. The engine's evaluations are in the status bar.
+  check("the outcome came from wasm", /^(Win · \d+ of \d+ lines|Loss · reached \d+ of \d+ lines) · [\d.]+ ms$/.test(solved.outcome), solved.outcome);
   check("the status names the default game", /seed 0/.test(solved.status) && /beam 25/.test(solved.status));
 
   // Ticket 17's two deploy-time assertions (§10: the smoke test runs against the
@@ -535,7 +539,7 @@ try {
   check("the Move strip is one cell per Move, and addresses every one", solved.seekMax === expected.total && solved.stripCells === expected.total, `${solved.stripCells} cells, max ${solved.seekMax}, ${expected.total} Moves`);
   check("every control carries a tooltip", solved.untitled.length === 0, solved.untitled.join(", ") || "all titled");
   check("the keyboard map is on the page", solved.sheetRows >= 7, `${solved.sheetRows} rows behind ?`);
-  check("the speed is labelled in words", /Moves\/s/.test(solved.speed) && /s per Move/.test(solved.speed), solved.speed);
+  check("the speed is labelled in words", /Moves\/s/.test(solved.speed) && /Moves\/s/.test(solved.speedLabel) && /s per Move/.test(solved.speedLabel), `${solved.speed} · ${solved.speedLabel}`);
 
   // ---- playback advances, and the picture changes -----------------------------
   const first = solved;
@@ -555,13 +559,13 @@ try {
   // ---- pause, resume, restart, and the map that does it -----------------------
   await key(" ", "Space", 32);
   const paused = await read();
-  check("Space pauses", /paused/.test(paused.progress) && paused.playText === "play", paused.progress.slice(0, 60));
+  check("Space pauses", paused.pressed === "false" && paused.playText === "play", `${paused.playText} · pressed ${paused.pressed}`);
   const pausedAt = paused.seek;
   await sleep(400);
   check("a paused playback does not advance", (await read()).seek === pausedAt, `still Move ${pausedAt}`);
 
   await key(" ", "Space", 32);
-  check("Space resumes", /playing/.test((await read()).progress));
+  check("Space resumes", (await read()).pressed === "true");
 
   // Stepping is asserted from a *still* clock. Reading the position and pressing
   // the arrow is two round trips (~200 ms), and at 1.43 moves/s a running clock can
@@ -570,13 +574,13 @@ try {
   // so the assertion is about the key and not about when the read landed.
   await key(" ", "Space", 32); // pause: the arrows are measured from a frozen position
   const beforeStep = await read();
-  console.log(`  arrows   stepping from Move ${beforeStep.seek}, ${/paused/.test(beforeStep.progress) ? "paused" : "STILL PLAYING"}`);
+  console.log(`  arrows   stepping from Move ${beforeStep.seek}, ${beforeStep.pressed === "true" ? "STILL PLAYING" : "paused"}`);
   await key("ArrowRight", "ArrowRight", 39);
   const stepped = await read();
-  check("→ steps one Move forward (and pauses)", stepped.seek === Math.min(expected.total, beforeStep.seek + 1) && /paused/.test(stepped.progress), `Move ${beforeStep.seek} → ${stepped.seek}`);
+  check("→ steps one Move forward (and pauses)", stepped.seek === Math.min(expected.total, beforeStep.seek + 1) && stepped.pressed === "false", `Move ${beforeStep.seek} → ${stepped.seek}`);
   await key("ArrowLeft", "ArrowLeft", 37);
   const wentBack = await read();
-  check("← steps one Move back", wentBack.seek === Math.min(expected.total, beforeStep.seek) && /paused/.test(wentBack.progress), `Move ${stepped.seek} → ${wentBack.seek}`);
+  check("← steps one Move back", wentBack.seek === Math.min(expected.total, beforeStep.seek) && wentBack.pressed === "false", `Move ${stepped.seek} → ${wentBack.seek}`);
 
   await key("End", "End", 35);
   const atEnd = await read();
@@ -595,7 +599,7 @@ try {
 
   await key("r", "KeyR", 82);
   const restarted = await read();
-  check("R restarts and plays", restarted.seek === 0 && /playing/.test(restarted.progress), restarted.progress.slice(0, 60));
+  check("R restarts and plays", restarted.seek === 0 && restarted.pressed === "true", `Move ${restarted.seek} · pressed ${restarted.pressed}`);
 
   await key("?", "Slash", 191);
   check("? opens the keyboard sheet", (await read()).sheetOpen);
@@ -701,7 +705,7 @@ try {
     );
   }
   const scrubbed = await read();
-  check("a gesture pauses, so the drag is not fighting the clock", /paused/.test(scrubbed.progress));
+  check("a gesture pauses, so the drag is not fighting the clock", scrubbed.pressed === "false");
 
   // ---- playing from a scrubbed position continues correctly -------------------
   await key(" ", "Space", 32); // play again from the scrubbed Move
@@ -857,12 +861,12 @@ try {
     const lost = await settle(raised.outcome);
     check(
       "a game the search cannot win says so with the Lines it reached",
-      /^lost · \d+ of 20 Lines cleared · [\d.]+ ms$/.test(lost.outcome) && lost.tone !== "error",
+      /^Loss · reached \d+ of 20 lines · [\d.]+ ms$/.test(lost.outcome) && lost.tone !== "error",
       lost.outcome.slice(0, 100),
     );
     check(
       "a loss has no Moves to play, and says so instead of an empty counter",
-      lost.outcomeKind === "lost" && /^No Moves to replay: .*Lines cleared\.$/.test(lost.progress),
+      lost.outcomeKind === "lost" && /^No Moves to replay$/.test(lost.seekText),
       lost.progress,
     );
 
