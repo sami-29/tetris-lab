@@ -541,8 +541,12 @@ runCustomNote.textContent = "Nothing measured yet.";
 const s1 = fig("s1", statusFigures, "0");
 
 // The move figure in the transport. The strip's aria-valuemax already carries the
-// total for assistive technology, so this is the only visible one.
+// total for assistive technology, so this is the only visible one. Before the first
+// solve there is no count yet, so it says zero in the same words a solve uses —
+// "0 of 0 Moves", not the registry's "of the solution" (which is a caption, not a
+// count, and made the S0 transport wider than the 1366 column).
 const m2 = fig("m2", moveFigureHost, "0");
+m2.set("0", "of 0 Moves");
 m2.el.classList.add("nolabel");
 
 // The board header's line: the Layer on screen.
@@ -1221,10 +1225,11 @@ function setSpeed(next: number): void {
   if (playback) playback.setSpeed(speed);
   speedSlider.value = String(mpsToSlider(speed));
   const label = `${speed.toFixed(2)} Moves/s · ${(msPerMove(speed) / 1000).toFixed(2)} s per Move`;
-  // Two elements, one figure: the numeral is tabular and the unit is the words, so a
-  // speed change never reflows the transport (§4.2's rule about numbers).
+  // The screen shows the control's own unit; the derived seconds per Move are in the
+  // aria-label and the slider's tooltip. In the transport they were the widest thing
+  // after the buttons, and at 1280 they were what got cut at the panel edge.
   speedFigureNum.textContent = speed.toFixed(2);
-  speedFigureUnit.textContent = `Moves/s · ${(msPerMove(speed) / 1000).toFixed(2)} s per Move`;
+  speedFigureUnit.textContent = "Moves/s";
   speedReadout.setAttribute("aria-label", label);
   speedSlider.setAttribute("aria-valuetext", label);
 }

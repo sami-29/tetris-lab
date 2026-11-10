@@ -35,6 +35,9 @@
 //   A13 a first visit opens the tour, Skip closes it and is remembered
 //   A14 the four inner scrollers (readout, layer table, drawer body, Measure body)
 //       are never scrolled — Watch, the open drawer and Measure, at every size
+//   A15 the guide's body is never empty: a heading alone is not an answer to
+//       "what is this", at any height
+//   A16 the transport fits its buttons and readout without clipping a label
 //
 // What is *not* here, and is judged by eye (notes/14 §8.2): whether 2560×1440 looks
 // deliberate, whether each tooltip is true and useful, whether the six-step type
@@ -239,6 +242,29 @@ const READ = `(() => {
     text: (document.body.innerText || "").slice(0, 4000),
     playing: document.getElementById("play")?.getAttribute("aria-pressed") === "true",
     seek: Number(document.getElementById("strip")?.getAttribute("aria-valuenow") ?? -1),
+    // The guide's body, without its heading: a short window may drop the long
+    // explanation and the steps, but never the sentence that says what the Lab asks.
+    guideWords: (() => {
+      const guide = document.getElementById("guide");
+      if (!guide) return 0;
+      return [...guide.querySelectorAll("p, li")]
+        .filter((el) => el.getClientRects().length > 0)
+        .map((el) => (el.innerText || "").trim())
+        .join(" ")
+        .trim().length;
+    })(),
+    // The transport is the tightest row at 1280: a button label and the speed readout
+    // share 666 px. A shrunk button paints its word outside its own box, and the
+    // region's overflow: hidden cuts the readout at the panel edge.
+    transport: (() => {
+      const bar = document.getElementById("transport");
+      const play = document.getElementById("play");
+      if (!bar || !play) return { fits: false, playFits: false };
+      return {
+        fits: bar.scrollWidth <= bar.clientWidth + 1,
+        playFits: play.scrollWidth <= play.clientWidth + 1,
+      };
+    })(),
     gridTracks: (() => {
       const app = document.getElementById("app");
       return app ? getComputedStyle(app).gridTemplateColumns : "";
@@ -436,6 +462,17 @@ try {
       `the grid is the stylesheet's arithmetic · ${width}×${height}`,
       okInspector && okToolbar && okStatus && okRail && okStage,
       `rail ${Math.round(byName.rail.w)}/${rail} · inspector ${Math.round(byName.inspector.w)}/${Math.round(expectInspector)} (≥400) · toolbar ${Math.round(byName.toolbar.h)}/48 · status ${Math.round(byName.status.h)}/28 · stage ${Math.round(byName.centre.h)}/${stage}`,
+    );
+    // A15: the guide is never a heading with nothing under it. S0 is the state that
+    // shows the first paint; S1 and S2 the same rail once a game is on screen.
+    check("A15", `the guide keeps its question · ${width}×${height}`, state.guideWords >= 40, `${state.guideWords} chars of body`);
+    // A16: nothing in the transport is shrunk below its contents. Before this check,
+    // 1280×720 cut the Play label to "PLA" and the speed's tail at the panel edge.
+    check(
+      "A16",
+      `the transport's labels fit · ${width}×${height}`,
+      state.transport.fits && state.transport.playFits,
+      `transport ${state.transport.fits ? "fits" : "overflows"} · Play label ${state.transport.playFits ? "fits" : "clipped"}`,
     );
   };
 
