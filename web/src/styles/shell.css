@@ -3,10 +3,11 @@
  *   columns  236px · auto · minmax(400px, 1fr)
  *   rows      48px · minmax(0,1fr) · 28px
  *
- * The centre is `auto`: it is exactly as wide as the board and its readout, and the
- * board is sized from the viewport's height (`--board-h`), so there is never a band
- * of empty panel beside the well. The inspector takes whatever width is left, which
- * is the one region that has a use for more (the band's score axis).
+ * The centre is `auto`: it is exactly as wide as the wider of the board and its
+ * readout (the board is sized from the viewport's height, `--board-h`, so there is
+ * never a band of empty panel beside the well) and the transport, whose buttons and
+ * speed readout cannot shrink without clipping. The inspector takes whatever width
+ * is left, which is the one region that has a use for more (the band's score axis).
  *
  * No page scroll is arithmetic, not a hope: the row tracks sum to 100vh, the column
  * tracks to 100vw, `html, body` are `overflow: hidden`, and every flexible child
@@ -542,6 +543,13 @@
   color: var(--ink2);
 }
 
+/* The question the Lab answers, in one sentence. It is the guide's reason to exist
+   and the one paragraph a short window keeps (see the height breakpoints below). */
+.guide .guide-purpose {
+  font: var(--fs-body) / 1.45 var(--sans);
+  color: var(--ink);
+}
+
 .guide-steps {
   margin: 0;
   padding: 0;
@@ -1004,6 +1012,9 @@
 .transport .tbtn {
   height: var(--ctl);
   min-width: var(--ctl);
+  /* A label is never shrunk to make room for the readout beside it: at 1280 the
+     word "play" fits only if the box is as wide as its contents. */
+  flex: 0 0 auto;
   justify-content: center;
   padding: 0 8px;
   border: 1px solid var(--line2);
@@ -1021,6 +1032,15 @@
 
 .transport .tbtn.play:hover {
   background: var(--amber-hi);
+}
+
+/* The move count is a number a solve can change: a wider total must not move the
+   grid's centre column. The Playground allows three digits of Moves, so a fixed
+   floor covers the widest count and the figure never reflows the transport. */
+#move-figure {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 132px;
 }
 
 .spd {
@@ -1284,6 +1304,13 @@
   text-align: right;
   border-bottom: 1px solid var(--rowline);
   color: var(--ink2);
+}
+
+/* The inspector's right edge is the window's. The last column keeps a gutter the
+   width of a panel head's, so its numbers never sit against the frame. */
+#layers thead th:last-child,
+#layers tbody td:last-child {
+  padding-right: 12px;
 }
 
 #layers tbody td:first-child {
@@ -1695,8 +1722,10 @@
 
 /* ══ shorter windows: the guide gives up its words before anything else ══ */
 
+/* The long explanation goes first; the question stays, so the panel is never a
+   heading with nothing under it. */
 @media (max-height: 960px) {
-  .guide > p {
+  .guide-lede {
     display: none;
   }
 }
@@ -1712,10 +1741,6 @@
 }
 
 @media (max-height: 700px) {
-  .guide h2 {
-    display: none;
-  }
-
   .guide {
     padding-top: 10px;
   }
