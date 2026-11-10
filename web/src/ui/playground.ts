@@ -212,7 +212,12 @@ export class Playground {
       this.commit.flush();
     });
 
-    parent.append(label, input);
+    // One cell per field, label above its control, so the rail lays four of them
+    // out as two by two rather than one tall column.
+    const cell = document.createElement("div");
+    cell.className = "field";
+    cell.append(label, input);
+    parent.append(cell);
     return { input, field };
   }
 
@@ -268,7 +273,10 @@ export class Playground {
     output.title = widthTooltip();
 
     wrap.append(input, tick);
-    parent.append(label, wrap, output);
+    const cell = document.createElement("div");
+    cell.className = "field field-beam";
+    cell.append(label, wrap, output);
+    parent.append(cell);
     return { input, field };
   }
 

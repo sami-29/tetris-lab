@@ -1,39 +1,62 @@
 /* The workbench shell: five regions, no page scroll, growing into the viewport.
  *
- * The grid is notes/14 §1.1's contract, and every number in it is load-bearing:
- *
- *   columns  236px · minmax(0,1fr) · clamp(420px, 24vw, 620px)
+ *   columns  236px · auto · minmax(400px, 1fr)
  *   rows      48px · minmax(0,1fr) · 28px
  *
- * The rail is 236 because the Playground's four fields and the Engine's eight Weights
- * fit it; the inspector is 420–620 and **not** the mockup's 326 because at 326 the
- * per-layer pitch falls to 13.6 px, under the 14 px floor ticket 12 sets, which would
- * force the default game into a Layer window at 1440×900. The rows are 48/28 rather
- * than the mockup's 42/24 because tickets 11 and 12 both measured their own vertical
- * arithmetic against 48/28 and re-deriving it would be re-opening ticket 12.
+ * The centre is `auto`: it is exactly as wide as the board and its readout, and the
+ * board is sized from the viewport's height (`--board-h`), so there is never a band
+ * of empty panel beside the well. The inspector takes whatever width is left, which
+ * is the one region that has a use for more (the band's score axis).
  *
  * No page scroll is arithmetic, not a hope: the row tracks sum to 100vh, the column
  * tracks to 100vw, `html, body` are `overflow: hidden`, and every flexible child
  * carries `min-height: 0; min-width: 0` — which is why `[data-region]` sets both.
- * A region that overflows scrolls *inside itself* and says so with a mask; the
- * document never moves.
+ *
+ * The board's height is what is left of the viewport after the toolbar (48), the
+ * status bar (28), the playback panel (78), the board panel's head and borders (32)
+ * and its padding (24). Its width is capped too, so a tall narrow window cannot push
+ * the inspector under its 400 px floor.
  */
+
+:root {
+  --rail-w: 236px;
+  --ro-w: clamp(232px, 15vw, 300px);
+  --board-h: max(300px, min(calc(100vh - 212px), calc((100vw - var(--rail-w) - 400px - var(--ro-w) - 96px) * 2)));
+  --board-w: calc(var(--board-h) / 2);
+}
 
 #app {
   display: grid;
   height: 100vh;
-  grid-template-columns: 236px minmax(0, 1fr) clamp(420px, 24vw, 620px);
+  grid-template-columns: var(--rail-w) auto minmax(400px, 1fr);
   grid-template-rows: 48px minmax(0, 1fr) 28px;
   grid-template-areas:
     "bar bar bar"
     "rail stage inspect"
     "status status status";
   background: var(--line);
-  /* No gap: the three row tracks must sum to 100vh exactly (48 + 1fr + 28) and the
-     three column tracks to 100vw, because that is the arithmetic that makes
-     "no page scroll" a property of the layout rather than a hope (notes/14 §1.1).
-     The 1 px separators are borders on the regions, which do not consume a track. */
+  /* No gap: the separators are borders on the regions, which do not consume a track. */
   gap: 0;
+}
+
+/* Measure gives the Run the centre and the inspector's width: the band describes one
+   solve, and Measure is about many. */
+#app[data-mode="measure"] {
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  grid-template-areas:
+    "bar bar"
+    "rail stage"
+    "status status";
+}
+
+#app[data-mode="measure"] [data-region="inspector"],
+#app[data-mode="measure"] .boardpanel,
+#app[data-mode="measure"] .stagepanel {
+  display: none;
+}
+
+#app[data-mode="measure"] [data-region="centre"] {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 [data-region="rail"] {
@@ -91,6 +114,19 @@
   white-space: nowrap;
 }
 
+/* Words for a screen reader that the eye already gets from a picture. */
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ══ toolbar ══════════════════════════════════════════════════════════════ */
 
 .bar {
@@ -117,16 +153,58 @@
 }
 
 .brandtext span {
-  font: var(--fs-micro) / 1 var(--mono);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font: var(--fs-chip) / 1 var(--sans);
   color: var(--ink4);
+  white-space: nowrap;
+}
+
+/* The two modes: tabs the toolbar's full height, the selected one underlined in
+   amber, because "which picture am I looking at" is the first thing to know. */
+.modes {
+  display: flex;
+  align-items: stretch;
+  border-right: 1px solid var(--line);
+}
+
+.mode {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font: 500 var(--fs-body) / 1 var(--sans);
+  color: var(--ink3);
+  white-space: nowrap;
+  transition: color var(--t-hover) linear, background var(--t-hover) linear;
+}
+
+.mode:hover {
+  color: var(--ink);
+  background: var(--panel2);
+}
+
+.mode[aria-selected="true"] {
+  color: var(--ink);
+}
+
+.mode[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 2px;
+  background: var(--amber);
+}
+
+.mode:focus-visible {
+  outline-offset: -3px;
 }
 
 .baractions {
   margin-left: auto;
   display: flex;
   align-items: stretch;
+  flex: 0 0 auto;
 }
 
 .tbtn {
@@ -170,11 +248,10 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
-  padding: 0 14px;
-  border-left: 1px solid var(--line);
+  gap: 3px;
+  padding: 0 14px 0 20px;
   min-width: 0;
-  max-width: 34%;
+  flex: 1 1 auto;
 }
 
 .clock p {
@@ -185,8 +262,12 @@
 }
 
 #outcome {
-  font: 500 var(--fs-data) / 1.2 var(--mono);
+  font: 500 var(--fs-body) / 1.2 var(--sans);
   color: var(--ink);
+}
+
+#outcome[data-outcome="solved"] {
+  color: var(--amber);
 }
 
 #outcome[data-outcome="lost"] {
@@ -217,7 +298,7 @@
 .clock::before {
   content: "";
   position: absolute;
-  left: 5px;
+  left: 8px;
   top: 50%;
   width: 5px;
   height: 5px;
@@ -236,26 +317,16 @@
 
 /* ══ left rail ════════════════════════════════════════════════════════════ */
 
-#panel-playground {
-  flex: 0 0 auto;
-}
-
+#panel-playground,
 #panel-engine {
   flex: 0 0 auto;
-}
-
-#panel-run {
-  flex: 1 1 auto;
-  min-height: 170px;
 }
 
 .rows {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 6px 9px 8px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  padding: 6px 10px 8px;
   min-height: 0;
 }
 
@@ -291,23 +362,30 @@
   color: var(--ink4);
 }
 
-#engine-weights[hidden] {
-  display: none;
+.engine-lede {
+  margin: 0;
+  padding: 8px 10px 10px;
+  font: var(--fs-chip) / 1.5 var(--sans);
+  color: var(--ink3);
 }
 
-/* The small toggles — Expert, the drawer's close, the view tabs — are controls
-   too: one height, with padding, so none of them is a bare 22 px word. */
+#engine-weights {
+  border-top: 1px solid var(--line);
+}
+
+/* The small toggles — Weights, Solve, the drawer's close — are controls too: one
+   height, with padding, so none of them is a bare 22 px word. */
 .iconbtn,
 #expert {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: var(--ctl);
-  padding: 0 9px;
-  border: 1px solid var(--line);
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line2);
   border-radius: 2px;
   color: var(--ink2);
-  font: 500 var(--fs-data) / 1 var(--sans);
+  font: 500 var(--fs-chip) / 1 var(--sans);
   transition: background var(--t-hover) linear, color var(--t-hover) linear;
 }
 
@@ -326,21 +404,18 @@
 }
 
 /* Ticket 13's Playground, re-skinned. Its behaviour — commit, clamp, re-solve — is
-   untouched; only the geometry inside this 236 px rail is ours. */
+   untouched; only the geometry inside the rail is ours. */
 #playground {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 7px 9px 9px;
+  gap: 10px;
+  padding: 10px 10px 12px;
   min-height: 0;
 }
 
+/* The panel head already says "Playground". */
 #playground .legend {
-  margin: 0;
-  font: 600 var(--fs-micro) / 1 var(--mono);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink4);
+  display: none;
 }
 
 /* One per row: the label names the goal and the piece count, so it needs the rail's
@@ -350,6 +425,8 @@
   grid-template-columns: 1fr;
   gap: 1px;
   background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 2px;
 }
 
 #playground .presets .presets-label {
@@ -357,8 +434,9 @@
 }
 
 #playground .presets button {
-  padding: 0 8px;
+  padding: 0 9px;
   min-height: var(--ctl);
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -377,65 +455,60 @@
 
 #playground .presets button[aria-pressed="true"],
 #playground .presets button[data-current="true"] {
-  background: rgba(224, 163, 62, 0.14);
+  background: rgba(224, 163, 62, 0.12);
   color: var(--amber);
-  box-shadow: inset 0 -1px 0 var(--amber);
+  box-shadow: inset 2px 0 0 var(--amber);
 }
 
+/* Two by two, label above its control; the beam width takes the full row. */
 #playground .fields {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 7px 9px;
-  align-items: end;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 10px;
+}
+
+#playground .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+#playground .field-beam {
+  grid-column: 1 / -1;
 }
 
 #playground .fields label {
-  grid-column: 1 / -1;
-  font: var(--fs-chip) / 1.2 var(--mono);
-  letter-spacing: 0.06em;
+  font: var(--fs-chip) / 1.2 var(--sans);
   color: var(--ink3);
-  display: block;
-  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #playground .fields input[type="number"] {
   width: 100%;
-  grid-column: 1 / -1;
   min-height: var(--ctl);
 }
 
-/* One field per row, label above the control, in the rail's width. */
-#playground .fields > * {
-  min-width: 0;
-}
-
-#playground .fields label + input[type="number"] {
-  grid-column: 1 / -1;
-}
-
-#playground label {
-  color: var(--ink3);
-}
-
 #playground .beam {
-  grid-column: 1 / -1;
   position: relative;
   display: block;
-  padding-bottom: 7px;
+  padding: 4px 0;
 }
 
-#playground #beam {
+#playground #pg-beam {
   width: 100%;
   display: block;
 }
 
 #playground .beam .tick {
   position: absolute;
-  top: 4px;
-  bottom: 11px;
+  top: 8px;
+  bottom: 8px;
   width: 2px;
   margin-left: -1px;
-  background: var(--amber);
+  background: var(--amber-dim);
   pointer-events: none;
   /* The tick is a 2 px mark; its words are the readout's ("default 25") and its
      title's. A 2 px box cannot hold them, so they are not painted. */
@@ -444,9 +517,88 @@
 }
 
 #beam-readout {
-  grid-column: 1 / -1;
-  font: var(--fs-chip) / 1.2 var(--mono);
+  font: var(--fs-chip) / 1.3 var(--mono);
   color: var(--ink4);
+}
+
+/* What the Lab is for, and the way into the tour. It takes the rest of the rail, so
+   the rail is never a stack that stopped, with its two buttons on the floor. */
+.guide {
+  flex: 1 1 auto;
+  padding: 14px 12px 12px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.guide h2 {
+  margin: 0;
+  font: 600 var(--fs-body) / 1.3 var(--sans);
+  color: var(--ink);
+}
+
+.guide p {
+  margin: 0;
+  font: var(--fs-chip) / 1.55 var(--sans);
+  color: var(--ink2);
+}
+
+.guide-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.guide-steps li {
+  position: relative;
+  padding-left: 22px;
+  font: var(--fs-chip) / 1.5 var(--sans);
+  color: var(--ink3);
+  counter-increment: step;
+}
+
+.guide-steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line2);
+  border-radius: 50%;
+  font: 600 var(--fs-micro) / 1 var(--mono);
+  color: var(--ink3);
+}
+
+.guide-steps b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.guide-actions {
+  margin-top: auto;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.guide-actions .tbtn {
+  justify-content: center;
+  height: var(--ctl);
+  border: 1px solid var(--line2);
+  border-radius: 2px;
+}
+
+
+/* A Stop with nothing to stop is not shown: it appears beside its Run while one runs. */
+#run-stop:disabled,
+#run-yours-stop:disabled {
+  display: none;
 }
 
 /* ══ centre ═══════════════════════════════════════════════════════════════ */
@@ -480,23 +632,34 @@
   color: var(--ink4);
 }
 
+/* The board and its readout sit side by side at their own sizes; the centre column
+   is exactly as wide as they are (`auto` in the grid), so nothing here stretches. */
 .boardbody {
   flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) clamp(380px, calc(100% - 620px), 1040px);
-  gap: 8px;
-  padding: 8px;
+  display: flex;
+  align-items: stretch;
+  gap: 20px;
+  padding: 12px 16px 12px 10px;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
 
-.gutter {
+.well {
   display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: flex-end;
-  padding: 1px 2px 1px 0;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* Twenty numbers, one per board row: the script sets `--cell` and the top padding
+   from the board's own geometry, so each number sits beside its row. */
+.gutter {
+  --cell: 0px;
+  display: grid;
+  grid-auto-rows: var(--cell);
+  align-items: center;
+  justify-items: end;
+  width: 18px;
   font: var(--fs-micro) / 1 var(--mono);
   color: var(--ink4);
   pointer-events: none;
@@ -509,10 +672,9 @@
 }
 
 .cvwrap {
-  display: grid;
-  place-items: center;
-  min-height: 0;
-  min-width: 0;
+  width: var(--board-w);
+  height: var(--board-h);
+  flex: 0 0 auto;
 }
 
 #board {
@@ -520,102 +682,81 @@
   width: 100%;
   height: 100%;
   background: var(--board);
-  border: 1px solid var(--line2);
-  border-radius: 2px;
 }
 
 /* ── the readout ───────────────────────────────────────────────────────── */
 
+/* One column at natural heights; the column heights sit on the board's floor, level
+   with the stack they describe. */
 .readout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  gap: 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: var(--ro-w);
+  flex: 0 0 auto;
   border-left: 1px solid var(--line);
-  padding-left: 12px;
+  padding-left: 18px;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
-}
-
-/* Above the readout's 560 px break the six panes are two columns of three, so a
-   1040 px column of labels is never a label at the left edge and its value at the
-   right. This is the difference between "deliberate at 2560" and "loose" (notes/14
-   §1.3); at 1440×900 the readout is 380 and stays one column. */
-@media (min-width: 1800px) {
-  .readout {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    /* Three rows that share the column's height, so 1040 × 1240 is composed rather
-       than a stack that stopped. The picture panes take the slack. */
-    grid-auto-rows: minmax(min-content, 1fr);
-  }
-
-  .readout .ro-body {
-    flex: 1 1 auto;
-  }
-
-  .readout .fig-picture,
-  .readout .spark {
-    flex: 1 1 auto;
-    height: auto;
-    min-height: 44px;
-  }
 }
 
 .ro-pane {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;
+}
+
+/* The profile sits on the board's floor, so its bars read against the rows
+   they measure, and it grows into the height the board gives it. */
+.ro-columns {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  min-height: 150px;
+}
+
+.ro-columns > .ro-body,
+.ro-columns .fig-picture {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ro-columns .cols {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 96px;
 }
 
 .ro-sec {
-  margin: 12px 0 5px;
-}
-
-.ro-sec:first-child {
-  margin-top: 0;
+  margin: 0 0 8px;
 }
 
 .ro-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-height: 0;
 }
 
-.ro-line {
+/* The score: one number, amber, at the title step. Not a hero: it is the evaluator's
+   opinion of one board, and the readout is a column of facts. */
+.ro-total .fig {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  font: var(--fs-chip) / 1.45 var(--mono);
-  color: var(--ink3);
+  gap: 6px;
 }
 
-.ro-line .fig {
-  flex: 1;
-  justify-content: space-between;
-}
-
-.ro-line .fig .flabel {
-  white-space: normal;
-}
-
-.ro-total {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  border-top: 1px solid var(--line);
-  margin-top: 3px;
-  padding-top: 6px;
+.ro-total .fig .flabel {
+  display: none;
 }
 
 .ro-total .fig .num {
+  min-width: 0;
   color: var(--amber);
-  font-size: var(--fs-body);
+  font: 500 var(--fs-title) / 1.2 var(--mono);
+  text-align: left;
 }
 
 .ro-empty {
@@ -629,8 +770,9 @@
   display: grid;
   grid-template-columns: repeat(10, 1fr);
   gap: 3px;
-  height: 72px;
+  height: 96px;
   align-items: end;
+  border-bottom: 1px solid var(--line2);
 }
 
 .cols .c {
@@ -644,7 +786,7 @@
 .cols .c b {
   display: block;
   background: var(--teal);
-  border-radius: 1px;
+  border-radius: 1px 1px 0 0;
   min-height: 0;
   transition: height var(--t-bar) var(--ease-bar);
 }
@@ -657,100 +799,87 @@
 }
 
 .caps {
-  margin-top: 2px;
   display: grid;
   grid-template-columns: repeat(10, 1fr);
   gap: 3px;
   font: var(--fs-micro) / 1 var(--mono);
   color: var(--ink4);
   text-align: center;
-  margin-top: 3px;
+  margin-top: 4px;
 }
 
-/* this placement */
+/* this placement: label left, value right, one line each */
 .place {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
-  gap: 1px 10px;
+  gap: 0;
 }
 
 .place .fig {
-  display: contents;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--rowline);
+  white-space: nowrap;
+}
+
+.place .fig:last-child {
+  border-bottom: 0;
 }
 
 .place .fig .flabel {
-  font: var(--fs-chip) / 1.5 var(--mono);
+  margin-right: auto;
+  padding-right: 10px;
+  font: var(--fs-chip) / 1.4 var(--sans);
+  letter-spacing: 0;
   color: var(--ink3);
 }
 
 .place .fig .num {
+  min-width: 0;
   text-align: right;
 }
 
+.place .fig .unit:empty {
+  display: none;
+}
+
 /* next four */
-.nxt {
+.nxt .fig {
   display: flex;
+  flex-direction: row;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  min-height: 30px;
+  gap: 6px 5px;
+}
+
+.nxt .fig .num {
+  min-width: 0;
+}
+
+/* The four glyphs are the picture; the count reads as its caption underneath. */
+.nxt .seq {
+  order: -1;
+  flex: 1 0 100%;
 }
 
 .nxt .seq {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 7px;
+  gap: 12px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 2px;
   background: var(--panel2);
   color: var(--teal2);
 }
 
-.nxt .seq .glyph {
-  opacity: 0.85;
+.nxt .seq > span:first-child {
+  color: var(--ink);
 }
 
-/* this layer's counts: label left, value right */
-.ro-layer {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.ro-layer .fig {
-  display: flex;
-  justify-content: space-between;
-}
-
-/* score across layers */
-.spark {
-  height: 44px;
-  min-height: 0;
-}
-
-.spark svg {
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.spark .axis {
-  stroke: var(--line);
-  stroke-width: 1;
-}
-
-.spark .line {
-  fill: none;
-  stroke: var(--teal2);
-  stroke-width: 1.4;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-}
-
-.spark .dot {
-  display: block;
-  fill: var(--amber);
+.nxt .seq > span:not(:first-child) .glyph {
+  opacity: 0.7;
 }
 
 /* ── move strip and transport ──────────────────────────────────────────── */
@@ -916,37 +1045,29 @@
 
 /* ══ inspector ════════════════════════════════════════════════════════════ */
 
-.bandpanel {
-  flex: 0 0 auto;
-  min-height: 140px;
+/* Each of the three views takes the whole column while it is the one on screen. */
+.bandpanel,
+.treepanel,
+.layerpanel {
+  flex: 1 1 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 #band {
   display: block;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   width: 100%;
   min-height: 0;
-}
-
-#band-caption {
-  margin: 0;
-  padding: 3px 9px 4px;
-  font: var(--fs-chip) / 1.35 var(--sans);
-  color: var(--ink4);
-  /* Two lines at most: the whole sentence is in the element's tooltip, and the band
-     needs the height more than the caption does. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .legend {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 10px;
-  padding: 4px 9px;
+  gap: 6px 14px;
+  padding: 8px 10px;
   border-top: 1px solid var(--line);
   font: var(--fs-micro) / 1 var(--mono);
   color: var(--ink4);
@@ -980,89 +1101,47 @@
   background: var(--ink2);
 }
 
-#band-counts {
-  margin: 0;
-  padding: 4px 9px 6px;
-  list-style: none;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: 0 10px;
-  font: var(--fs-micro) / 1.6 var(--mono);
-  color: var(--ink4);
-  /* One row of Layers at a time: the band above it is the picture, and the per-layer
-     table is where the whole list belongs. */
-  max-height: 44px;
-  overflow: auto;
-}
-
-#band-counts li[data-lineage="true"] {
-  color: var(--amber);
-}
-
-/* The inspector's two views. Ticket 12's `ui/tree-panel.ts` owns the switch, so it
-   sits above both panels and stays visible whichever view is on screen: the band is
-   the default and the tree is the drill-down, and the band *is* the beam, so neither
-   button says "band" (notes/12 §1.2). */
+/* The inspector's three views, as tabs. `ui/tree-panel.ts` owns the switch; the
+   band *is* the beam, so no tab says "band" (notes/12 §1.2). */
 #views {
   display: flex;
   flex: 0 0 auto;
-  gap: 4px;
-  padding: 4px 6px;
+  align-items: stretch;
+  height: 36px;
+  padding: 0 4px;
   border-bottom: 1px solid var(--line);
   background: var(--bar);
 }
 
 #views button {
-  min-height: var(--ctl);
-  font: var(--fs-chip) / 1 var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 4px 12px;
+  position: relative;
+  padding: 0 14px;
+  font: 500 var(--fs-data) / 1 var(--sans);
   color: var(--ink3);
-  background: var(--panel2);
-  border: 1px solid var(--line);
-  border-radius: 2px;
-  cursor: pointer;
-  transition:
-    background var(--t-hover) linear,
-    color var(--t-hover) linear,
-    border-color var(--t-hover) linear;
+  transition: color var(--t-hover) linear, background var(--t-hover) linear;
 }
 
 #views button:hover {
   color: var(--ink);
-  background: var(--hover);
+  background: var(--panel2);
 }
 
 #views button[data-selected="true"] {
   color: var(--ink);
-  border-color: var(--teal);
-  background: var(--panel3);
 }
 
-/* The tree takes the inspector while it is open, rather than a slice of it: at 24
-   states per Layer the pitch is the legibility budget (notes/12 §3.2), and stacking
-   it under the band would put the rows below the floor. So while the tree is the
-   view, the per-layer table keeps a few rows instead of half the column. */
-.treepanel {
-  flex: 1 1 auto;
-  min-height: 0;
+#views button[data-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 2px;
+  background: var(--teal2);
 }
 
-/* While the tree is the view it *is* the inspector's picture, and at 1440×900 the
-   row pitch is the budget (notes/12 §3.2: 24 states need the pane, not a slice of
-   it), so the per-layer table yields to it — it lists the same Layers, and the band
-   view has it back the moment the view switches. The log stays: it is the record of
-   what happened, not a second list of Layers. */
-.inspector:has(#band-panel[hidden]) .layerpanel {
-  display: none;
-}
-
-/* `hidden` must win over a panel's own `display: flex`, or the hidden view keeps its
-   half of the inspector and squeezes the visible one to nothing. */
-.bandpanel[hidden],
-.treepanel[hidden] {
-  display: none;
+#views button:focus-visible {
+  outline-offset: -3px;
 }
 
 #tree-controls {
@@ -1148,15 +1227,11 @@
   color: var(--ink3);
 }
 
-.layerpanel {
-  flex: 1 1 auto;
-  min-height: 96px;
-}
-
 .tablewrap {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
 }
 
@@ -1167,12 +1242,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-.tablewrap {
-  overflow-x: hidden;
-}
-
 #layers thead th {
-  padding: 4px 6px;
+  padding: 8px 10px;
   position: sticky;
   top: 0;
   z-index: 1;
@@ -1192,7 +1263,7 @@
 }
 
 #layers tbody td {
-  padding: 2px 6px;
+  padding: 4px 10px;
   text-align: right;
   border-bottom: 1px solid var(--rowline);
   color: var(--ink2);
@@ -1466,32 +1537,130 @@
   display: none;
 }
 
-/* ══ below the design floor: panels scroll inside themselves, never the page ══ */
+/* ══ the tour: a ring around one region, a card beside it ═════════════════ */
 
-@media (max-height: 860px) {
-  .readout {
-    gap: 0;
+/* The ring is the scrim: a spread with no blur darkens everything outside it (the
+   one shadow that is not a floating thing's; see tokens.css), and clicks pass
+   through, so the region it names stays usable while the card describes it. */
+#tour-ring {
+  position: fixed;
+  z-index: 70;
+  border: 1px solid var(--amber);
+  border-radius: 2px;
+  box-shadow: 0 0 0 200vmax var(--tour-scrim);
+  pointer-events: none;
+  transition:
+    left var(--t-drawer) var(--ease-drawer),
+    top var(--t-drawer) var(--ease-drawer),
+    width var(--t-drawer) var(--ease-drawer),
+    height var(--t-drawer) var(--ease-drawer);
+}
+
+#tour-ring[data-centred="true"] {
+  border-color: transparent;
+}
+
+#tour {
+  position: fixed;
+  z-index: 71;
+  width: min(360px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 16px 14px;
+  background: var(--drawer);
+  border: 1px solid var(--line2);
+  border-top: 2px solid var(--amber);
+  border-radius: 2px;
+  box-shadow: var(--float-shadow);
+  transition:
+    left var(--t-drawer) var(--ease-drawer),
+    top var(--t-drawer) var(--ease-drawer);
+}
+
+#tour:focus {
+  outline: none;
+}
+
+#tour h2 {
+  margin: 0;
+  font: 600 var(--fs-title) / 1.3 var(--sans);
+  color: var(--ink);
+}
+
+#tour p {
+  margin: 0;
+  color: var(--ink2);
+}
+
+.tour-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.tour-actions .tbtn {
+  height: var(--ctl);
+  padding: 0 12px;
+  border: 1px solid var(--line2);
+  border-radius: 2px;
+}
+
+.tour-actions .tbtn.go {
+  border-color: var(--amber-edge);
+}
+
+#tour-skip {
+  border-color: transparent;
+  padding: 0 6px;
+  color: var(--ink3);
+}
+
+.tour-count {
+  margin-left: auto;
+  margin-right: 4px;
+  font: var(--fs-chip) / 1 var(--mono);
+  color: var(--ink4);
+}
+
+#tour[data-docked="true"] {
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  top: auto;
+  width: auto;
+}
+
+/* ══ shorter windows: the guide gives up its words before anything else ══ */
+
+@media (max-height: 960px) {
+  .guide > p {
+    display: none;
+  }
+}
+
+@media (max-height: 820px) {
+  .guide-steps {
+    display: none;
   }
 
-  .cols {
-    height: 72px;
+  .engine-lede {
+    display: none;
+  }
+}
+
+@media (max-height: 700px) {
+  .guide h2 {
+    display: none;
   }
 
-  .spark {
-    height: 40px;
-  }
-
-  .boardbody {
-    padding: 6px;
-    gap: 6px;
+  .guide {
+    padding-top: 10px;
   }
 }
 
 @media (max-width: 1500px) {
-  .clock {
-    max-width: 30%;
-  }
-
   #speed {
     width: 110px;
   }
@@ -1527,157 +1696,80 @@
   overflow-wrap: anywhere;
 }
 
-/* ── the Run panel's table: figure, yours, reference ───────────────────── */
-.run-body {
-  display: flex;
-  flex-direction: column;
+/* ══ Measure: the Run, with the centre and the inspector's width ════════════ */
+
+.measure {
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 4px 0 6px;
-}
-
-.rtable {
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
-  font: var(--fs-chip) / 1.35 var(--mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.rtable thead th {
-  position: sticky;
-  top: 0;
-  background: var(--panel);
-  text-align: right;
-  padding: 3px 6px 4px;
-  border-bottom: 1px solid var(--line);
-  font: 500 var(--fs-micro) / 1 var(--mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink4);
-}
-
-.rtable thead th:first-child,
-.rtable tbody td:first-child {
-  text-align: left;
-}
-
-.rtable thead th:first-child {
-  width: 42%;
-}
-
-/* Three columns: label | yours | reference. The two value columns are equal so the
-   eye compares them down the page, and the reference column is dimmed — it is the
-   yardstick, not the answer. Values wrap only when they must. */
-.rtable thead th:last-child,
-.rtable thead th:nth-child(2) {
-  width: 28%;
-}
-
-.rtable tbody td {
-  padding: 3px 5px;
-  border-bottom: 1px solid var(--rowline);
-  color: var(--ink3);
-  overflow-wrap: anywhere;
-}
-
-.rtable tbody td + td {
-  text-align: right;
-  color: var(--ink2);
-}
-
-/* A value may wrap inside its cell, but only at its spaces — `9,670/11,414` is one
-   word and stays on one line. At 236 px a rail has ~75 px per value column, so
-   `100.0 % of 1,000` is two lines and `no failures` is one; the alternative measured
-   on this box was a clipped reference column. */
-.rtable tbody .fig {
-  white-space: normal;
-  justify-content: flex-end;
-  max-width: 100%;
-}
-
-.rtable .fig .num {
-  min-width: 0;
-  color: var(--ink4);
-}
-
-.refnote {
-  margin: 0;
-  padding: 6px 9px 7px;
-  border-top: 1px solid var(--line);
-  font: var(--fs-chip) / 1.5 var(--sans);
-  color: var(--ink4);
-}
-
-.refnote .fig .num {
-  min-width: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 #panel-run .phead .s {
   color: var(--ink4);
 }
 
-/* One block per committed configuration: its behaviour, its seven rows, and the two
-   machine labels. `gap` and a hairline are the whole separation — the rail has no
-   room for cards. */
-.run-block {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 0 6px;
-  border-bottom: 1px solid var(--rowline);
+.measure-body {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
+  gap: 24px 40px;
+  padding: 24px 28px 28px;
+  max-width: 1480px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-.run-cfg {
+.measure-head {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.measure-head h2 {
   margin: 0;
-  padding: 2px 9px 3px;
-  font: var(--fs-micro) / 1.4 var(--mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink3);
+  font: 600 var(--fs-title) / 1.3 var(--sans);
+  color: var(--ink);
+}
+
+.measure-head p {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--ink2);
+}
+
+.mcol {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mcol h3 {
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--line);
-}
-
-/* The sentence under the table — what the 5 s budget is measured on, a partial Run's
-   note, or why a Run failed. A fixed line, not a tooltip: it qualifies the numbers. */
-.run-note {
-  margin: 0;
-  padding: 6px 9px 8px;
-  font: var(--fs-body) / 1.45 var(--sans);
-  color: var(--ink3);
-}
-
-.run-note:empty {
-  display: none;
-}
-
-/* ── your own run: the form above the benchmark ─────────────────────────── */
-#run-yours {
-  display: flex;
-  flex-direction: column;
-  border-bottom: 1px solid var(--rowline);
-  padding-bottom: 4px;
+  font: 600 var(--fs-data) / 1.2 var(--sans);
+  color: var(--ink);
 }
 
 .run-lede {
   margin: 0;
-  padding: 6px 9px 2px;
-  font: var(--fs-chip) / 1.5 var(--sans);
+  font: var(--fs-chip) / 1.55 var(--sans);
   color: var(--ink3);
 }
 
 .run-form {
   display: flex;
-  align-items: stretch;
+  align-items: flex-end;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 9px 8px;
+  gap: 10px;
 }
 
 .run-form .tbtn {
   height: var(--ctl);
-  padding: 0 12px;
+  padding: 0 14px;
   border: 1px solid var(--line2);
   border-radius: 2px;
 }
@@ -1688,14 +1780,14 @@
 
 .rfield {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  font: var(--fs-chip) / 1 var(--mono);
+  flex-direction: column;
+  gap: 4px;
+  font: var(--fs-chip) / 1.2 var(--sans);
   color: var(--ink3);
 }
 
 .rfield input {
-  width: 74px;
+  width: 96px;
   height: var(--ctl);
   padding: 5px 7px;
   border: 1px solid var(--line2);
@@ -1711,28 +1803,150 @@
   outline: none;
 }
 
+/* Your run's result: the sentence that says what was measured. */
+.run-result {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--panel2);
+  font: var(--fs-body) / 1.5 var(--sans);
+  color: var(--ink2);
+}
+
+.run-result:empty {
+  display: none;
+}
+
+/* The benchmark: its sentence and buttons across the top, then the two committed
+   configurations side by side, so the eye compares them along one row. */
+.run-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px 28px;
+  min-width: 0;
+}
+
+.run-body > .run-note,
+.run-body > .run-startrow {
+  grid-column: 1 / -1;
+}
+
+.run-note {
+  margin: 0;
+  font: var(--fs-chip) / 1.55 var(--sans);
+  color: var(--ink3);
+}
+
+.run-note:empty {
+  display: none;
+}
+
 .run-startrow {
   display: flex;
   align-items: stretch;
-  gap: 1px;
-  padding: 0 9px 6px;
+  gap: 8px;
 }
 
 .run-startrow .tbtn {
   height: var(--ctl);
-  border: 1px solid var(--line);
-  border-left-width: 0;
-  padding: 0 13px;
+  padding: 0 14px;
+  border: 1px solid var(--line2);
+  border-radius: 2px;
   justify-content: center;
 }
 
-.run-startrow .tbtn:first-child {
-  border-left-width: 1px;
-  border-radius: 2px 0 0 2px;
+.run-startrow .tbtn.go {
+  border-color: var(--amber-edge);
 }
 
-.run-startrow .tbtn:last-child {
-  border-radius: 0 2px 2px 0;
+/* One block per committed configuration: its behaviour, its seven rows, and the two
+   machine labels. A hairline and the gap are the whole separation. */
+.run-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.run-cfg {
+  margin: 0;
+  padding: 0 0 6px;
+  font: 600 var(--fs-micro) / 1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  border-bottom: 1px solid var(--line);
+}
+
+.rtable {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font: var(--fs-data) / 1.35 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.rtable thead th {
+  text-align: right;
+  padding: 6px 6px;
+  border-bottom: 1px solid var(--line);
+  font: 500 var(--fs-micro) / 1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink4);
+}
+
+.rtable thead th:first-child,
+.rtable tbody td:first-child {
+  text-align: left;
+  padding-left: 0;
+}
+
+.rtable thead th:first-child {
+  width: 36%;
+}
+
+/* Three columns: label | yours | reference. The two value columns are equal so the
+   eye compares them down the page, and the reference column is dimmed — it is the
+   yardstick, not the answer. */
+.rtable thead th:last-child,
+.rtable thead th:nth-child(2) {
+  width: 32%;
+}
+
+.rtable tbody td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--rowline);
+  font: var(--fs-chip) / 1.35 var(--sans);
+  color: var(--ink3);
+  overflow-wrap: break-word;
+}
+
+.rtable tbody td + td {
+  text-align: right;
+  color: var(--ink2);
+}
+
+.rtable tbody .fig {
+  white-space: normal;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.rtable .fig .num {
+  min-width: 0;
+  color: var(--ink);
+}
+
+.refnote {
+  margin: 0;
+  font: var(--fs-chip) / 1.5 var(--sans);
+  color: var(--ink4);
+}
+
+.refnote .fig .num {
+  min-width: 0;
 }
 
 .run-reference,
@@ -1743,56 +1957,52 @@
 /* The strip's cells and the columns' bars are the two pictures that carry a
    transition; both are sized by the data, so nothing reflows when a value changes. */
 #strip i,
-.cols .c b,
-.spark .line,
-.spark .dot {
+.cols .c b {
   will-change: auto;
 }
 
 /* ══ responsive: the grid gives ground, then the page scrolls ═════════════════ */
 
-/* Between the full design width and 1100 px the same three regions stay on one row;
-   the fixed rails narrow instead of the centre collapsing, and the inspector's
-   clamp keeps it inside 36vw so it can never push the board out. */
-@media (max-width: 1400px) {
-  #app {
-    grid-template-columns: 200px minmax(0, 1fr) clamp(320px, 30vw, 480px);
-  }
-
-  .readout {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .boardbody {
-    grid-template-columns: 22px minmax(0, 1fr) clamp(260px, calc(100% - 520px), 560px);
-  }
-}
-
-@media (max-width: 1200px) {
-  #app {
-    grid-template-columns: 176px minmax(0, 1fr) clamp(300px, 32vw, 440px);
-  }
-
-  .readout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .bar .brandtext span {
+@media (max-width: 1440px) {
+  .brandtext span {
     display: none;
   }
 }
 
-/* Below 1100 px the workbench becomes a page: the regions stack in reading order,
-   the page scrolls, and every region gets the full width for itself. Touch targets
-   go to 44 px and the type goes up a step, because a phone is not a shrunken desk. */
+@media (max-width: 1280px) {
+  :root {
+    --rail-w: 212px;
+  }
+
+  .mode {
+    padding: 0 12px;
+  }
+
+  .baractions .tbtn {
+    padding: 0 11px;
+  }
+}
+
+/* Below 1100 px the workbench becomes a page: the regions stack in reading order
+   (board, controls, search), the page scrolls, and every region gets the full width.
+   Touch targets go to 44 px, because a phone is not a shrunken desk. */
 @media (max-width: 1100px) {
+  .ro-columns .cols {
+    min-height: 160px;
+  }
+
+  :root {
+    --board-h: min(62vh, 600px, calc((100vw - 56px) * 2));
+  }
+
   html,
   body {
     overflow: auto;
     height: auto;
   }
 
-  #app {
+  #app,
+  #app[data-mode="measure"] {
     display: flex;
     flex-direction: column;
     height: auto;
@@ -1801,32 +2011,68 @@
 
   [data-region] {
     overflow: visible;
-    min-width: 0;
-    min-height: 0;
+  }
+
+  [data-region="toolbar"] {
+    order: 1;
+  }
+
+  [data-region="centre"] {
+    order: 2;
+  }
+
+  [data-region="rail"] {
+    order: 3;
+  }
+
+  [data-region="inspector"] {
+    order: 4;
+  }
+
+  [data-region="status"] {
+    order: 5;
   }
 
   .bar {
-    position: sticky;
-    top: 0;
-    z-index: 6;
-    height: 52px;
+    flex-wrap: wrap;
+    height: auto;
   }
 
-  .brandtext span {
-    display: none;
+  .brand {
+    min-height: 48px;
+    border-right: 0;
   }
 
-  .baractions {
-    margin-left: auto;
+  .modes {
+    order: 3;
+    flex: 1 0 100%;
+    border-right: 0;
+    border-top: 1px solid var(--line);
   }
 
-  .tbtn {
-    padding: 0 16px;
+  .mode {
+    flex: 1 1 0;
+    justify-content: center;
     min-height: 44px;
   }
 
   .clock {
-    max-width: 46%;
+    order: 4;
+    flex: 1 0 100%;
+    padding: 8px 16px 8px 22px;
+    border-top: 1px solid var(--line);
+  }
+
+  .clock p {
+    white-space: normal;
+  }
+
+  .baractions {
+    order: 2;
+  }
+
+  .tbtn {
+    min-height: 44px;
   }
 
   [data-region="rail"],
@@ -1836,92 +2082,93 @@
     border-top: 1px solid var(--line);
   }
 
-  [data-region="rail"],
-  [data-region="inspector"] {
-    display: block;
-  }
-
   [data-region="centre"] {
-    display: grid;
-    grid-template-rows: minmax(280px, 52vh) auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .boardbody {
-    grid-template-columns: 22px minmax(0, 1fr);
-    padding: 8px;
-    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 16px;
+    padding: 12px 16px;
   }
 
   .readout {
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  #panel-run {
-    min-height: 0;
-  }
-
-  .run-body,
-  .rows {
+    width: 100%;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding: 14px 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 18px 20px;
     overflow: visible;
   }
 
-  /* Full-width panels need real margins: the rail's 9 px gutter reads as a bleed
-     when the paragraph is 390 px wide. */
-  #run-lede,
-  .run-note,
-  .run-cfg,
-  .refnote,
-  .ro-empty {
-    padding-left: 16px;
-    padding-right: 16px;
+
+  [data-region="inspector"] {
+    min-height: 0;
   }
 
-  #run-assumption,
-  .run-note#run-yours-note {
-    padding-left: 16px;
-    padding-right: 16px;
+  /* Stacked, the page scrolls instead of the inspector: each view is as tall as
+     what it holds, not a share of a height it no longer has. */
+  .bandpanel,
+  .treepanel,
+  .layerpanel {
+    flex: 0 0 auto;
   }
 
-  .ro-pane {
-    padding-left: 14px;
-    padding-right: 14px;
+  #band {
+    flex: 0 0 auto;
+    height: 380px;
   }
 
-  #band-caption {
-    padding-left: 16px;
-    padding-right: 16px;
-    white-space: normal;
+  #tree {
+    flex: 0 0 auto;
+    height: 420px;
+  }
+
+  .tablewrap {
+    flex: 0 0 auto;
+    max-height: 520px;
+  }
+
+  .measure-body {
+    overflow: visible;
+    padding: 20px 16px 28px;
+  }
+
+  .guide-actions {
+    margin-top: 6px;
   }
 
   .rfield input {
     height: 44px;
-    width: 5.5em;
   }
 
   /* The Playground's own controls are touch targets here, not desk furniture. */
   #playground .fields input[type="number"],
-  #playground .presets button {
-    min-height: 44px;
-  }
-
-  #playground #pg-beam {
-    height: 44px;
-  }
-
-  .tbtn,
+  #playground .presets button,
+  .guide-actions .tbtn,
+  .run-form .tbtn,
   .run-startrow .tbtn {
     min-height: 44px;
+  }
+
+  #views {
+    height: 44px;
   }
 
   .transport {
     flex-wrap: wrap;
     row-gap: 8px;
+    height: auto;
+    padding: 8px 12px;
   }
 
   .transport .tbtn {
     min-width: 44px;
-    padding: 8px;
+    min-height: 44px;
   }
 
   #speed {
@@ -1929,16 +2176,17 @@
   }
 
   .statusbar {
-    position: sticky;
-    bottom: 0;
+    min-height: 32px;
+  }
+}
+
+@media (max-width: 760px) {
+  .measure-body {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
 @media (max-width: 560px) {
-  .readout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .brandtext {
     display: none;
   }
@@ -1947,19 +2195,19 @@
     display: none;
   }
 
-  /* The outcome is the one thing worth a phone's toolbar room. Solve goes with the
-     seed line: a field change already re-solves, so the button is a repeat. */
-  #solve {
+  .baractions .tbtn {
+    padding: 0 12px;
+  }
+
+  /* A phone has no keyboard to map, and no room for the engine's build line: the
+     status bar keeps the one figure it exists for. */
+  #kbdmap,
+  #boot {
     display: none;
   }
 
-  .clock {
-    max-width: 54%;
-    border-left: 0;
-  }
-
-  #kbdmap span:not(:first-child) {
-    display: none;
+  .readout {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -401,6 +401,14 @@ try {
   await cdp.send("Target.activateTarget", { targetId });
   await cdp.send("Page.enable", {}, sessionId);
   await cdp.send("Runtime.enable", {}, sessionId);
+  // A first visit opens the tour, which takes the arrow keys and covers the board.
+  // This harness checks the Lab, not the tour, so it arrives as a returning visitor
+  // (the key is `SEEN_KEY` in `src/ui/tour.ts`).
+  await cdp.send(
+    "Page.addScriptToEvaluateOnNewDocument",
+    { source: `try { localStorage.setItem("tetris-lab:tour-seen", "1"); } catch {}` },
+    sessionId,
+  );
   // The shell is desktop-first (§2.1.5) and the design floor is 1440×900: below it,
   // panels scroll inside themselves and the readout loses its column. The window the
   // chrome happens to open with is not a viewport a visitor has, so the harness sets
